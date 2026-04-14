@@ -2,14 +2,25 @@
 config.py  — All constants, source URLs, and runtime settings.
 Change values here only — never hardcode in other modules.
 """
-from pathlib import Path
+import os
 import datetime
+from pathlib import Path
 
-ROOT       = Path(__file__).parent
-DB_PATH    = ROOT / "data" / "mm_dashboard.db"
-DB_URL     = f"sqlite:///{DB_PATH}"
-SEEDS_DIR  = ROOT / "data" / "seeds"
-LOGS_DIR   = ROOT / "logs"
+ROOT      = Path(__file__).parent
+SEEDS_DIR = ROOT / "data" / "seeds"
+LOGS_DIR  = ROOT / "logs"
+
+# ── Database path ─────────────────────────────────────────────────────────────
+# Streamlit Cloud has a read-only filesystem except /tmp.
+# Detect Cloud by checking the home directory.
+if os.environ.get("HOME") == "/home/adminuser":
+    # Running on Streamlit Community Cloud
+    DB_PATH = Path("/tmp/mm_dashboard.db")
+else:
+    # Running locally
+    DB_PATH = ROOT / "data" / "mm_dashboard.db"
+
+DB_URL = f"sqlite:///{DB_PATH}"
 
 # Source URLs
 GSOM_TBOND_URL    = "https://gsom.bb.org.bd/mtm.php"
