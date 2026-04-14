@@ -1,0 +1,306 @@
+2026-04-10 16:06:35,373 [INFO] db: Database initialised at C:\Users\Administrator\Desktop\mm_dashboard\data\mm_dashboard.db
+2026-04-10 16:06:35,373 [INFO] run: Database initialised.
+2026-04-10 16:06:37,021 [INFO] db: Database initialised at C:\Users\Administrator\Desktop\mm_dashboard\data\mm_dashboard.db
+2026-04-10 16:06:37,090 [INFO] seeds_loader: Loaded 10 holidays for FY 2025-26
+2026-04-10 16:06:37,091 [INFO] run: Seeded 10 holidays from holidays_2025-26.yaml
+2026-04-10 16:06:39,670 [INFO] run: Running pipeline: 2026-02-09 to 2026-08-08
+2026-04-10 16:06:39,716 [INFO] db: Database initialised at C:\Users\Administrator\Desktop\mm_dashboard\data\mm_dashboard.db
+2026-04-10 16:06:39,761 [INFO] calendar_utils: Holiday calendar loaded: 10 public holidays
+2026-04-10 16:06:39,762 [INFO] engines.pipeline: Loaded 10 holidays from DB
+2026-04-10 16:06:43,267 [INFO] fetchers.http_client: Fetched https://gsom.bb.org.bd/mtm.php (312330 bytes)
+2026-04-10 16:06:43,489 [INFO] parsers.securities: Parsed 226 rows from https://gsom.bb.org.bd/mtm.php
+2026-04-10 16:06:45,026 [INFO] fetchers.http_client: Fetched https://gsom.bb.org.bd/mtm-frtb.php (19935 bytes)
+2026-04-10 16:06:45,041 [INFO] parsers.securities: Parsed 8 rows from https://gsom.bb.org.bd/mtm-frtb.php
+2026-04-10 16:06:46,252 [INFO] fetchers.http_client: Fetched https://gsom.bb.org.bd/mtm-bill.php (96032 bytes)
+2026-04-10 16:06:46,366 [INFO] parsers.securities: Parsed 86 T-Bill rows from https://gsom.bb.org.bd/mtm-bill.php
+2026-04-10 16:06:46,648 [INFO] engines.pipeline: Upserted 320 securities
+2026-04-10 16:06:46,653 [INFO] engines.inflow: ISIN BD0926341159: generated 31 coupon events (HFLY)
+2026-04-10 16:06:46,694 [INFO] engines.inflow: ISIN BD0926421027: generated 5 coupon events (HFLY)
+2026-04-10 16:06:46,701 [INFO] engines.inflow: ISIN BD0926381155: generated 31 coupon events (HFLY)
+2026-04-10 16:06:46,748 [INFO] engines.inflow: ISIN BD0926461023: generated 5 coupon events (HFLY)
+2026-04-10 16:06:46,756 [INFO] engines.inflow: ISIN BD0926421159: generated 31 coupon events (HFLY)
+2026-04-10 16:06:46,804 [INFO] engines.inflow: ISIN BD0926431059: generated 11 coupon events (HFLY)
+2026-04-10 16:06:46,818 [INFO] engines.inflow: ISIN BD0926021108: generated 21 coupon events (HFLY)
+2026-04-10 16:06:46,840 [INFO] engines.inflow: ISIN BD0926061021: generated 5 coupon events (HFLY)
+2026-04-10 16:06:46,849 [INFO] engines.inflow: ISIN BD0926071152: generated 31 coupon events (HFLY)
+2026-04-10 16:06:46,885 [INFO] engines.inflow: ISIN BD0926541055: generated 11 coupon events (HFLY)
+2026-04-10 16:06:46,901 [INFO] engines.inflow: ISIN BD0926111156: generated 31 coupon events (HFLY)
+2026-04-10 16:06:46,947 [INFO] engines.inflow: ISIN BD0926141021: generated 5 coupon events (HFLY)
+2026-04-10 16:06:46,953 [INFO] engines.inflow: ISIN BD0926151152: generated 31 coupon events (HFLY)
+2026-04-10 16:06:46,990 [INFO] engines.inflow: ISIN BD0926191026: generated 5 coupon events (HFLY)
+2026-04-10 16:06:46,998 [INFO] engines.inflow: ISIN BD0926601057: generated 11 coupon events (HFLY)
+2026-04-10 16:06:47,020 [INFO] engines.inflow: ISIN BD0926191158: generated 31 coupon events (HFLY)
+2026-04-10 16:06:47,055 [INFO] engines.inflow: ISIN BD0926231152: generated 31 coupon events (HFLY)
+2026-04-10 16:06:47,094 [INFO] engines.inflow: ISIN BD0927271025: generated 5 coupon events (HFLY)
+2026-04-10 16:06:47,103 [INFO] engines.inflow: ISIN BD0927271157: generated 31 coupon events (HFLY)
+2026-04-10 16:06:47,143 [INFO] engines.inflow: ISIN BD0927251100: generated 21 coupon events (HFLY)
+2026-04-10 16:06:47,161 [INFO] engines.inflow: ISIN BD0927311029: generated 5 coupon events (HFLY)
+2026-04-10 16:06:47,169 [INFO] engines.inflow: ISIN BD0927311151: generated 31 coupon events (HFLY)
+2026-04-10 16:06:47,204 [INFO] engines.inflow: ISIN BD0927351025: generated 5 coupon events (HFLY)
+2026-04-10 16:06:47,215 [INFO] engines.inflow: ISIN BD0927761058: generated 11 coupon events (HFLY)
+2026-04-10 16:06:47,234 [INFO] engines.inflow: ISIN BD0927351157: generated 31 coupon events (HFLY)
+2026-04-10 16:06:47,269 [INFO] engines.inflow: ISIN BD0927391021: generated 5 coupon events (HFLY)
+2026-04-10 16:06:47,278 [INFO] engines.inflow: ISIN BD0927391153: generated 31 coupon events (HFLY)
+2026-04-10 16:06:47,308 [INFO] engines.inflow: ISIN BD0927431025: generated 5 coupon events (HFLY)
+2026-04-10 16:06:47,318 [INFO] engines.inflow: ISIN BD0927841058: generated 11 coupon events (HFLY)
+2026-04-10 16:06:47,333 [INFO] engines.inflow: ISIN BD0927431157: generated 31 coupon events (HFLY)
+2026-04-10 16:06:47,406 [INFO] engines.inflow: ISIN BD0927471021: generated 5 coupon events (HFLY)
+2026-04-10 16:06:47,415 [INFO] engines.inflow: ISIN BD0927471153: generated 31 coupon events (HFLY)
+2026-04-10 16:06:47,452 [INFO] engines.inflow: ISIN BD0927011025: generated 5 coupon events (HFLY)
+2026-04-10 16:06:47,462 [INFO] engines.inflow: ISIN BD0927021057: generated 11 coupon events (HFLY)
+2026-04-10 16:06:47,480 [INFO] engines.inflow: ISIN BD0927031155: generated 31 coupon events (HFLY)
+2026-04-10 16:06:47,517 [INFO] engines.inflow: ISIN BD0927041204: generated 41 coupon events (HFLY)
+2026-04-10 16:06:47,552 [INFO] engines.inflow: ISIN BD0927081200: generated 40 coupon events (HFLY)
+2026-04-10 16:06:47,584 [INFO] engines.inflow: ISIN BD0927091027: generated 5 coupon events (HFLY)
+2026-04-10 16:06:47,590 [INFO] engines.inflow: ISIN BD0927111155: generated 31 coupon events (HFLY)
+2026-04-10 16:06:47,621 [INFO] engines.inflow: ISIN BD0927121204: generated 41 coupon events (HFLY)
+2026-04-10 16:06:47,666 [INFO] engines.inflow: ISIN BD0927151151: generated 31 coupon events (HFLY)
+2026-04-10 16:06:47,717 [INFO] engines.inflow: ISIN BD0927101107: generated 21 coupon events (HFLY)
+2026-04-10 16:06:47,743 [INFO] engines.inflow: ISIN BD0927161200: generated 41 coupon events (HFLY)
+2026-04-10 16:06:47,785 [INFO] engines.inflow: ISIN BD0927171027: generated 5 coupon events (HFLY)
+2026-04-10 16:06:47,792 [INFO] engines.inflow: ISIN BD0927181059: generated 11 coupon events (HFLY)
+2026-04-10 16:06:47,811 [INFO] engines.inflow: ISIN BD0927191157: generated 31 coupon events (HFLY)
+2026-04-10 16:06:47,838 [INFO] engines.inflow: ISIN BD0927201204: generated 41 coupon events (HFLY)
+2026-04-10 16:06:47,887 [INFO] engines.inflow: ISIN BD0927231151: generated 31 coupon events (HFLY)
+2026-04-10 16:06:47,914 [INFO] engines.inflow: ISIN BD0927241200: generated 41 coupon events (HFLY)
+2026-04-10 16:06:47,956 [INFO] engines.inflow: ISIN BD0928261058: generated 11 coupon events (HFLY)
+2026-04-10 16:06:47,972 [INFO] engines.inflow: ISIN BD0928271156: generated 31 coupon events (HFLY)
+2026-04-10 16:06:48,011 [INFO] engines.inflow: ISIN BD0928281205: generated 41 coupon events (HFLY)
+2026-04-10 16:06:48,055 [INFO] engines.inflow: ISIN BD0928311150: generated 31 coupon events (HFLY)
+2026-04-10 16:06:48,101 [INFO] engines.inflow: ISIN BD0928321209: generated 41 coupon events (HFLY)
+2026-04-10 16:06:48,143 [INFO] engines.inflow: ISIN BD0928351156: generated 31 coupon events (HFLY)
+2026-04-10 16:06:48,177 [INFO] engines.inflow: ISIN BD0928361205: generated 41 coupon events (HFLY)
+2026-04-10 16:06:48,232 [INFO] engines.inflow: ISIN BD0928381054: generated 11 coupon events (HFLY)
+2026-04-10 16:06:48,241 [INFO] engines.inflow: ISIN BD0928391152: generated 31 coupon events (HFLY)
+2026-04-10 16:06:48,269 [INFO] engines.inflow: ISIN BD0928401209: generated 41 coupon events (HFLY)
+2026-04-10 16:06:48,304 [INFO] engines.inflow: ISIN BD0928431156: generated 31 coupon events (HFLY)
+2026-04-10 16:06:48,332 [INFO] engines.inflow: ISIN BD0928441205: generated 41 coupon events (HFLY)
+2026-04-10 16:06:48,376 [INFO] engines.inflow: ISIN BD0928461054: generated 11 coupon events (HFLY)
+2026-04-10 16:06:48,391 [INFO] engines.inflow: ISIN BD0928471152: generated 31 coupon events (HFLY)
+2026-04-10 16:06:48,435 [INFO] engines.inflow: ISIN BD0928331109: generated 21 coupon events (HFLY)
+2026-04-10 16:06:48,454 [INFO] engines.inflow: ISIN BD0928481201: generated 41 coupon events (HFLY)
+2026-04-10 16:06:48,493 [INFO] engines.inflow: ISIN BD0928041203: generated 41 coupon events (HFLY)
+2026-04-10 16:06:48,528 [INFO] engines.inflow: ISIN BD0928041153: generated 31 coupon events (HFLY)
+2026-04-10 16:06:48,564 [INFO] engines.inflow: ISIN BD0928061052: generated 11 coupon events (HFLY)
+2026-04-10 16:06:48,578 [INFO] engines.inflow: ISIN BD0928081209: generated 41 coupon events (HFLY)
+2026-04-10 16:06:48,620 [INFO] engines.inflow: ISIN BD0928081159: generated 30 coupon events (HFLY)
+2026-04-10 16:06:48,643 [INFO] engines.inflow: ISIN BD0928101056: generated 11 coupon events (HFLY)
+2026-04-10 16:06:48,656 [INFO] engines.inflow: ISIN BD0928121203: generated 41 coupon events (HFLY)
+2026-04-10 16:06:48,696 [INFO] engines.inflow: ISIN BD0928121153: generated 31 coupon events (HFLY)
+2026-04-10 16:06:48,724 [INFO] engines.inflow: ISIN BD0928161159: generated 31 coupon events (HFLY)
+2026-04-10 16:06:48,769 [INFO] engines.inflow: ISIN BD0928161209: generated 41 coupon events (HFLY)
+2026-04-10 16:06:48,829 [INFO] engines.inflow: ISIN BD0928181058: generated 11 coupon events (HFLY)
+2026-04-10 16:06:48,839 [INFO] engines.inflow: ISIN BD0928131103: generated 21 coupon events (HFLY)
+2026-04-10 16:06:48,862 [INFO] engines.inflow: ISIN BD0928201203: generated 41 coupon events (HFLY)
+2026-04-10 16:06:48,902 [INFO] engines.inflow: ISIN BD0928201153: generated 31 coupon events (HFLY)
+2026-04-10 16:06:48,930 [INFO] engines.inflow: ISIN BD0928221052: generated 11 coupon events (HFLY)
+2026-04-10 16:06:48,945 [INFO] engines.inflow: ISIN BD0928241209: generated 41 coupon events (HFLY)
+2026-04-10 16:06:48,989 [INFO] engines.inflow: ISIN BD0928241159: generated 31 coupon events (HFLY)
+2026-04-10 16:06:49,030 [INFO] engines.inflow: ISIN BD0929281204: generated 41 coupon events (HFLY)
+2026-04-10 16:06:49,064 [INFO] engines.inflow: ISIN BD0929281154: generated 31 coupon events (HFLY)
+2026-04-10 16:06:49,109 [INFO] engines.inflow: ISIN BD0929321208: generated 41 coupon events (HFLY)
+2026-04-10 16:06:49,156 [INFO] engines.inflow: ISIN BD0929321158: generated 31 coupon events (HFLY)
+2026-04-10 16:06:49,195 [INFO] engines.inflow: ISIN BD0929361204: generated 41 coupon events (HFLY)
+2026-04-10 16:06:49,228 [INFO] engines.inflow: ISIN BD0929361154: generated 31 coupon events (HFLY)
+2026-04-10 16:06:49,260 [INFO] engines.inflow: ISIN BD0929401059: generated 11 coupon events (HFLY)
+2026-04-10 16:06:49,281 [INFO] engines.inflow: ISIN BD0929311100: generated 21 coupon events (HFLY)
+2026-04-10 16:06:49,301 [INFO] engines.inflow: ISIN BD0929401158: generated 31 coupon events (HFLY)
+2026-04-10 16:06:49,334 [INFO] engines.inflow: ISIN BD0929401208: generated 41 coupon events (HFLY)
+2026-04-10 16:06:49,372 [INFO] engines.inflow: ISIN BD0929431056: generated 11 coupon events (HFLY)
+2026-04-10 16:06:49,393 [INFO] engines.inflow: ISIN BD0929441204: generated 41 coupon events (HFLY)
+2026-04-10 16:06:49,447 [INFO] engines.inflow: ISIN BD0929441154: generated 31 coupon events (HFLY)
+2026-04-10 16:06:49,482 [INFO] engines.inflow: ISIN BD0929381103: generated 21 coupon events (HFLY)
+2026-04-10 16:06:49,502 [INFO] engines.inflow: ISIN BD0929481200: generated 41 coupon events (HFLY)
+2026-04-10 16:06:49,544 [INFO] engines.inflow: ISIN BD0929481150: generated 31 coupon events (HFLY)
+2026-04-10 16:06:49,573 [INFO] engines.inflow: ISIN BD0929041152: generated 31 coupon events (HFLY)
+2026-04-10 16:06:49,613 [INFO] engines.inflow: ISIN BD0929041202: generated 41 coupon events (HFLY)
+2026-04-10 16:06:49,662 [INFO] engines.inflow: ISIN BD0929061101: generated 21 coupon events (HFLY)
+2026-04-10 16:06:49,691 [INFO] engines.inflow: ISIN BD0929081208: generated 41 coupon events (HFLY)
+2026-04-10 16:06:49,723 [INFO] engines.inflow: ISIN BD0929081158: generated 31 coupon events (HFLY)
+2026-04-10 16:06:49,751 [INFO] engines.inflow: ISIN BD0929121152: generated 31 coupon events (HFLY)
+2026-04-10 16:06:49,778 [INFO] engines.inflow: ISIN BD0929151050: generated 11 coupon events (HFLY)
+2026-04-10 16:06:49,796 [INFO] engines.inflow: ISIN BD0929161208: generated 41 coupon events (HFLY)
+2026-04-10 16:06:49,842 [INFO] engines.inflow: ISIN BD0929161158: generated 31 coupon events (HFLY)
+2026-04-10 16:06:49,886 [INFO] engines.inflow: ISIN BD0929201152: generated 31 coupon events (HFLY)
+2026-04-10 16:06:49,921 [INFO] engines.inflow: ISIN BD0929241059: generated 11 coupon events (HFLY)
+2026-04-10 16:06:49,939 [INFO] engines.inflow: ISIN BD0929221101: generated 21 coupon events (HFLY)
+2026-04-10 16:06:49,964 [INFO] engines.inflow: ISIN BD0929201202: generated 41 coupon events (HFLY)
+2026-04-10 16:06:50,009 [INFO] engines.inflow: ISIN BD0930261104: generated 21 coupon events (HFLY)
+2026-04-10 16:06:50,041 [INFO] engines.inflow: ISIN BD0930321056: generated 11 coupon events (HFLY)
+2026-04-10 16:06:50,056 [INFO] engines.inflow: ISIN BD0930251204: generated 41 coupon events (HFLY)
+2026-04-10 16:06:50,094 [INFO] engines.inflow: ISIN BD0930281201: generated 41 coupon events (HFLY)
+2026-04-10 16:06:50,137 [INFO] engines.inflow: ISIN BD0930401056: generated 11 coupon events (HFLY)
+2026-04-10 16:06:50,147 [INFO] engines.inflow: ISIN BD0930321205: generated 41 coupon events (HFLY)
+2026-04-10 16:06:50,192 [INFO] engines.inflow: ISIN BD0930381100: generated 21 coupon events (HFLY)
+2026-04-10 16:06:50,217 [INFO] engines.inflow: ISIN BD0930361201: generated 41 coupon events (HFLY)
+2026-04-10 16:06:50,257 [INFO] engines.inflow: ISIN BD0930431103: generated 21 coupon events (HFLY)
+2026-04-10 16:06:50,286 [INFO] engines.inflow: ISIN BD0930481058: generated 11 coupon events (HFLY)
+2026-04-10 16:06:50,303 [INFO] engines.inflow: ISIN BD0930401205: generated 41 coupon events (HFLY)
+2026-04-10 16:06:50,353 [INFO] engines.inflow: ISIN BD0930031101: generated 21 coupon events (HFLY)
+2026-04-10 16:06:50,385 [INFO] engines.inflow: ISIN BD0930041209: generated 41 coupon events (HFLY)
+2026-04-10 16:06:50,447 [INFO] engines.inflow: ISIN BD0930041159: generated 31 coupon events (HFLY)
+2026-04-10 16:06:50,509 [INFO] engines.inflow: ISIN BD0930081205: generated 41 coupon events (HFLY)
+2026-04-10 16:06:50,547 [INFO] engines.inflow: ISIN BD0930101052: generated 11 coupon events (HFLY)
+2026-04-10 16:06:50,558 [INFO] engines.inflow: ISIN BD0930121159: generated 31 coupon events (HFLY)
+2026-04-10 16:06:50,609 [INFO] engines.inflow: ISIN BD0930121209: generated 41 coupon events (HFLY)
+2026-04-10 16:06:50,657 [INFO] engines.inflow: ISIN BD0930141108: generated 21 coupon events (HFLY)
+2026-04-10 16:06:50,681 [INFO] engines.inflow: ISIN BD0930161205: generated 41 coupon events (HFLY)
+2026-04-10 16:06:50,725 [INFO] engines.inflow: ISIN BD0930201209: generated 41 coupon events (HFLY)
+2026-04-10 16:06:50,777 [INFO] engines.inflow: ISIN BD0930211059: generated 11 coupon events (HFLY)
+2026-04-10 16:06:50,789 [INFO] engines.inflow: ISIN BD0930241205: generated 41 coupon events (HFLY)
+2026-04-10 16:06:50,832 [INFO] engines.inflow: ISIN BD0931281200: generated 41 coupon events (HFLY)
+2026-04-10 16:06:50,890 [INFO] engines.inflow: ISIN BD0931301107: generated 21 coupon events (HFLY)
+2026-04-10 16:06:50,909 [INFO] engines.inflow: ISIN BD0931321204: generated 41 coupon events (HFLY)
+2026-04-10 16:06:50,949 [INFO] engines.inflow: ISIN BD0931361200: generated 41 coupon events (HFLY)
+2026-04-10 16:06:51,000 [INFO] engines.inflow: ISIN BD0931401204: generated 41 coupon events (HFLY)
+2026-04-10 16:06:51,037 [INFO] engines.inflow: ISIN BD0931401154: generated 31 coupon events (HFLY)
+2026-04-10 16:06:51,061 [INFO] engines.inflow: ISIN BD0931401105: generated 21 coupon events (HFLY)
+2026-04-10 16:06:51,085 [INFO] engines.inflow: ISIN BD0931441200: generated 41 coupon events (HFLY)
+2026-04-10 16:06:51,128 [INFO] engines.inflow: ISIN BD0931471207: generated 41 coupon events (HFLY)
+2026-04-10 16:06:51,173 [INFO] engines.inflow: ISIN BD0931481107: generated 21 coupon events (HFLY)
+2026-04-10 16:06:51,199 [INFO] engines.inflow: ISIN BD0931041208: generated 41 coupon events (HFLY)
+2026-04-10 16:06:51,249 [INFO] engines.inflow: ISIN BD0931081204: generated 41 coupon events (HFLY)
+2026-04-10 16:06:51,296 [INFO] engines.inflow: ISIN BD0931121208: generated 41 coupon events (HFLY)
+2026-04-10 16:06:51,335 [INFO] engines.inflow: ISIN BD0931561106: generated 21 coupon events (HFLY)
+2026-04-10 16:06:51,353 [INFO] engines.inflow: ISIN BD0931161204: generated 41 coupon events (HFLY)
+2026-04-10 16:06:51,400 [INFO] engines.inflow: ISIN BD0931201208: generated 41 coupon events (HFLY)
+2026-04-10 16:06:51,437 [INFO] engines.inflow: ISIN BD0931241204: generated 41 coupon events (HFLY)
+2026-04-10 16:06:51,483 [INFO] engines.inflow: ISIN BD0932691100: generated 21 coupon events (HFLY)
+2026-04-10 16:06:51,500 [INFO] engines.inflow: ISIN BD0932281209: generated 41 coupon events (HFLY)
+2026-04-10 16:06:51,541 [INFO] engines.inflow: ISIN BD0932321203: generated 40 coupon events (HFLY)
+2026-04-10 16:06:51,584 [INFO] engines.inflow: ISIN BD0932361209: generated 41 coupon events (HFLY)
+2026-04-10 16:06:51,633 [INFO] engines.inflow: ISIN BD0932401203: generated 41 coupon events (HFLY)
+2026-04-10 16:06:51,676 [INFO] engines.inflow: ISIN BD0932851100: generated 21 coupon events (HFLY)
+2026-04-10 16:06:51,694 [INFO] engines.inflow: ISIN BD0932441209: generated 41 coupon events (HFLY)
+2026-04-10 16:06:51,738 [INFO] engines.inflow: ISIN BD0932891106: generated 21 coupon events (HFLY)
+2026-04-10 16:06:51,771 [INFO] engines.inflow: ISIN BD0932481205: generated 41 coupon events (HFLY)
+2026-04-10 16:06:51,808 [INFO] engines.inflow: ISIN BD0932041207: generated 41 coupon events (HFLY)
+2026-04-10 16:06:51,846 [INFO] engines.inflow: ISIN BD0932081203: generated 40 coupon events (HFLY)
+2026-04-10 16:06:51,902 [INFO] engines.inflow: ISIN BD0932111109: generated 21 coupon events (HFLY)
+2026-04-10 16:06:51,922 [INFO] engines.inflow: ISIN BD0932121207: generated 41 coupon events (HFLY)
+2026-04-10 16:06:51,976 [INFO] engines.inflow: ISIN BD0932161203: generated 41 coupon events (HFLY)
+2026-04-10 16:06:52,023 [INFO] engines.inflow: ISIN BD0932201207: generated 41 coupon events (HFLY)
+2026-04-10 16:06:52,061 [INFO] engines.inflow: ISIN BD0932231105: generated 21 coupon events (HFLY)
+2026-04-10 16:06:52,098 [INFO] engines.inflow: ISIN BD0932241203: generated 41 coupon events (HFLY)
+2026-04-10 16:06:52,132 [INFO] engines.inflow: ISIN BD0933281208: generated 41 coupon events (HFLY)
+2026-04-10 16:06:52,166 [INFO] engines.inflow: ISIN BD0933321202: generated 41 coupon events (HFLY)
+2026-04-10 16:06:52,205 [INFO] engines.inflow: ISIN BD0933351100: generated 21 coupon events (HFLY)
+2026-04-10 16:06:52,236 [INFO] engines.inflow: ISIN BD0933361208: generated 41 coupon events (HFLY)
+2026-04-10 16:06:52,296 [INFO] engines.inflow: ISIN BD0933401202: generated 41 coupon events (HFLY)
+2026-04-10 16:06:52,332 [INFO] engines.inflow: ISIN BD0933441208: generated 41 coupon events (HFLY)
+2026-04-10 16:06:52,372 [INFO] engines.inflow: ISIN BD0933481204: generated 41 coupon events (HFLY)
+2026-04-10 16:06:52,415 [INFO] engines.inflow: ISIN BD0933041206: generated 41 coupon events (HFLY)
+2026-04-10 16:06:52,455 [INFO] engines.inflow: ISIN BD0933071104: generated 21 coupon events (HFLY)
+2026-04-10 16:06:52,472 [INFO] engines.inflow: ISIN BD0933081202: generated 40 coupon events (HFLY)
+2026-04-10 16:06:52,523 [INFO] engines.inflow: ISIN BD0933121206: generated 41 coupon events (HFLY)
+2026-04-10 16:06:52,555 [INFO] engines.inflow: ISIN BD0933101158: generated 31 coupon events (HFLY)
+2026-04-10 16:06:52,583 [INFO] engines.inflow: ISIN BD0933161202: generated 41 coupon events (HFLY)
+2026-04-10 16:06:52,628 [INFO] engines.inflow: ISIN BD0933201206: generated 41 coupon events (HFLY)
+2026-04-10 16:06:52,689 [INFO] engines.inflow: ISIN BD0933141154: generated 31 coupon events (HFLY)
+2026-04-10 16:06:52,735 [INFO] engines.inflow: ISIN BD0933241202: generated 41 coupon events (HFLY)
+2026-04-10 16:06:52,793 [INFO] engines.inflow: ISIN BD0934281207: generated 41 coupon events (HFLY)
+2026-04-10 16:06:52,854 [INFO] engines.inflow: ISIN BD0934311103: generated 21 coupon events (HFLY)
+2026-04-10 16:06:52,882 [INFO] engines.inflow: ISIN BD0934321201: generated 41 coupon events (HFLY)
+2026-04-10 16:06:52,935 [INFO] engines.inflow: ISIN BD0934361207: generated 41 coupon events (HFLY)
+2026-04-10 16:06:52,984 [INFO] engines.inflow: ISIN BD0934401102: generated 21 coupon events (HFLY)
+2026-04-10 16:06:53,001 [INFO] engines.inflow: ISIN BD0934401201: generated 41 coupon events (HFLY)
+2026-04-10 16:06:53,050 [INFO] engines.inflow: ISIN BD0934441207: generated 41 coupon events (HFLY)
+2026-04-10 16:06:53,087 [INFO] engines.inflow: ISIN BD0934481104: generated 21 coupon events (HFLY)
+2026-04-10 16:06:53,111 [INFO] engines.inflow: ISIN BD0934481203: generated 41 coupon events (HFLY)
+2026-04-10 16:06:53,155 [INFO] engines.inflow: ISIN BD0934041205: generated 41 coupon events (HFLY)
+2026-04-10 16:06:53,207 [INFO] engines.inflow: ISIN BD0934081201: generated 41 coupon events (HFLY)
+2026-04-10 16:06:53,242 [INFO] engines.inflow: ISIN BD0934121205: generated 41 coupon events (HFLY)
+2026-04-10 16:06:53,280 [INFO] engines.inflow: ISIN BD0934161201: generated 41 coupon events (HFLY)
+2026-04-10 16:06:53,320 [INFO] engines.inflow: ISIN BD0934201205: generated 41 coupon events (HFLY)
+2026-04-10 16:06:53,357 [INFO] engines.inflow: ISIN BD0935291106: generated 21 coupon events (HFLY)
+2026-04-10 16:06:53,377 [INFO] engines.inflow: ISIN BD0935371106: generated 21 coupon events (HFLY)
+2026-04-10 16:06:53,405 [INFO] engines.inflow: ISIN BD0935391153: generated 31 coupon events (HFLY)
+2026-04-10 16:06:53,430 [INFO] engines.inflow: ISIN BD0935451106: generated 21 coupon events (HFLY)
+2026-04-10 16:06:53,453 [INFO] engines.inflow: ISIN BD0935441156: generated 31 coupon events (HFLY)
+2026-04-10 16:06:53,487 [INFO] engines.inflow: ISIN BD0935031106: generated 21 coupon events (HFLY)
+2026-04-10 16:06:53,510 [INFO] engines.inflow: ISIN BD0935041204: generated 41 coupon events (HFLY)
+2026-04-10 16:06:53,548 [INFO] engines.inflow: ISIN BD0935191108: generated 21 coupon events (HFLY)
+2026-04-10 16:06:53,577 [INFO] engines.inflow: ISIN BD0935201204: generated 41 coupon events (HFLY)
+2026-04-10 16:06:53,624 [INFO] engines.inflow: ISIN BD0936401209: generated 41 coupon events (HFLY)
+2026-04-10 16:06:53,662 [INFO] engines.inflow: ISIN BD0936491150: generated 31 coupon events (HFLY)
+2026-04-10 16:06:53,706 [INFO] engines.inflow: ISIN BD0937821157: generated 31 coupon events (HFLY)
+2026-04-10 16:06:53,747 [INFO] engines.inflow: ISIN BD0937901157: generated 31 coupon events (HFLY)
+2026-04-10 16:06:53,779 [INFO] engines.inflow: ISIN BD0938141209: generated 41 coupon events (HFLY)
+2026-04-10 16:06:53,822 [INFO] engines.inflow: ISIN BD0939371151: generated 31 coupon events (HFLY)
+2026-04-10 16:06:53,853 [INFO] engines.inflow: ISIN BD0939391209: generated 41 coupon events (HFLY)
+2026-04-10 16:06:53,896 [INFO] engines.inflow: ISIN BD0940381157: generated 31 coupon events (HFLY)
+2026-04-10 16:06:53,932 [INFO] engines.inflow: ISIN BD0940401203: generated 41 coupon events (HFLY)
+2026-04-10 16:06:53,980 [INFO] engines.inflow: ISIN BD0940441209: generated 41 coupon events (HFLY)
+2026-04-10 16:06:54,032 [INFO] engines.inflow: ISIN BD0940081153: generated 31 coupon events (HFLY)
+2026-04-10 16:06:54,066 [INFO] engines.inflow: ISIN BD0941451207: generated 41 coupon events (HFLY)
+2026-04-10 16:06:54,101 [INFO] engines.inflow: ISIN BD0942781206: generated 41 coupon events (HFLY)
+2026-04-10 16:06:54,139 [INFO] engines.inflow: ISIN BD0942901200: generated 41 coupon events (HFLY)
+2026-04-10 16:06:54,175 [INFO] engines.inflow: ISIN BD0942241201: generated 41 coupon events (HFLY)
+2026-04-10 16:06:54,213 [INFO] engines.inflow: ISIN BD0943281206: generated 41 coupon events (HFLY)
+2026-04-10 16:06:54,264 [INFO] engines.inflow: ISIN BD0944051202: generated 41 coupon events (HFLY)
+2026-04-10 16:06:54,318 [INFO] engines.inflow: ISIN BD0945461202: generated 41 coupon events (HFLY)
+2026-04-10 16:06:54,349 [INFO] engines.inflow: ISIN BD0945081208: generated 41 coupon events (HFLY)
+2026-04-10 16:06:54,388 [INFO] engines.inflow: ISIN BD0927141038: generated 13 coupon events (QRTY)
+2026-04-10 16:06:54,404 [INFO] engines.inflow: ISIN BD0927231037: generated 13 coupon events (QRTY)
+2026-04-10 16:06:54,421 [INFO] engines.inflow: ISIN BD0928271032: generated 13 coupon events (QRTY)
+2026-04-10 16:06:54,437 [INFO] engines.inflow: ISIN BD0928431032: generated 13 coupon events (QRTY)
+2026-04-10 16:06:54,452 [INFO] engines.inflow: ISIN BD0928471038: generated 13 coupon events (QRTY)
+2026-04-10 16:06:54,474 [INFO] engines.inflow: ISIN BD0928011032: generated 13 coupon events (QRTY)
+2026-04-10 16:06:54,491 [INFO] engines.inflow: ISIN BD0928131038: generated 13 coupon events (QRTY)
+2026-04-10 16:06:54,508 [INFO] engines.inflow: ISIN BD0929261032: generated 13 coupon events (QRTY)
+2026-04-10 16:06:54,654 [INFO] fetchers.auction_parser: Auction HTML parse from C:\Users\Administrator\Desktop\mm_dashboard\data\seeds\auction_calendar.csv: 24 total rows | T-Bill: 15 | T-Bond: 8 | FRTB: 1
+2026-04-10 16:06:54,654 [INFO] engines.outflow: AUCTION | T_BILL 91D  | auction_date=2026-04-05 | adjusted_outflow_date=2026-04-06 | roll=0d | reason: No adjustment needed
+2026-04-10 16:06:54,655 [INFO] engines.outflow: AUCTION | T_BILL 182D | auction_date=2026-04-05 | adjusted_outflow_date=2026-04-06 | roll=0d | reason: No adjustment needed
+2026-04-10 16:06:54,655 [INFO] engines.outflow: AUCTION | T_BILL 364D | auction_date=2026-04-05 | adjusted_outflow_date=2026-04-06 | roll=0d | reason: No adjustment needed
+2026-04-10 16:06:54,655 [INFO] engines.outflow: AUCTION | T_BILL 91D  | auction_date=2026-04-12 | adjusted_outflow_date=2026-04-13 | roll=0d | reason: No adjustment needed
+2026-04-10 16:06:54,655 [INFO] engines.outflow: AUCTION | T_BILL 182D | auction_date=2026-04-12 | adjusted_outflow_date=2026-04-13 | roll=0d | reason: No adjustment needed
+2026-04-10 16:06:54,656 [INFO] engines.outflow: AUCTION | T_BILL 364D | auction_date=2026-04-12 | adjusted_outflow_date=2026-04-13 | roll=0d | reason: No adjustment needed
+2026-04-10 16:06:54,656 [INFO] engines.outflow: AUCTION | T_BILL 91D  | auction_date=2026-04-19 | adjusted_outflow_date=2026-04-20 | roll=0d | reason: No adjustment needed
+2026-04-10 16:06:54,656 [INFO] engines.outflow: AUCTION | T_BILL 182D | auction_date=2026-04-19 | adjusted_outflow_date=2026-04-20 | roll=0d | reason: No adjustment needed
+2026-04-10 16:06:54,656 [INFO] engines.outflow: AUCTION | T_BILL 364D | auction_date=2026-04-19 | adjusted_outflow_date=2026-04-20 | roll=0d | reason: No adjustment needed
+2026-04-10 16:06:54,657 [INFO] engines.outflow: AUCTION | T_BILL 91D  | auction_date=2026-04-26 | adjusted_outflow_date=2026-04-27 | roll=0d | reason: No adjustment needed
+2026-04-10 16:06:54,657 [INFO] engines.outflow: AUCTION | T_BILL 182D | auction_date=2026-04-26 | adjusted_outflow_date=2026-04-27 | roll=0d | reason: No adjustment needed
+2026-04-10 16:06:54,657 [INFO] engines.outflow: AUCTION | T_BILL 364D | auction_date=2026-04-26 | adjusted_outflow_date=2026-04-27 | roll=0d | reason: No adjustment needed
+2026-04-10 16:06:54,657 [INFO] engines.outflow: AUCTION | T_BILL 91D  | auction_date=2026-05-03 | adjusted_outflow_date=2026-05-04 | roll=0d | reason: No adjustment needed
+2026-04-10 16:06:54,657 [INFO] engines.outflow: AUCTION | T_BILL 182D | auction_date=2026-05-03 | adjusted_outflow_date=2026-05-04 | roll=0d | reason: No adjustment needed
+2026-04-10 16:06:54,658 [INFO] engines.outflow: AUCTION | T_BILL 364D | auction_date=2026-05-03 | adjusted_outflow_date=2026-05-04 | roll=0d | reason: No adjustment needed
+2026-04-10 16:06:54,658 [INFO] engines.outflow: AUCTION | T_BOND 2Y   | auction_date=2026-04-08 | adjusted_outflow_date=2026-04-09 | roll=0d | reason: No adjustment needed
+2026-04-10 16:06:54,658 [INFO] engines.outflow: AUCTION | T_BOND 5Y   | auction_date=2026-04-08 | adjusted_outflow_date=2026-04-09 | roll=0d | reason: No adjustment needed
+2026-04-10 16:06:54,658 [INFO] engines.outflow: AUCTION | T_BOND 10Y  | auction_date=2026-04-08 | adjusted_outflow_date=2026-04-09 | roll=0d | reason: No adjustment needed
+2026-04-10 16:06:54,658 [INFO] engines.outflow: AUCTION | T_BOND 15Y  | auction_date=2026-04-08 | adjusted_outflow_date=2026-04-09 | roll=0d | reason: No adjustment needed
+2026-04-10 16:06:54,659 [INFO] engines.outflow: AUCTION | T_BOND 2Y   | auction_date=2026-04-22 | adjusted_outflow_date=2026-04-23 | roll=0d | reason: No adjustment needed
+2026-04-10 16:06:54,659 [INFO] engines.outflow: AUCTION | T_BOND 5Y   | auction_date=2026-04-22 | adjusted_outflow_date=2026-04-23 | roll=0d | reason: No adjustment needed
+2026-04-10 16:06:54,659 [INFO] engines.outflow: AUCTION | T_BOND 10Y  | auction_date=2026-04-22 | adjusted_outflow_date=2026-04-23 | roll=0d | reason: No adjustment needed
+2026-04-10 16:06:54,660 [INFO] engines.outflow: AUCTION | T_BOND 15Y  | auction_date=2026-04-22 | adjusted_outflow_date=2026-04-23 | roll=0d | reason: No adjustment needed
+2026-04-10 16:06:54,660 [INFO] engines.outflow: AUCTION | FRTB 3Y_FRTB | auction_date=2026-04-08 | adjusted_outflow_date=2026-04-09 | roll=0d | reason: No adjustment needed
+2026-04-10 16:06:54,660 [INFO] engines.outflow: ============================================================
+2026-04-10 16:06:54,660 [INFO] engines.outflow: AUCTION OUTFLOW SUMMARY (24 events, 0 errors)
+2026-04-10 16:06:54,661 [INFO] engines.outflow: Type         Tenor  AucNo  Auction Date Outflow Date Adjustment
+2026-04-10 16:06:54,661 [INFO] engines.outflow: T_BILL       91D    44     2026-04-05   2026-04-06   No adjustment needed
+2026-04-10 16:06:54,662 [INFO] engines.outflow: T_BILL       182D   44     2026-04-05   2026-04-06   No adjustment needed
+2026-04-10 16:06:54,662 [INFO] engines.outflow: T_BILL       364D   44     2026-04-05   2026-04-06   No adjustment needed
+2026-04-10 16:06:54,662 [INFO] engines.outflow: T_BILL       91D    45     2026-04-12   2026-04-13   No adjustment needed
+2026-04-10 16:06:54,662 [INFO] engines.outflow: T_BILL       182D   45     2026-04-12   2026-04-13   No adjustment needed
+2026-04-10 16:06:54,663 [INFO] engines.outflow: T_BILL       364D   45     2026-04-12   2026-04-13   No adjustment needed
+2026-04-10 16:06:54,663 [INFO] engines.outflow: T_BILL       91D    46     2026-04-19   2026-04-20   No adjustment needed
+2026-04-10 16:06:54,663 [INFO] engines.outflow: T_BILL       182D   46     2026-04-19   2026-04-20   No adjustment needed
+2026-04-10 16:06:54,663 [INFO] engines.outflow: T_BILL       364D   46     2026-04-19   2026-04-20   No adjustment needed
+2026-04-10 16:06:54,664 [INFO] engines.outflow: T_BILL       91D    47     2026-04-26   2026-04-27   No adjustment needed
+2026-04-10 16:06:54,664 [INFO] engines.outflow: T_BILL       182D   47     2026-04-26   2026-04-27   No adjustment needed
+2026-04-10 16:06:54,664 [INFO] engines.outflow: T_BILL       364D   47     2026-04-26   2026-04-27   No adjustment needed
+2026-04-10 16:06:54,664 [INFO] engines.outflow: T_BILL       91D    48     2026-05-03   2026-05-04   No adjustment needed
+2026-04-10 16:06:54,665 [INFO] engines.outflow: T_BILL       182D   48     2026-05-03   2026-05-04   No adjustment needed
+2026-04-10 16:06:54,665 [INFO] engines.outflow: T_BILL       364D   48     2026-05-03   2026-05-04   No adjustment needed
+2026-04-10 16:06:54,665 [INFO] engines.outflow: T_BOND       2Y     B01    2026-04-08   2026-04-09   No adjustment needed
+2026-04-10 16:06:54,666 [INFO] engines.outflow: T_BOND       5Y     B01    2026-04-08   2026-04-09   No adjustment needed
+2026-04-10 16:06:54,666 [INFO] engines.outflow: T_BOND       10Y    B01    2026-04-08   2026-04-09   No adjustment needed
+2026-04-10 16:06:54,666 [INFO] engines.outflow: T_BOND       15Y    B01    2026-04-08   2026-04-09   No adjustment needed
+2026-04-10 16:06:54,667 [INFO] engines.outflow: T_BOND       2Y     B02    2026-04-22   2026-04-23   No adjustment needed
+2026-04-10 16:06:54,667 [INFO] engines.outflow: T_BOND       5Y     B02    2026-04-22   2026-04-23   No adjustment needed
+2026-04-10 16:06:54,668 [INFO] engines.outflow: T_BOND       10Y    B02    2026-04-22   2026-04-23   No adjustment needed
+2026-04-10 16:06:54,669 [INFO] engines.outflow: T_BOND       15Y    B02    2026-04-22   2026-04-23   No adjustment needed
+2026-04-10 16:06:54,669 [INFO] engines.outflow: FRTB         3Y_FRTB F01    2026-04-08   2026-04-09   No adjustment needed
+2026-04-10 16:06:54,670 [INFO] engines.outflow: ============================================================
+2026-04-10 16:06:54,840 [INFO] engines.aggregation: Built 123 daily flow rows
+2026-04-10 16:06:54,862 [INFO] engines.pipeline: Pipeline complete: {'securities': 320, 'coupons': 6961, 'maturities': 320, 'auctions': 24, 'daily_rows': 123, 'errors': []}
+2026-04-10 16:06:54,866 [INFO] run: Pipeline result: {'securities': 320, 'coupons': 6961, 'maturities': 320, 'auctions': 24, 'daily_rows': 123, 'errors': []}

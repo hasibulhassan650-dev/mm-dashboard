@@ -1,0 +1,61 @@
+# data/holidays/FY2025-26.yaml
+# Bangladesh Bank public holiday calendar — FY 2025-2026 (July 2025 – June 2026)
+# Source: BB circular / gazette. Update moon-sighting dates when confirmed.
+# Types: GOVT_GAZETTE | MOON_SIGHTING | BB_CIRCULAR | MOON_SIGHTING_PENDING
+
+fiscal_year: "2025-26"
+holidays:
+  - date: "2025-08-15"
+    name: "National Mourning Day"
+    type: GOVT_GAZETTE
+  - date: "2025-10-02"
+    name: "Birthday of Mahatma Gandhi (if observed)"
+    type: GOVT_GAZETTE
+  - date: "2025-12-16"
+    name: "Victory Day"
+    type: GOVT_GAZETTE
+  - date: "2025-12-25"
+    name: "Christmas Day"
+    type: GOVT_GAZETTE
+  - date: "2026-02-21"
+    name: "International Mother Language Day / Shaheed Dibosh"
+    type: GOVT_GAZETTE
+  - date: "2026-03-17"
+    name: "Birthday of Father of the Nation Bangabandhu Sheikh Mujibur Rahman"
+    type: GOVT_GAZETTE
+  - date: "2026-03-26"
+    name: "Independence Day"
+    type: GOVT_GAZETTE
+  # Eid ul Fitr — moon sighting typically announced on eve of holiday
+  # These are approximate; update when National Moon Sighting Committee announces
+  - date: "2026-03-30"
+    name: "Eid ul Fitr (approximate)"
+    type: MOON_SIGHTING_PENDING
+  - date: "2026-03-31"
+    name: "Eid ul Fitr (approximate)"
+    type: MOON_SIGHTING_PENDING
+  - date: "2026-04-01"
+    name: "Eid ul Fitr (approximate)"
+    type: MOON_SIGHTING_PENDING
+  - date: "2026-04-13"
+    name: "Pahela Baishakh (Bengali New Year)"
+    type: GOVT_GAZETTE
+  - date: "2026-04-14"
+    name: "Pahela Baishakh (second day, if observed)"
+    type: GOVT_GAZETTE
+  - date: "2026-05-01"
+    name: "May Day / International Workers' Day"
+    type: GOVT_GAZETTE
+  - date: "2026-05-25"
+    name: "Buddha Purnima"
+    type: GOVT_GAZETTE
+  # Eid ul Adha — approximate, moon-sighting dependent
+  - date: "2026-06-17"
+    name: "Eid ul Adha (approximate)"
+    type: MOON_SIGHTING_PENDING
+  - date: "2026-06-18"
+    name: "Eid ul Adha (approximate)"
+    type: MOON_SIGHTING_PENDING
+  - date: "2026-06-19"
+    name: "Eid ul Adha (approximate)"
+    type: MOON_SIGHTING_PENDING

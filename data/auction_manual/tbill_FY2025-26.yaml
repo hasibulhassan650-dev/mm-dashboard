@@ -1,0 +1,66 @@
+# data/auction_manual/tbill_FY2025-26.yaml
+# T-Bill auction calendar — FY 2025-2026
+# Source: bb.org.bd/en/index.php/monetaryactivity/auc_calendar/1
+# Amounts in BDT CRORE (converted to million at ingestion: × 10)
+# Update weekly after each auction result press release.
+# outflow_status: PLANNED | CONFIRMED | CANCELLED
+# accepted_* fields: fill after press release, leave null if not yet published
+
+fiscal_year: "2025-26"
+auctions:
+  - auction_no: 44
+    auction_date: "2026-04-05"
+    tenors:
+      - tenor: "91D"
+        offered_crore: 3500.00
+        accepted_crore: null
+        weighted_avg_yield_pct: null
+        outflow_status: PLANNED
+      - tenor: "182D"
+        offered_crore: 3000.00
+        accepted_crore: null
+        weighted_avg_yield_pct: null
+        outflow_status: PLANNED
+      - tenor: "364D"
+        offered_crore: 2500.00
+        accepted_crore: null
+        weighted_avg_yield_pct: null
+        outflow_status: PLANNED
+
+  - auction_no: 45
+    auction_date: "2026-04-12"
+    tenors:
+      - tenor: "91D"
+        offered_crore: 3500.00
+        accepted_crore: null
+        weighted_avg_yield_pct: null
+        outflow_status: PLANNED
+      - tenor: "182D"
+        offered_crore: 3000.00
+        accepted_crore: null
+        weighted_avg_yield_pct: null
+        outflow_status: PLANNED
+      - tenor: "364D"
+        offered_crore: 2500.00
+        accepted_crore: null
+        weighted_avg_yield_pct: null
+        outflow_status: PLANNED
+
+  - auction_no: 46
+    auction_date: "2026-04-19"
+    tenors:
+      - tenor: "91D"
+        offered_crore: 3500.00
+        accepted_crore: null
+        weighted_avg_yield_pct: null
+        outflow_status: PLANNED
+      - tenor: "182D"
+        offered_crore: 3000.00
+        accepted_crore: null
+        weighted_avg_yield_pct: null
+        outflow_status: PLANNED
+      - tenor: "364D"
+        offered_crore: 2500.00
+        accepted_crore: null
+        weighted_avg_yield_pct: null
+        outflow_status: PLANNED

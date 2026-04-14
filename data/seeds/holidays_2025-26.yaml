@@ -1,0 +1,33 @@
+fiscal_year: "2025-26"
+# Source: Bangladesh Bank holiday circular (update with confirmed Eid dates)
+holidays:
+  - date: "2026-02-21"
+    name: "Shaheed Dibosh & International Mother Language Day"
+    type: GOVT_GAZETTE
+  - date: "2026-03-17"
+    name: "Birthday of Bangabandhu Sheikh Mujibur Rahman"
+    type: GOVT_GAZETTE
+  - date: "2026-03-26"
+    name: "Independence Day"
+    type: GOVT_GAZETTE
+  - date: "2026-03-30"
+    name: "Eid ul Fitr Day 1 (approximate - update on moon sighting)"
+    type: MOON_SIGHTING
+  - date: "2026-03-31"
+    name: "Eid ul Fitr Day 2 (approximate)"
+    type: MOON_SIGHTING
+  - date: "2026-04-01"
+    name: "Eid ul Fitr Day 3 (approximate)"
+    type: MOON_SIGHTING
+  - date: "2026-05-01"
+    name: "May Day (International Labour Day)"
+    type: GOVT_GAZETTE
+  - date: "2026-06-05"
+    name: "Eid ul Adha Day 1 (approximate)"
+    type: MOON_SIGHTING
+  - date: "2026-06-06"
+    name: "Eid ul Adha Day 2 (approximate)"
+    type: MOON_SIGHTING
+  - date: "2026-06-07"
+    name: "Eid ul Adha Day 3 (approximate)"
+    type: MOON_SIGHTING
