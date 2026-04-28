@@ -23,6 +23,9 @@ _IS_CLOUD = os.environ.get("HOME") == "/home/adminuser"
 
 @event.listens_for(Engine, "connect")
 def set_sqlite_pragma(dbapi_conn, _):
+    # Pragmas only apply to SQLite; skip for PostgreSQL
+    if "psycopg" in type(dbapi_conn).__module__:
+        return
     cursor = dbapi_conn.cursor()
     try:
         if not _IS_CLOUD:
@@ -113,10 +116,10 @@ class MaturityEvent(Base):
 
 class AuctionEvent(Base):
     __tablename__ = "auction_events"
-    __table_args__ = (UniqueConstraint("fiscal_year", "auction_no", "tenor_label"),)
+    __table_args__ = (UniqueConstraint("fiscal_year", "auction_no", "tenor_label", "auction_date"),)
     id                        = Column(Integer, primary_key=True, autoincrement=True)
     fiscal_year               = Column(String(7))
-    auction_no                = Column(Integer)
+    auction_no                = Column(String(20))   # String: bills="44", bonds="B38"
     auction_date              = Column(Date)
     settlement_date           = Column(Date)
     security_type             = Column(String(10))
@@ -132,6 +135,39 @@ class AuctionEvent(Base):
     roll_reason               = Column(Text)
     source                    = Column(String(300))
     data_quality              = Column(String(50), default="OK")
+
+
+class PrimaryYieldSnapshot(Base):
+    __tablename__ = "primary_yield_snapshots"
+    __table_args__ = (UniqueConstraint("tenor_label", "auction_date"),)
+    id                 = Column(Integer, primary_key=True, autoincrement=True)
+    snapshot_date      = Column(Date, nullable=False)
+    auction_date       = Column(Date)
+    security_type      = Column(String(10))
+    tenor_label        = Column(String(15))
+    tenor_years        = Column(Float)
+    cutoff_yield_pct   = Column(Float)
+    offered_bdt_crore  = Column(Float)
+    accepted_bdt_crore = Column(Float)
+    source             = Column(String(300))
+    ingested_utc       = Column(DateTime)
+
+
+class OMOTransaction(Base):
+    """One row = one new OMO transaction done on transaction_date."""
+    __tablename__ = "omo_transactions"
+    __table_args__ = (UniqueConstraint("transaction_date", "instrument", "tenor_days", "accepted_bdt_crore"),)
+    id                 = Column(Integer, primary_key=True, autoincrement=True)
+    transaction_date   = Column(Date, nullable=False)
+    maturity_date      = Column(Date)              # transaction_date + tenor_days
+    instrument         = Column(String(30), nullable=False)  # CB_REPO, SLF, IBLF, AR, SDF
+    tenor_label        = Column(String(10))        # "7D", "14D", "1D", "28D"
+    tenor_days         = Column(Integer)
+    accepted_bdt_crore = Column(Float)             # positive value for both injection + absorption
+    rate_pct           = Column(Float)
+    direction          = Column(String(20))        # INJECTION or ABSORPTION
+    source_pdf         = Column(String(300))
+    ingested_utc       = Column(DateTime)
 
 
 class HolidayCalendar(Base):
@@ -162,12 +198,13 @@ class DailyNetFlow(Base):
 # ── Engine & Session ──────────────────────────────────────────────────────────
 
 def get_engine():
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    return create_engine(
-        DB_URL,
-        echo=False,
-        connect_args={"check_same_thread": False},
-    )
+    if DB_PATH:
+        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    is_sqlite = DB_URL.startswith("sqlite")
+    kwargs = dict(echo=False, pool_pre_ping=True)
+    if is_sqlite:
+        kwargs["connect_args"] = {"check_same_thread": False}
+    return create_engine(DB_URL, **kwargs)
 
 def get_session():
     engine = get_engine()

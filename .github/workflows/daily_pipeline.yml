@@ -1,0 +1,54 @@
+# .github/workflows/daily_pipeline.yml
+#
+# Runs every day at 3:00 AM UTC (9:00 AM Bangladesh time).
+# Fetches GSOM data, processes auctions, updates daily flows.
+# Writes results to Supabase — no browser needed for this part.
+#
+# Chrome-based fetches (OMO, Treasury) run manually from your local machine.
+
+name: Daily Data Pipeline
+
+on:
+  schedule:
+    - cron: "0 3 * * *"      # 3:00 AM UTC = 9:00 AM BST daily
+  workflow_dispatch:          # also allows manual trigger from GitHub UI
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run pipeline
+        run: python -c "
+from engines.pipeline import run_pipeline
+import datetime
+today = datetime.date.today()
+result = run_pipeline(
+    date_from=today - datetime.timedelta(days=30),
+    date_to=today   + datetime.timedelta(days=180),
+)
+print('Pipeline result:', result)
+if result.get('errors'):
+    print('ERRORS:', result['errors'])
+    exit(1)
+"
+
+      - name: Log result
+        if: always()
+        run: echo "Pipeline finished at $(date)"

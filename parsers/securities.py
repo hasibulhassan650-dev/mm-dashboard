@@ -54,21 +54,40 @@ def _norm_name(raw: str) -> str:
 
 
 def _parse_header(soup: BeautifulSoup) -> Dict:
-    """Extract settlement date and yield date from the H5 header."""
-    h5 = soup.find("h5")
+    """
+    Extract settlement date and yield date from the page header.
+    Searches h4, h5, h6, and paragraph tags to be robust against
+    minor page layout changes by BB.
+    """
     header = {"settlement_date": None, "yield_date": None}
-    if not h5:
-        log.error("No <h5> found in GSOM page — cannot determine settlement date")
-        return header
-    text = h5.get_text(" ", strip=True)
-    # 'MTM Data for Settlement Date: 02-APR-2026'
-    m = re.search(r"Settlement Date[:\s]+(\d{2}-[A-Z]{3}-\d{4})", text, re.I)
-    if m:
-        header["settlement_date"] = parse_gsom_date(m.group(1))
-    # '[Yield date: 01-APR-26]'
-    m = re.search(r"Yield date[:\s]+(\d{2}-[A-Z]{3}-\d{2,4})", text, re.I)
-    if m:
-        header["yield_date"] = parse_gsom_date(m.group(1))
+
+    # Collect all candidate text blocks from heading/para elements
+    candidates = []
+    for tag in soup.find_all(["h4", "h5", "h6", "p", "div"]):
+        text = tag.get_text(" ", strip=True)
+        if "settlement" in text.lower() or "date" in text.lower():
+            candidates.append(text)
+
+    # Also search the full page text as fallback
+    full_text = soup.get_text(" ")
+    candidates.append(full_text)
+
+    for text in candidates:
+        if header["settlement_date"] is None:
+            m = re.search(r"Settlement\s+Date[:\s]+(\d{2}-[A-Z]{3}-\d{4})", text, re.I)
+            if m:
+                header["settlement_date"] = parse_gsom_date(m.group(1))
+        if header["yield_date"] is None:
+            m = re.search(r"Yield\s+date[:\s]+(\d{2}-[A-Z]{3}-\d{2,4})", text, re.I)
+            if m:
+                header["yield_date"] = parse_gsom_date(m.group(1))
+        if header["settlement_date"] is not None:
+            break
+
+    if header["settlement_date"] is None:
+        log.error("Could not find Settlement Date in page — will use today as fallback")
+        header["settlement_date"] = datetime.date.today()
+
     return header
 
 

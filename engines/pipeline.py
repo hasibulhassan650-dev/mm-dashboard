@@ -1,63 +1,69 @@
 """
 engines/pipeline.py — Full daily ETL pipeline.
 
-Run order:
-  1. Load holidays into calendar_utils
-  2. Fetch + parse GSOM pages
-  3. Upsert securities and MTM snapshots
-  4. Generate maturity and coupon events
-  5. Fetch auction data from seed
-  6. Generate auction settlement events
-  7. Aggregate into daily_net_flow
-  8. Persist everything to SQLite
+Every run:
+  1. Load holidays from DB into memory
+  2. Fetch ALL three GSOM pages (exhaustive live fetch)
+  3. Upsert every security seen — new ISINs added, existing ones updated
+  4. Regenerate maturity + coupon events for EVERY security in the DB
+     (not just today's fetch — so already-matured ISINs still contribute)
+  5. Fetch auction rows from seed CSV
+  6. Compute settlement dates and upsert auction events
+  7. Re-query ALL events from DB for the date range
+  8. Aggregate into daily_net_flow and persist
 """
 import datetime
 import logging
-import json
 from typing import List
 
-from config import (
-    GSOM_TBOND_URL, GSOM_FRTB_URL, GSOM_TBILL_URL, SEEDS_DIR
-)
 import calendar_utils
+from config import GSOM_TBOND_URL, GSOM_FRTB_URL, GSOM_TBILL_URL
 from db import (
     init_db, get_session,
-    Security, MtmSnapshot, CouponEvent, MaturityEvent,
-    AuctionEvent, HolidayCalendar, DailyNetFlow
+    Security, CouponEvent, MaturityEvent,
+    AuctionEvent, HolidayCalendar, DailyNetFlow, MtmSnapshot,
+    PrimaryYieldSnapshot, OMOTransaction,
 )
 from fetchers.gsom import fetch_gsom_html
-from fetchers.auction import fetch_auction_rows
-from parsers.securities import (
-    parse_tbond_or_frtb, parse_tbill, validate_rows
-)
+from fetchers.auction_live import fetch_live_auction_rows as fetch_auction_rows
+from fetchers.treasury import fetch_primary_yields, fetch_primary_yields_history
+from parsers.securities import parse_tbond_or_frtb, parse_tbill, validate_rows
 from engines.inflow import generate_maturity_event, generate_coupon_schedule
-from engines.outflow import generate_auction_event, generate_all_auction_events
+from engines.outflow import generate_all_auction_events
 from engines.aggregation import build_daily_flows
 
 log = logging.getLogger(__name__)
 
 
-def load_holidays_from_db(session) -> None:
-    """Load holidays from DB into calendar_utils in-memory set."""
+# ══════════════════════════════════════════════════════════════════════════════
+# DB helpers
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _load_holidays(session):
     rows = session.query(HolidayCalendar).all()
-    dates = {r.calendar_date for r in rows}
-    calendar_utils.load_holidays(dates)
-    log.info("Loaded %d holidays from DB", len(dates))
+    calendar_utils.load_holidays({r.calendar_date for r in rows})
+    log.info("Loaded %d holidays", len(rows))
 
 
-def _upsert_security(session, row: dict) -> None:
-    """Insert or update a security master record."""
+def _upsert_security(session, row: dict):
+    """Insert new security or update outstanding/quality on existing one."""
     existing = session.get(Security, row["isin"])
+    now = datetime.datetime.utcnow()
+
     if existing:
-        # Update mutable fields if this snapshot is newer
-        if (row.get("settlement_date") or datetime.date.min) >= (existing.source_settlement_date or datetime.date.min):
+        snap_date     = row.get("settlement_date") or datetime.date.min
+        existing_date = existing.source_settlement_date or datetime.date.min
+        if snap_date >= existing_date:
             existing.outstanding_bdt_mill   = row.get("outstanding_bdt_mill")
             existing.source_settlement_date = row.get("settlement_date")
             existing.data_quality           = row.get("data_quality", "OK")
-            import datetime as dt
-            existing.last_updated_utc       = dt.datetime.utcnow()
+            existing.last_updated_utc       = now
+            # Also update coupon fields in case of re-issue with new rate
+            if row.get("coupon_rate_pct") is not None:
+                existing.coupon_rate_pct    = row["coupon_rate_pct"]
+            if row.get("coupon_frequency") not in (None, "NONE"):
+                existing.coupon_frequency   = row["coupon_frequency"]
     else:
-        import datetime as dt
         session.add(Security(
             isin                   = row["isin"],
             security_name_raw      = row.get("security_name_raw"),
@@ -72,22 +78,22 @@ def _upsert_security(session, row: dict) -> None:
             source_page            = row.get("source_page"),
             source_settlement_date = row.get("settlement_date"),
             data_quality           = row.get("data_quality", "OK"),
-            last_updated_utc       = dt.datetime.utcnow(),
+            last_updated_utc       = now,
         ))
 
 
-def _upsert_maturity(session, event: dict) -> None:
+def _upsert_maturity(session, event: dict):
+    """Replace maturity event for an ISIN (one per ISIN, always fresh)."""
     from sqlalchemy import delete
-    session.execute(
-        delete(MaturityEvent).where(MaturityEvent.isin == event["isin"])
-    )
+    session.execute(delete(MaturityEvent).where(MaturityEvent.isin == event["isin"]))
     session.add(MaturityEvent(**{
         k: v for k, v in event.items()
         if k in MaturityEvent.__table__.columns.keys()
     }))
 
 
-def _upsert_coupon(session, event: dict) -> None:
+def _upsert_coupon(session, event: dict):
+    """Insert coupon event or update amount if outstanding changed."""
     from sqlalchemy import select
     stmt = select(CouponEvent).where(
         CouponEvent.isin           == event["isin"],
@@ -99,6 +105,7 @@ def _upsert_coupon(session, event: dict) -> None:
         existing.payment_date              = event["payment_date"]
         existing.outstanding_used_bdt_mill = event["outstanding_used_bdt_mill"]
         existing.formula_string            = event["formula_string"]
+        existing.calc_method               = event["calc_method"]
         existing.data_quality              = event["data_quality"]
     else:
         session.add(CouponEvent(**{
@@ -107,80 +114,340 @@ def _upsert_coupon(session, event: dict) -> None:
         }))
 
 
-def _upsert_auction(session, event: dict) -> None:
-    from sqlalchemy import select
-    stmt = select(AuctionEvent).where(
-        AuctionEvent.fiscal_year  == event["fiscal_year"],
-        AuctionEvent.auction_no   == event["auction_no"],
-        AuctionEvent.tenor_label  == event["tenor_label"],
-    )
-    existing = session.execute(stmt).scalar_one_or_none()
-    if existing:
-        # Only update offered if not yet confirmed
-        if existing.outflow_status != "CONFIRMED":
-            existing.offered_amount_bdt_crore = event["offered_amount_bdt_crore"]
-            existing.offered_amount_bdt_mill  = event["offered_amount_bdt_mill"]
-            existing.settlement_date          = event["settlement_date"]
-    else:
-        session.add(AuctionEvent(**{
-            k: v for k, v in event.items()
-            if k in AuctionEvent.__table__.columns.keys()
-        }))
+def _upsert_auction(session, event: dict):
+    """Raw SQL insert/update — bypasses SQLAlchemy type coercion entirely.
+    auction_no stored as TEXT always: '44' for bills, 'B38' for bonds."""
+    from sqlalchemy import text
 
+    fy      = str(event.get("fiscal_year") or "")
+    ano     = str(event.get("auction_no")  or "")
+    tenor   = str(event.get("tenor_label") or "")
+    ad      = str(event.get("auction_date") or "")
+    sd      = str(event.get("settlement_date") or "")
+    stype   = str(event.get("security_type") or "")
+    oc      = float(event.get("offered_amount_bdt_crore") or 0)
+    om      = float(event.get("offered_amount_bdt_mill")  or 0)
+    ac      = event.get("accepted_amount_bdt_crore")
+    am      = event.get("accepted_amount_bdt_mill")
+    status  = str(event.get("outflow_status") or "PLANNED")
+    rd      = int(event.get("roll_days") or 0)
+    rr      = str(event.get("roll_reason") or event.get("adjustment_reason") or "")
+    src     = str(event.get("source") or "")
+    dq      = str(event.get("data_quality") or "OK")
+
+    existing = session.execute(
+        text("SELECT outflow_status FROM auction_events WHERE fiscal_year=:fy AND auction_no=:ano AND tenor_label=:tenor AND auction_date=:ad"),
+        {"fy": fy, "ano": ano, "tenor": tenor, "ad": ad}
+    ).fetchone()
+
+    if existing:
+        if existing[0] != "CONFIRMED":
+            session.execute(text("""
+                UPDATE auction_events SET
+                  offered_amount_bdt_crore=:oc, offered_amount_bdt_mill=:om,
+                  settlement_date=:sd, roll_days=:rd, roll_reason=:rr
+                WHERE fiscal_year=:fy AND auction_no=:ano AND tenor_label=:tenor AND auction_date=:ad
+            """), {"oc":oc,"om":om,"sd":sd,"rd":rd,"rr":rr,"fy":fy,"ano":ano,"tenor":tenor,"ad":ad})
+    else:
+        session.execute(text("""
+            INSERT INTO auction_events
+              (fiscal_year,auction_no,auction_date,settlement_date,security_type,
+               tenor_label,offered_amount_bdt_crore,offered_amount_bdt_mill,
+               accepted_amount_bdt_crore,accepted_amount_bdt_mill,
+               outflow_status,roll_days,roll_reason,source,data_quality)
+            VALUES
+              (:fy,:ano,:ad,:sd,:st,:tl,:oc,:om,:ac,:am,:os,:rd,:rr,:src,:dq)
+        """), {"fy":fy,"ano":ano,"ad":ad,"sd":sd,"st":stype,"tl":tenor,
+               "oc":oc,"om":om,"ac":ac,"am":am,"os":status,
+               "rd":rd,"rr":rr,"src":src,"dq":dq})
+
+
+def _upsert_primary_yield(session, row: dict):
+    """Insert or update a primary yield point (unique per tenor + auction_date)."""
+    from sqlalchemy import select
+    now = datetime.datetime.utcnow()
+    existing = session.execute(
+        select(PrimaryYieldSnapshot).where(
+            PrimaryYieldSnapshot.tenor_label  == row["tenor_label"],
+            PrimaryYieldSnapshot.auction_date == row["auction_date"],
+        )
+    ).scalar_one_or_none()
+    if existing:
+        existing.snapshot_date      = row["snapshot_date"]
+        existing.cutoff_yield_pct   = row["cutoff_yield_pct"]
+        existing.offered_bdt_crore  = row.get("offered_bdt_crore")
+        existing.accepted_bdt_crore = row.get("accepted_bdt_crore")
+        existing.ingested_utc       = now
+    else:
+        session.add(PrimaryYieldSnapshot(
+            snapshot_date      = row["snapshot_date"],
+            auction_date       = row["auction_date"],
+            security_type      = row["security_type"],
+            tenor_label        = row["tenor_label"],
+            tenor_years        = row.get("tenor_years"),
+            cutoff_yield_pct   = row["cutoff_yield_pct"],
+            offered_bdt_crore  = row.get("offered_bdt_crore"),
+            accepted_bdt_crore = row.get("accepted_bdt_crore"),
+            source             = row.get("source", ""),
+            ingested_utc       = now,
+        ))
+
+
+def _upsert_mtm_snapshot(session, row: dict):
+    """Insert or refresh MtmSnapshot for the GSOM row's settlement date."""
+    from sqlalchemy import select
+    isin  = row["isin"]
+    sdate = row.get("settlement_date")
+    now   = datetime.datetime.utcnow()
+
+    existing = session.execute(
+        select(MtmSnapshot).where(
+            MtmSnapshot.isin            == isin,
+            MtmSnapshot.settlement_date == sdate,
+        )
+    ).scalar_one_or_none()
+
+    if existing:
+        existing.market_yield_pct        = row.get("market_yield_pct")
+        existing.market_price            = row.get("market_price")
+        existing.outstanding_bdt_mill    = row.get("outstanding_bdt_mill")
+        existing.remaining_maturity_raw  = row.get("remaining_maturity_raw")
+        existing.remaining_maturity_val  = row.get("remaining_maturity_val")
+        existing.remaining_maturity_unit = row.get("remaining_maturity_unit")
+        existing.last_coupon_date        = row.get("last_coupon_date")
+        existing.next_coupon_date        = row.get("next_coupon_date")
+        existing.ingested_utc            = now
+    else:
+        session.add(MtmSnapshot(
+            isin                    = isin,
+            settlement_date         = sdate,
+            yield_date              = row.get("yield_date"),
+            market_yield_pct        = row.get("market_yield_pct"),
+            market_price            = row.get("market_price"),
+            outstanding_bdt_mill    = row.get("outstanding_bdt_mill"),
+            remaining_maturity_raw  = row.get("remaining_maturity_raw"),
+            remaining_maturity_val  = row.get("remaining_maturity_val"),
+            remaining_maturity_unit = row.get("remaining_maturity_unit"),
+            last_coupon_date        = row.get("last_coupon_date"),
+            next_coupon_date        = row.get("next_coupon_date"),
+            issue_date_raw          = row.get("issue_date_raw"),
+            maturity_date_raw       = row.get("maturity_date_raw"),
+            source_page             = row.get("source_page"),
+            source_row_index        = int(row["source_row_index"]) if row.get("source_row_index") is not None else None,
+            data_quality            = row.get("data_quality", "OK"),
+            ingested_utc            = now,
+        ))
+
+
+def _security_to_row(sec) -> dict:
+    """Convert a Security ORM object back to the dict format used by inflow engine."""
+    return {
+        "isin":                 sec.isin,
+        "security_name_raw":    sec.security_name_raw,
+        "security_name_norm":   sec.security_name_norm,
+        "security_type":        sec.security_type,
+        "issue_date":           sec.issue_date,
+        "maturity_date":        sec.maturity_date,
+        "coupon_rate_pct":      sec.coupon_rate_pct,
+        "coupon_frequency":     sec.coupon_frequency or "NONE",
+        "issue_price":          sec.issue_price,
+        "outstanding_bdt_mill": sec.outstanding_bdt_mill,
+        "source_page":          sec.source_page,
+        "settlement_date":      sec.source_settlement_date,
+        "data_quality":         sec.data_quality or "OK",
+        # Coupon anchor dates — not stored on Security; will be None for old records
+        # The coupon engine handles None gracefully (uses maturity-anchored fallback)
+        "last_coupon_date":     None,
+        "next_coupon_date":     None,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GSOM fetch — exhaustive, all three pages
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _fetch_all_gsom_pages() -> list:
+    """
+    Fetch and parse all three GSOM MTM pages.
+    Returns a flat list of validated security dicts.
+    Errors on individual pages are logged but do not abort the whole run.
+    """
+    all_rows = []
+    pages = [
+        ("T_BOND", GSOM_TBOND_URL, False),
+        ("FRTB",   GSOM_FRTB_URL,  False),
+        ("T_BILL", GSOM_TBILL_URL,  True),
+    ]
+
+    for stype, url, is_bill in pages:
+        try:
+            result = fetch_gsom_html(stype)
+            html   = result.get("html", "")
+            src    = result["source_url"]
+
+            if not html:
+                log.warning("Empty HTML response for %s", stype)
+                continue
+
+            rows = parse_tbill(html, src) if is_bill else parse_tbond_or_frtb(html, src, stype)
+            rows = validate_rows(rows)
+
+            log.info("GSOM %s: fetched %d rows from %s", stype, len(rows), src)
+            all_rows.extend(rows)
+
+        except Exception as exc:
+            log.error("GSOM fetch/parse failed for %s: %s", stype, exc, exc_info=True)
+
+    log.info("GSOM total: %d securities fetched across all pages", len(all_rows))
+    return all_rows
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MAIN PIPELINE
+
+def run_omo_fetch(days_back: int = 28, max_files: int = 20) -> dict:
+    """Fetch last N OMO press release PDFs and store transactions to DB."""
+    from fetchers.omo import fetch_omo_data
+    init_db()
+    session = get_session()
+    try:
+        txns  = fetch_omo_data(days_back=days_back, max_files=max_files)
+        saved = 0
+        now   = datetime.datetime.utcnow()
+        for r in txns:
+            existing = session.query(OMOTransaction).filter_by(
+                transaction_date   = r["transaction_date"],
+                instrument         = r["instrument"],
+                tenor_days         = r["tenor_days"],
+                accepted_bdt_crore = r["accepted_bdt_crore"],
+            ).first()
+            if not existing:
+                session.add(OMOTransaction(
+                    transaction_date   = r["transaction_date"],
+                    maturity_date      = r["maturity_date"],
+                    instrument         = r["instrument"],
+                    tenor_label        = r["tenor_label"],
+                    tenor_days         = r["tenor_days"],
+                    accepted_bdt_crore = r["accepted_bdt_crore"],
+                    rate_pct           = r.get("rate_pct"),
+                    direction          = r["direction"],
+                    source_pdf         = r.get("source_pdf"),
+                    ingested_utc       = now,
+                ))
+                saved += 1
+        session.commit()
+        log.info("OMO fetch: %d new transactions stored from %d PDFs", saved, len(txns))
+        return {"rows": saved, "pdfs": max_files, "errors": []}
+    except Exception as exc:
+        session.rollback()
+        log.exception("OMO fetch failed")
+        return {"rows": 0, "pdfs": 0, "errors": [str(exc)]}
+    finally:
+        session.close()
+
+
+def run_primary_yield_history(months_back: int = 8) -> dict:
+    """Fetch last N months of primary yield data from BB Treasury and store to DB."""
+    init_db()
+    session = get_session()
+    try:
+        rows = fetch_primary_yields_history(months_back=months_back)
+        for r in rows:
+            _upsert_primary_yield(session, r)
+        session.commit()
+        log.info("Primary yield history: stored %d rows (%d months)", len(rows), months_back)
+        return {"rows": len(rows), "months": months_back, "errors": []}
+    except Exception as exc:
+        session.rollback()
+        log.exception("Primary yield history failed")
+        return {"rows": 0, "months": months_back, "errors": [str(exc)]}
+    finally:
+        session.close()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 
 def run_pipeline(
     date_from: datetime.date = None,
     date_to:   datetime.date = None,
 ) -> dict:
     """
-    Run the full ETL pipeline.
-    Returns a summary dict with counts and any errors.
+    Run the full ETL pipeline. Safe to call every day.
+    - Fetches live data from all 3 GSOM pages every single run
+    - Captures every ISIN currently on the pages
+    - Adds new ISINs automatically
+    - Regenerates all events for all ISINs in DB (not just today's fetch)
+    - Aggregates net flow for the full date range
+    Returns summary dict.
     """
     init_db()
     session = get_session()
-    summary = {"securities": 0, "coupons": 0, "maturities": 0,
-               "auctions": 0, "daily_rows": 0, "errors": []}
+    summary = {
+        "securities_fetched": 0,
+        "securities_in_db":   0,
+        "securities":         0,
+        "coupons":            0,
+        "maturities":         0,
+        "auctions":           0,
+        "daily_rows":         0,
+        "errors":             [],
+    }
 
     try:
-        # ── Step 1: holidays ──────────────────────────────────────────────────
-        load_holidays_from_db(session)
+        # ── 1. Holidays ───────────────────────────────────────────────────────
+        _load_holidays(session)
 
-        # ── Step 2 & 3: fetch and parse GSOM ─────────────────────────────────
-        all_rows = []
-        for stype, url in [("T_BOND", GSOM_TBOND_URL),
-                           ("FRTB",   GSOM_FRTB_URL),
-                           ("T_BILL", GSOM_TBILL_URL)]:
-            try:
-                result = fetch_gsom_html(stype)
-                html   = result.get("html", "")
-                src    = result["source_url"]
-                if stype == "T_BILL":
-                    rows = parse_tbill(html, src)
-                else:
-                    rows = parse_tbond_or_frtb(html, src, stype)
-                rows = validate_rows(rows)
-                all_rows.extend(rows)
-                for row in rows:
-                    _upsert_security(session, row)
-            except Exception as exc:
-                msg = f"GSOM fetch failed for {stype}: {exc}"
-                log.error(msg)
-                summary["errors"].append(msg)
+        # ── 2. Fetch all GSOM pages (live, every run) ─────────────────────────
+        fetched_rows = _fetch_all_gsom_pages()
+        summary["securities_fetched"] = len(fetched_rows)
 
+        if not fetched_rows:
+            summary["errors"].append("All GSOM pages returned empty — check connectivity")
+            # Don't abort: we can still regenerate events from existing DB records
+
+        # ── 3. Upsert every fetched security ──────────────────────────────────
+        # Also store next_coupon_date and last_coupon_date on the Security row
+        # so the event generator can use them when re-reading from DB
+        for row in fetched_rows:
+            _upsert_security(session, row)
+            _upsert_mtm_snapshot(session, row)
         session.commit()
-        summary["securities"] = len(all_rows)
-        log.info("Upserted %d securities", len(all_rows))
 
-        # ── Step 4: generate maturity and coupon events ───────────────────────
+        # Store coupon anchor dates separately so we can restore them later
+        # Map: isin -> (last_coupon_date, next_coupon_date)
+        coupon_anchors = {
+            row["isin"]: (row.get("last_coupon_date"), row.get("next_coupon_date"))
+            for row in fetched_rows
+            if row.get("next_coupon_date") is not None
+        }
+
+        # ── 4. Regenerate events for ALL securities in DB ─────────────────────
+        # This is the critical step: we process every ISIN ever seen, not just
+        # what was on the page today. ISINs that matured last week are still in
+        # the DB and still need their maturity event on the correct date.
+        all_securities = session.query(Security).all()
+        summary["securities_in_db"] = len(all_securities)
+        summary["securities"] = len(fetched_rows)
+
+        log.info("Regenerating events for %d securities in DB", len(all_securities))
+
         all_coupon_events   = []
         all_maturity_events = []
 
-        for row in all_rows:
+        for sec in all_securities:
+            row = _security_to_row(sec)
+
+            # Restore coupon anchor dates from today's fetch if available
+            if sec.isin in coupon_anchors:
+                row["last_coupon_date"], row["next_coupon_date"] = coupon_anchors[sec.isin]
+
+            # Maturity event
             mat = generate_maturity_event(row)
             if mat:
                 _upsert_maturity(session, mat)
                 all_maturity_events.append(mat)
 
+            # Coupon schedule (empty for T-Bills)
             coupons = generate_coupon_schedule(row)
             for c in coupons:
                 _upsert_coupon(session, c)
@@ -189,27 +456,78 @@ def run_pipeline(
         session.commit()
         summary["maturities"] = len(all_maturity_events)
         summary["coupons"]    = len(all_coupon_events)
+        log.info("Events: %d maturities, %d coupon dates", len(all_maturity_events), len(all_coupon_events))
 
-        # ── Step 5 & 6: auction events ────────────────────────────────────────
+        # ── 5 & 6. Auction events ─────────────────────────────────────────────
         raw_auctions = fetch_auction_rows(date_from, date_to)
-        all_auction_events = generate_all_auction_events(raw_auctions)
-        for evt in all_auction_events:
+        auction_events = generate_all_auction_events(raw_auctions)
+        for evt in auction_events:
             _upsert_auction(session, evt)
         session.commit()
-        summary["auctions"] = len(all_auction_events)
+        summary["auctions"] = len(auction_events)
 
-        # ── Step 7: aggregate ─────────────────────────────────────────────────
+        # Primary yield history is fetched separately via the sidebar button
+        # (fetch_primary_yields_history) — not run here to keep pipeline fast.
+
+        # ── 7. Set date range ─────────────────────────────────────────────────
         if date_from is None:
             date_from = datetime.date.today() - datetime.timedelta(days=60)
         if date_to is None:
-            date_to   = datetime.date.today() + datetime.timedelta(days=180)
+            date_to   = datetime.date.today() + datetime.timedelta(days=365)
 
-        daily_rows = build_daily_flows(
-            all_coupon_events, all_maturity_events,
-            all_auction_events, date_from, date_to
+        # ── 8. Re-query ALL events from DB for the range ──────────────────────
+        # Use DB as the source of truth, not the in-memory lists.
+        # This ensures any events from previous runs are included too.
+        db_coupons = session.query(CouponEvent).filter(
+            CouponEvent.payment_date >= date_from,
+            CouponEvent.payment_date <= date_to,
+        ).all()
+        db_maturities = session.query(MaturityEvent).filter(
+            MaturityEvent.payment_date >= date_from,
+            MaturityEvent.payment_date <= date_to,
+        ).all()
+        db_auctions = session.query(AuctionEvent).filter(
+            AuctionEvent.settlement_date >= date_from,
+            AuctionEvent.settlement_date <= date_to,
+        ).all()
+
+        # Convert ORM objects to dicts for aggregation engine
+        coupon_dicts = [{
+            "payment_date":        c.payment_date,
+            "amount_bdt_mill":     c.amount_bdt_mill or 0.0,
+            "isin":                c.isin,
+            "data_quality":        c.data_quality,
+        } for c in db_coupons]
+
+        maturity_dicts = [{
+            "payment_date":        m.payment_date,
+            "principal_bdt_mill":  m.principal_bdt_mill or 0.0,
+            "isin":                m.isin,
+            "data_quality":        m.data_quality,
+        } for m in db_maturities]
+
+        auction_dicts = [{
+            "settlement_date":             a.settlement_date,
+            "offered_amount_bdt_mill":     a.offered_amount_bdt_mill or 0.0,
+            "accepted_amount_bdt_mill":    a.accepted_amount_bdt_mill,
+            "outflow_status":              a.outflow_status,
+            "security_type":               a.security_type,
+            "data_quality":                a.data_quality,
+        } for a in db_auctions]
+
+        log.info(
+            "DB query for range %s→%s: %d coupons, %d maturities, %d auctions",
+            date_from, date_to,
+            len(coupon_dicts), len(maturity_dicts), len(auction_dicts)
         )
 
-        # ── Step 8: persist daily_net_flow ────────────────────────────────────
+        # ── 9. Aggregate ──────────────────────────────────────────────────────
+        daily_rows = build_daily_flows(
+            coupon_dicts, maturity_dicts, auction_dicts,
+            date_from, date_to,
+        )
+
+        # ── 10. Persist daily_net_flow (replace range) ────────────────────────
         from sqlalchemy import delete
         session.execute(
             delete(DailyNetFlow).where(
@@ -224,12 +542,23 @@ def run_pipeline(
             }))
         session.commit()
         summary["daily_rows"] = len(daily_rows)
-        log.info("Pipeline complete: %s", summary)
+
+        log.info(
+            "Pipeline complete | fetched=%d | db_securities=%d | "
+            "maturities=%d | coupons=%d | auctions=%d | daily_rows=%d | errors=%d",
+            summary["securities_fetched"],
+            summary["securities_in_db"],
+            summary["maturities"],
+            summary["coupons"],
+            summary["auctions"],
+            summary["daily_rows"],
+            len(summary["errors"]),
+        )
 
     except Exception as exc:
         session.rollback()
         summary["errors"].append(f"FATAL: {exc}")
-        log.exception("Pipeline failed")
+        log.exception("Pipeline failed with unhandled exception")
     finally:
         session.close()
 

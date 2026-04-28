@@ -45,4 +45,5 @@ if summary.get("errors"):
     st.warning(f"Pipeline completed with warnings: {summary['errors']}")
 
 # ── Load the main dashboard ───────────────────────────────────────────────────
-from dashboard.app import *
+from dashboard.app import render
+render()

@@ -1,0 +1,29 @@
+# Secrets — never commit
+.streamlit/secrets.toml
+.env
+*.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Local database (cloud uses Supabase)
+data/mm_dashboard.db
+data/mm_dashboard.db-shm
+data/mm_dashboard.db-wal
+
+# Logs
+logs/
+
+# Test scripts
+test_omo.py
+diagnose.py
+reset_*.py
+migrate_to_supabase.py
+
+# OS
+.DS_Store
+Thumbs.db

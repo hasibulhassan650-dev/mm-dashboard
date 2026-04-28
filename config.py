@@ -10,17 +10,32 @@ ROOT      = Path(__file__).parent
 SEEDS_DIR = ROOT / "data" / "seeds"
 LOGS_DIR  = ROOT / "logs"
 
-# ── Database path ─────────────────────────────────────────────────────────────
-# Streamlit Cloud has a read-only filesystem except /tmp.
-# Detect Cloud by checking the home directory.
-if os.environ.get("HOME") == "/home/adminuser":
-    # Running on Streamlit Community Cloud
-    DB_PATH = Path("/tmp/mm_dashboard.db")
-else:
-    # Running locally
-    DB_PATH = ROOT / "data" / "mm_dashboard.db"
+# ── Database ──────────────────────────────────────────────────────────────────
+# Priority: DATABASE_URL env var (Supabase/any Postgres) → local SQLite fallback.
+# Set DATABASE_URL in:
+#   - Streamlit Cloud:  App settings → Secrets  →  DATABASE_URL = "postgresql://..."
+#   - GitHub Actions:   repo Settings → Secrets  →  DATABASE_URL
+#   - Local override:   create a .env file or export the var before running
+# Also check Streamlit secrets (when running on Streamlit Cloud or locally with secrets.toml)
+def _get_db_url_from_secrets():
+    try:
+        import streamlit as st
+        return st.secrets.get("DATABASE_URL", "")
+    except Exception:
+        return ""
 
-DB_URL = f"sqlite:///{DB_PATH}"
+_db_url_env = os.environ.get("DATABASE_URL", "") or _get_db_url_from_secrets()
+if _db_url_env:
+    # Supabase (and some other hosts) give "postgres://" — SQLAlchemy needs "postgresql://"
+    DB_URL  = _db_url_env.replace("postgres://", "postgresql://", 1)
+    DB_PATH = None          # not used with Postgres
+else:
+    # Local SQLite
+    if os.environ.get("HOME") == "/home/adminuser":
+        DB_PATH = Path("/tmp/mm_dashboard.db")
+    else:
+        DB_PATH = ROOT / "data" / "mm_dashboard.db"
+    DB_URL = f"sqlite:///{DB_PATH}"
 
 # Source URLs
 GSOM_TBOND_URL    = "https://gsom.bb.org.bd/mtm.php"
@@ -30,7 +45,9 @@ GSOM_FRTB_DL_URL  = "https://gsom.bb.org.bd/api/dl_frtb_mtm_data.php"
 GSOM_TBOND_DL_URL = "https://gsom.bb.org.bd/api/dl_tbond_mtm_data.php"
 GSOM_TBILL_DL_URL = "https://gsom.bb.org.bd/api/dl_tbill_mtm_data.php"
 BB_AUC_CALENDAR_URL = "https://www.bb.org.bd/en/index.php/monetaryactivity/auc_calendar/1"
+BB_TREASURY_URL     = "https://www.bb.org.bd/en/index.php/monetaryactivity/treasury"
 BB_HOLIDAY_URL      = "https://www.bb.org.bd/en/index.php/mediaroom/holiday"
+BB_PRESS_URL        = "https://www.bb.org.bd/en/index.php/mediaroom/press_release"
 
 # HTTP
 REQUEST_TIMEOUT  = 30
