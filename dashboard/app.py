@@ -940,6 +940,57 @@ def _render_omo_tab(today: datetime.date):
         st.plotly_chart(fig_mat, use_container_width=True)
 
     # ── Raw transactions ──────────────────────────────────────────────────────
+    # ── Daily BB schedule (raw PDF data) ─────────────────────────────────────
+    st.subheader("Daily BB OMO Schedule — Raw Data")
+    st.caption("Exactly as parsed from BB press release PDFs. New injections/absorptions per day.")
+
+    all_dates = sorted(txn_df["Transaction Date"].dt.date.unique(), reverse=True)
+    sel_date  = st.selectbox(
+        "Select date", all_dates,
+        format_func=lambda d: f"{d.strftime('%d %b %Y')} ({d.strftime('%a')})",
+        key="omo_day_sel",
+    )
+
+    day_df = txn_df[txn_df["Transaction Date"].dt.date == sel_date].copy()
+    inj_df = day_df[day_df["Direction"] == "INJECTION"].sort_values(["Instrument","Tenor"])
+    abs_df = day_df[day_df["Direction"] == "ABSORPTION"].sort_values(["Instrument","Tenor"])
+    total_inj = inj_df["Amount (Cr)"].sum()
+    total_abs = abs_df["Amount (Cr)"].sum()
+    net       = total_inj - total_abs
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Total Injection",  f"{total_inj:,.2f} Cr")
+    m2.metric("Total Absorption", f"{total_abs:,.2f} Cr")
+    m3.metric("Net",              f"{net:+,.2f} Cr",
+              delta="Injecting" if net > 0 else "Absorbing",
+              delta_color="normal" if net > 0 else "inverse")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**Injection (+)**")
+        if inj_df.empty:
+            st.caption("No injection on this day.")
+        else:
+            disp_inj = inj_df[["Instrument","Tenor","Amount (Cr)","Rate (%)"]].copy()
+            disp_inj["Amount (Cr)"] = disp_inj["Amount (Cr)"].map(lambda v: f"{v:,.2f}")
+            disp_inj["Rate (%)"]    = disp_inj["Rate (%)"].apply(
+                lambda v: f"{v:.2f}%" if pd.notna(v) else "—"
+            )
+            st.dataframe(disp_inj, use_container_width=True, hide_index=True)
+            st.markdown(f"**Total: {total_inj:,.2f} Cr**")
+    with c2:
+        st.markdown("**Absorption (−)**")
+        if abs_df.empty:
+            st.caption("No absorption on this day.")
+        else:
+            disp_abs = abs_df[["Instrument","Tenor","Amount (Cr)","Rate (%)"]].copy()
+            disp_abs["Amount (Cr)"] = disp_abs["Amount (Cr)"].map(lambda v: f"{v:,.2f}")
+            disp_abs["Rate (%)"]    = disp_abs["Rate (%)"].apply(
+                lambda v: f"{v:.2f}%" if pd.notna(v) else "—"
+            )
+            st.dataframe(disp_abs, use_container_width=True, hide_index=True)
+            st.markdown(f"**Total: {total_abs:,.2f} Cr**")
+
     with st.expander("📋 All transactions (full history)", expanded=False):
         disp = txn_df.copy()
         disp["Transaction Date"] = disp["Transaction Date"].dt.strftime("%d-%b-%Y")
