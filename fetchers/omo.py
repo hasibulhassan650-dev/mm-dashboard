@@ -153,6 +153,43 @@ def parse_omo_pdf(pdf_bytes: bytes, hint_date: Optional[datetime.date], pdf_url:
     transactions: List[Dict] = []
     current_instrument: Optional[str] = None
     current_direction:  Optional[str] = None
+    # Some PDFs put the tenor data row BEFORE the instrument name (e.g. CB_REPO in Apr 21).
+    # We save that orphan row and assign the instrument when the name appears on the next line.
+    pending: Optional[Dict] = None
+
+    def _extract_nums(line: str, tenor_days: int) -> List[float]:
+        """Extract all numbers in positional order — KEEP zeros, they are real column values."""
+        s = re.sub(r'\d+\s*[-\s]*(days?|day)\b', '', line, flags=re.I)
+        s = re.sub(r'[A-Za-z\s\(\)\[\]/]+', ' ', s)
+        result = []
+        for tok in re.findall(r'-?[\d,]+\.?\d*', s):
+            v = _clean_num(tok)
+            if v is not None:
+                result.append(v)
+        return result
+
+    def _make_txn(instr, direction, tenor_days, nums, txn_date, pdf_url) -> Optional[Dict]:
+        """Build a transaction dict. Returns None if accepted == 0 (maturity-only row)."""
+        if len(nums) < 2:
+            return None
+        # Column layout: Offered | Accepted | Rate (may split to 2 if "4.00-5.25") | Maturity | Net
+        # Zeros are real — accepted = nums[1], not filtered
+        accepted = nums[1]
+        if abs(accepted) < 0.01:
+            # No new transaction today for this instrument/tenor (only maturities happened)
+            return None
+        rate = next((n for n in nums[2:] if 0 < abs(n) < 30), None)
+        return {
+            "transaction_date":   txn_date,
+            "maturity_date":      txn_date + datetime.timedelta(days=tenor_days),
+            "instrument":         instr,
+            "tenor_label":        f"{tenor_days}D",
+            "tenor_days":         tenor_days,
+            "accepted_bdt_crore": abs(accepted),
+            "rate_pct":           rate,
+            "direction":          direction,
+            "source_pdf":         pdf_url,
+        }
 
     for raw_line in full_text.split("\n"):
         line = raw_line.strip()
@@ -162,65 +199,42 @@ def parse_omo_pdf(pdf_bytes: bytes, hint_date: Optional[datetime.date], pdf_url:
         tenor_days = _parse_tenor(line)
 
         if tenor_days is None:
-            # Check if this line is just an instrument name (carry-forward)
+            # Instrument name line — set current instrument and flush any pending orphan row
             m = _match_instrument(line)
             if m:
                 current_instrument, current_direction = m
+                if pending is not None:
+                    # Retroactively assign instrument to the orphan row we held
+                    txn = _make_txn(current_instrument, current_direction,
+                                    pending["tenor_days"], pending["nums"],
+                                    txn_date, pdf_url)
+                    if txn:
+                        transactions.append(txn)
+                    pending = None
             continue
 
-        # Line contains a tenor — it's a data row
+        # ── Data row with a tenor ─────────────────────────────────────────────
+        nums = _extract_nums(line, tenor_days)
+
+        # Instrument may be inline on this line
         instr_match = _match_instrument(line)
         if instr_match:
             current_instrument, current_direction = instr_match
+            pending = None  # inline instrument means no orphan issue
 
         if not current_instrument:
-            log.debug("Tenor %dD found but no instrument context, line: %s", tenor_days, line)
+            # Orphan row — save it, instrument name will appear on the next line
+            pending = {"tenor_days": tenor_days, "nums": nums}
+            log.debug("Orphan tenor row saved (tenor=%dD): %s", tenor_days, line)
             continue
 
-        # Extract all numeric values from the line (may include negatives)
-        # Remove tenor text to avoid it matching as a number
-        stripped = re.sub(r'\d+\s*[-]\s*days?\b', '', line, flags=re.I)
-        stripped = re.sub(r'\d+\s*day\b', '', stripped, flags=re.I)
-        stripped = re.sub(r'[A-Za-z\s\(\)\[\]/]+', ' ', stripped)  # keep only numbers
-        raw_nums = re.findall(r'-?[\d,]+\.?\d*', stripped)
-        nums = []
-        for n in raw_nums:
-            v = _clean_num(n)
-            if v is not None and abs(v) > 0.01:
-                nums.append(v)
-
-        # Need at least: offered, accepted
-        if len(nums) < 2:
-            continue
-
-        # Column layout: offered, accepted, [rate or range], [maturity], [net]
-        # For rate: may be "4.00-5.25" — regex treats as two numbers
-        # accepted is always the 2nd number (index 1)
-        offered  = nums[0]
-        accepted = nums[1]
-
-        # For SDF, amounts are negative; take abs
-        accepted_abs = abs(accepted)
-        if accepted_abs < 0.01:
-            continue   # no new transaction today (only maturities happening)
-
-        tenor_label  = f"{tenor_days}D"
-        maturity_date = txn_date + datetime.timedelta(days=tenor_days)
-
-        # Rate: look for a number in (0, 30) range
-        rate = next((n for n in nums[2:] if 0 < n < 30), None)
-
-        transactions.append({
-            "transaction_date":   txn_date,
-            "maturity_date":      maturity_date,
-            "instrument":         current_instrument,
-            "tenor_label":        tenor_label,
-            "tenor_days":         tenor_days,
-            "accepted_bdt_crore": accepted_abs,
-            "rate_pct":           rate,
-            "direction":          current_direction,
-            "source_pdf":         pdf_url,
-        })
+        pending = None
+        txn = _make_txn(current_instrument, current_direction,
+                        tenor_days, nums, txn_date, pdf_url)
+        if txn:
+            transactions.append(txn)
+        else:
+            log.debug("Skipped zero-accepted row: %s", line)
 
     log.info(
         "Parsed %d transactions from OMO PDF (date=%s, url=%s)",
@@ -322,6 +336,8 @@ def fetch_omo_data(days_back: int = 28, max_files: int = 20) -> List[Dict]:
 
         driver = uc.Chrome(options=opts, version_main=chrome_ver)
 
+        from selenium.webdriver.common.by import By
+
         # ── 1. Load press release page ────────────────────────────────────────
         log.info("Loading press release page…")
         driver.get(BB_PRESS_URL)
@@ -330,40 +346,63 @@ def fetch_omo_data(days_back: int = 28, max_files: int = 20) -> List[Dict]:
             log.error("Press release page did not load pdf-file links in time")
             return []
 
-        time.sleep(2)  # let remaining JS settle
+        time.sleep(2)
 
-        # ── 2. Extract OMO PDF links ──────────────────────────────────────────
-        soup = BeautifulSoup(driver.page_source, "lxml")
+        # ── 2. Paginate DataTables and collect all OMO PDF links ─────────────
+        seen_urls: set = set()
+        stop_early  = False
+        page_num    = 1
 
-        for a in soup.find_all("a", class_="pdf-file"):
-            pdf_url = (a.get("pdf-link") or "").strip()
-            if not pdf_url:
-                continue
+        while not stop_early:
+            soup = BeautifulSoup(driver.page_source, "lxml")
 
-            # Title is in the parent <td>, before the <a> tag
-            td = a.find_parent("td")
-            if td:
-                title = td.get_text(separator=" ", strip=True).replace("more....", "").strip()
-            else:
-                title = a.get_text(separator=" ", strip=True)
+            for a in soup.find_all("a", class_="pdf-file"):
+                pdf_url = (a.get("pdf-link") or "").strip()
+                if not pdf_url or pdf_url in seen_urls:
+                    continue
+                seen_urls.add(pdf_url)
 
-            if "open market operations" not in title.lower():
-                continue
+                td    = a.find_parent("td")
+                title = td.get_text(" ", strip=True).replace("more....", "").strip() if td else ""
+                if "open market operations" not in title.lower():
+                    continue
 
-            rdate = _parse_date_from_text(title) or _parse_date_from_text(pdf_url)
-            if rdate and rdate < cutoff_date:
-                continue
+                rdate = _parse_date_from_text(title) or _parse_date_from_text(pdf_url)
+                if rdate and rdate < cutoff_date:
+                    stop_early = True   # page is sorted newest-first; stop paginating
+                    break
 
-            omo_links.append({"url": pdf_url, "title": title, "report_date": rdate})
+                omo_links.append({"url": pdf_url, "title": title, "report_date": rdate})
+                if len(omo_links) >= max_files:
+                    stop_early = True
+                    break
+
+            if stop_early:
+                break
+
+            # Click DataTables "Next" button
+            try:
+                next_li = driver.find_element(By.CSS_SELECTOR, "li#data_table_next")
+                if "disabled" in (next_li.get_attribute("class") or ""):
+                    log.info("Last page reached (page %d)", page_num)
+                    break
+                next_a = next_li.find_element(By.TAG_NAME, "a")
+                driver.execute_script("arguments[0].click()", next_a)
+                time.sleep(2)
+                page_num += 1
+                log.info("Navigated to page %d — %d OMO links so far", page_num, len(omo_links))
+            except Exception as exc:
+                log.warning("Pagination stopped at page %d: %s", page_num, exc)
+                break
 
         omo_links.sort(key=lambda x: str(x["report_date"] or ""), reverse=True)
-        omo_links = omo_links[:max_files]
-        log.info("Found %d OMO PDF links to download", len(omo_links))
+        log.info("Found %d OMO PDF links to download (across %d pages)", len(omo_links), page_num)
 
         if not omo_links:
-            log.warning("No OMO PDFs found. days_back=%d, page has %d pdf-file links total",
-                        days_back, len(soup.find_all("a", class_="pdf-file")))
+            log.warning("No OMO PDFs found. days_back=%d", days_back)
             return []
+
+        time.sleep(1)  # brief settle before first download
 
         # ── 3. Download & parse each PDF ──────────────────────────────────────
         for entry in omo_links:
