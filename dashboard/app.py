@@ -817,25 +817,130 @@ def _render_omo_tab(today: datetime.date):
     )
     st.plotly_chart(fig2, use_container_width=True)
 
-    # ── Upcoming maturities ───────────────────────────────────────────────────
-    st.subheader("Upcoming Maturities (next 14 days)")
-    upcoming = txn_df[
-        (txn_df["Maturity Date"].dt.date > today) &
-        (txn_df["Maturity Date"].dt.date <= today + datetime.timedelta(days=14))
-    ].copy().sort_values("Maturity Date")
-    if upcoming.empty:
-        st.caption("No OMO transactions maturing in the next 14 days.")
+    # ── Per-instrument breakdown with days to maturity ───────────────────────
+    st.subheader("Outstanding Securities — Per Instrument Breakdown")
+    st.caption("Every active transaction: what's in the market right now, when it matures, and how many days left.")
+
+    INSTR_LABELS = {
+        "CB_REPO": "Central Bank Repo (CB Repo)",
+        "SLF":     "Standing Lending Facility (SLF)",
+        "IBLF":    "Islami Banks Liquidity Facility (IBLF)",
+        "AR":      "Assured Repo (AR)",
+        "SDF":     "Standing Deposit Facility (SDF)",
+    }
+    INSTR_DIR = {"CB_REPO":"INJECTION","SLF":"INJECTION","IBLF":"INJECTION",
+                 "AR":"INJECTION","SDF":"ABSORPTION"}
+
+    active = txn_df[
+        (txn_df["Transaction Date"].dt.date <= today) &
+        (txn_df["Maturity Date"].dt.date    >  today)
+    ].copy()
+    active["Days Left"] = (active["Maturity Date"].dt.date - today).apply(lambda d: d.days)
+
+    for instr in ["CB_REPO","SLF","IBLF","AR","SDF"]:
+        sub = active[active["Instrument"] == instr].sort_values("Maturity Date")
+        if sub.empty:
+            continue
+
+        total    = sub["Amount (Cr)"].sum()
+        n_txns   = len(sub)
+        dir_lbl  = "Injection" if INSTR_DIR[instr] == "INJECTION" else "Absorption"
+        dir_col  = "normal" if INSTR_DIR[instr] == "INJECTION" else "inverse"
+        min_days = sub["Days Left"].min()
+        urgency  = "🔴" if min_days <= 3 else ("🟡" if min_days <= 7 else "🟢")
+
+        with st.expander(
+            f"{urgency} **{INSTR_LABELS[instr]}** — {total:,.2f} Cr outstanding  "
+            f"({n_txns} {'transaction' if n_txns==1 else 'transactions'}, "
+            f"nearest maturity in {min_days}d)",
+            expanded=(min_days <= 7),
+        ):
+            col_a, col_b = st.columns([3, 1])
+            with col_a:
+                disp = sub.copy()
+                disp["Transaction Date"] = disp["Transaction Date"].dt.strftime("%d-%b-%Y")
+                disp["Maturity Date"]    = disp["Maturity Date"].dt.strftime("%d-%b-%Y")
+                disp["Amount (Cr)"]      = disp["Amount (Cr)"].map(lambda v: f"{v:,.2f}")
+                disp["Rate (%)"]         = disp["Rate (%)"].apply(
+                    lambda v: f"{v:.2f}%" if pd.notna(v) else "—"
+                )
+                disp["Days Left"]        = disp["Days Left"].map(lambda d: f"{d}d")
+                st.dataframe(
+                    disp[["Transaction Date","Tenor","Amount (Cr)","Rate (%)","Maturity Date","Days Left"]],
+                    use_container_width=True, hide_index=True,
+                )
+            with col_b:
+                st.metric("Total Outstanding", f"{total:,.0f} Cr")
+                st.metric("Transactions", n_txns)
+                st.metric("Nearest maturity", f"{min_days} days")
+                st.metric("Direction", dir_lbl)
+
+    # ── Maturity schedule ─────────────────────────────────────────────────────
+    st.subheader("Maturity Schedule (next 60 days)")
+    st.caption("Liquidity leaving the market as injections expire.")
+
+    end_60 = today + datetime.timedelta(days=60)
+    sched = active[active["Maturity Date"].dt.date <= end_60].copy()
+    sched["Days Left"] = (sched["Maturity Date"].dt.date - today).apply(lambda d: d.days)
+
+    if sched.empty:
+        st.caption("No maturities in next 60 days.")
     else:
-        upcoming["Maturity Date"]    = upcoming["Maturity Date"].dt.strftime("%d-%b-%Y")
-        upcoming["Transaction Date"] = upcoming["Transaction Date"].dt.strftime("%d-%b-%Y")
-        upcoming["Amount (Cr)"]      = upcoming["Amount (Cr)"].map(lambda v: f"{v:,.2f}")
+        # Group by date
+        by_date = (
+            sched.groupby(["Maturity Date","Instrument","Direction"])["Amount (Cr)"]
+            .sum()
+            .reset_index()
+            .sort_values("Maturity Date")
+        )
+        by_date["Days Left"] = (
+            pd.to_datetime(by_date["Maturity Date"]).dt.date - today
+        ).apply(lambda d: d.days)
+        by_date["Impact"] = by_date["Direction"].map({
+            "INJECTION":  "liquidity leaves market",
+            "ABSORPTION": "liquidity returns to market",
+        })
+        by_date["Maturity Date"] = pd.to_datetime(by_date["Maturity Date"]).dt.strftime("%d-%b-%Y")
+        by_date["Amount (Cr)"]   = by_date["Amount (Cr)"].map(lambda v: f"{v:,.2f}")
+        by_date["Days Left"]     = by_date["Days Left"].map(lambda d: f"{d}d")
+        by_date["Flag"]          = by_date["Days Left"].apply(
+            lambda d: "🔴 DUE SOON" if int(d[:-1]) <= 3 else ("🟡" if int(d[:-1]) <= 7 else "")
+        )
         st.dataframe(
-            upcoming[["Maturity Date","Transaction Date","Instrument","Tenor","Amount (Cr)","Rate (%)","Direction"]],
-            use_container_width=True, hide_index=True, height=280,
+            by_date[["Maturity Date","Days Left","Instrument","Amount (Cr)","Direction","Impact","Flag"]],
+            use_container_width=True, hide_index=True, height=420,
         )
 
+        # Maturity bar chart
+        chart_df = (
+            sched.groupby(["Maturity Date","Instrument"])["Amount (Cr)"]
+            .sum()
+            .reset_index()
+        )
+        fig_mat = go.Figure()
+        for instr in ["CB_REPO","SLF","IBLF","AR","SDF"]:
+            sub = chart_df[chart_df["Instrument"] == instr]
+            if sub.empty:
+                continue
+            fig_mat.add_trace(go.Bar(
+                x=sub["Maturity Date"],
+                y=sub["Amount (Cr)"],
+                name=instr,
+                marker_color=_OMO_COLOURS.get(instr, "#888"),
+                hovertemplate=f"<b>{instr}</b><br>Date: %{{x}}<br>Amount: <b>%{{y:,.0f}} Cr</b><extra></extra>",
+            ))
+        fig_mat.update_layout(
+            barmode="stack",
+            xaxis=dict(title="Maturity Date", tickformat="%d-%b"),
+            yaxis=dict(title="BDT Crore", tickformat=",.0f"),
+            hovermode="x unified",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02),
+            height=320, plot_bgcolor="#fff", paper_bgcolor="#fff",
+        )
+        st.plotly_chart(fig_mat, use_container_width=True)
+
     # ── Raw transactions ──────────────────────────────────────────────────────
-    with st.expander("📋 All transactions", expanded=False):
+    with st.expander("📋 All transactions (full history)", expanded=False):
         disp = txn_df.copy()
         disp["Transaction Date"] = disp["Transaction Date"].dt.strftime("%d-%b-%Y")
         disp["Maturity Date"]    = disp["Maturity Date"].dt.strftime("%d-%b-%Y")
