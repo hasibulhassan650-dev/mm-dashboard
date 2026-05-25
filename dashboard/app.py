@@ -27,7 +27,7 @@ log = logging.getLogger(__name__)
 # DATA LOADERS (cached — must stay at module level)
 # ══════════════════════════════════════════════════════════════════════════════
 
-@st.cache_data(ttl=300)
+@st.cache_data
 def load_daily_flows(date_from, date_to):
     session = get_session()
     rows = session.query(DailyNetFlow).filter(
@@ -55,7 +55,7 @@ def load_daily_flows(date_from, date_to):
     return df
 
 
-@st.cache_data(ttl=300)
+@st.cache_data
 def load_events(date_from, date_to, event_types, instrument_types):
     session = get_session()
     rows = []
@@ -135,7 +135,7 @@ def load_events(date_from, date_to, event_types, instrument_types):
     return df.sort_values("Payment Date").reset_index(drop=True)
 
 
-@st.cache_data(ttl=300)
+@st.cache_data
 def load_securities(instrument_types):
     today = datetime.date.today()
     session = get_session()
@@ -161,7 +161,7 @@ def load_securities(instrument_types):
     } for r in rows])
 
 
-@st.cache_data(ttl=300)
+@st.cache_data
 def load_auction_debug(date_from, date_to):
     session = get_session()
     rows = session.query(AuctionEvent).filter(
@@ -189,7 +189,7 @@ def load_auction_debug(date_from, date_to):
     } for ae in rows])
 
 
-@st.cache_data(ttl=300)
+@st.cache_data
 def _get_data_date_range():
     session = get_session()
     from sqlalchemy import func
@@ -203,7 +203,7 @@ def _get_data_date_range():
     return None
 
 
-@st.cache_data(ttl=300)
+@st.cache_data
 def load_yield_curve():
     """Return (DataFrame, settlement_date) for the latest MTM snapshot."""
     today = datetime.date.today()
@@ -250,7 +250,7 @@ def load_yield_curve():
     return df, latest
 
 
-@st.cache_data(ttl=300)
+@st.cache_data
 def load_primary_yield_curve():
     """Return DataFrame of latest primary market yield per tenor (one point per tenor)."""
     session = get_session()
@@ -295,7 +295,7 @@ def load_primary_yield_curve():
     return pd.DataFrame(data).sort_values("Tenor (Yrs)").reset_index(drop=True)
 
 
-@st.cache_data(ttl=300)
+@st.cache_data
 def load_primary_yield_history():
     """Official BB Treasury cutoff yields from PrimaryYieldSnapshot (all months stored)."""
     session = get_session()
@@ -320,7 +320,7 @@ def load_primary_yield_history():
     return pd.DataFrame(data).sort_values(["Tenor","Auction Date"]).reset_index(drop=True)
 
 
-@st.cache_data(ttl=300)
+@st.cache_data
 def load_gsom_yield_trend():
     """For each outstanding security: issue_date, market_yield_pct, original_tenor_class.
     Uses latest MtmSnapshot settlement_date joined with Security issue_date.
@@ -392,7 +392,7 @@ def load_gsom_yield_trend():
     return pd.DataFrame(data).sort_values(["Type", "Tenor Class", "Issue Date"]).reset_index(drop=True)
 
 
-@st.cache_data(ttl=300)
+@st.cache_data
 def load_omo_transactions(days_back: int = 60):
     """Load all OMO transactions from DB (wider window to capture long-tenor outstanding)."""
     session = get_session()
@@ -408,15 +408,16 @@ def load_omo_transactions(days_back: int = 60):
     if not rows:
         return pd.DataFrame()
     return pd.DataFrame([{
-        "Transaction Date": r.transaction_date,
-        "Maturity Date":    r.maturity_date,
-        "Instrument":       r.instrument,
-        "Tenor":            r.tenor_label,
-        "Tenor Days":       r.tenor_days,
-        "Amount (Cr)":      r.accepted_bdt_crore,
-        "Rate (%)":         r.rate_pct,
-        "Direction":        r.direction or "",
-        "Source":           r.source_pdf or "",
+        "Transaction Date":  r.transaction_date,
+        "Maturity Date":     r.maturity_date,
+        "Instrument":        r.instrument,
+        "Tenor":             r.tenor_label,
+        "Tenor Days":        r.tenor_days,
+        "Amount (Cr)":       r.accepted_bdt_crore,
+        "Maturity (Cr)":     r.maturity_bdt_crore or 0.0,
+        "Rate (%)":          r.rate_pct,
+        "Direction":         r.direction or "",
+        "Source":            r.source_pdf or "",
     } for r in rows])
 
 
@@ -606,9 +607,9 @@ def _render_yield_trend(today: datetime.date):
             customdata=sub[["Type","Offered (cr)","Accepted (cr)"]].values,
             hovertemplate=(
                 f"<b>{tenor}</b><br>"
-                "Auction Date: %{{x|%d-%b-%Y}}<br>"
-                "Cutoff Yield: <b>%{{y:.4f}}%</b><br>"
-                "Offered: %{{customdata[1]}} cr | Accepted: %{{customdata[2]}} cr"
+                "Auction Date: %{x|%d-%b-%Y}<br>"
+                "Cutoff Yield: <b>%{y:.4f}%</b><br>"
+                "Offered: %{customdata[1]:,.0f} cr | Accepted: %{customdata[2]:,.0f} cr"
                 "<extra></extra>"
             ),
         ))
@@ -682,6 +683,156 @@ def _build_outstanding_series(txn_df: pd.DataFrame, date_range: pd.DatetimeIndex
     return pd.DataFrame(records)
 
 
+def _render_omo_data_check(txn_df: pd.DataFrame, today: datetime.date):
+    """Five data-quality checks + daily net-injection crosscheck table."""
+    st.subheader("🔍 OMO Data Quality Check")
+
+    # ── Check 1: Freshness ────────────────────────────────────────────────────
+    last_date  = txn_df["Transaction Date"].dt.date.max()
+    days_stale = (today - last_date).days
+    if days_stale == 0:
+        fresh_icon, fresh_msg = "✅", f"Up to date — last data {last_date:%d %b %Y}"
+    elif days_stale <= 3:
+        fresh_icon, fresh_msg = "⚠️", f"Last data {last_date:%d %b %Y} ({days_stale}d ago)"
+    else:
+        fresh_icon, fresh_msg = "🔴", f"Stale — last data {last_date:%d %b %Y} ({days_stale}d ago) — fetch required"
+
+    # ── Check 2: Rate coverage ────────────────────────────────────────────────
+    total         = len(txn_df)
+    missing_rates = txn_df["Rate (%)"].isna().sum()
+    rate_pct      = 100 * (1 - missing_rates / total) if total else 0
+    if rate_pct >= 90:
+        rate_icon, rate_msg = "✅", f"Rate coverage {rate_pct:.0f}% ({missing_rates} missing)"
+    elif rate_pct >= 70:
+        rate_icon, rate_msg = "⚠️", f"Rate coverage {rate_pct:.0f}% ({missing_rates} of {total} missing)"
+    else:
+        rate_icon, rate_msg = "🔴", f"Low rate coverage {rate_pct:.0f}% ({missing_rates} of {total} missing)"
+
+    # ── Check 3: maturity_date == transaction_date + tenor_days ──────────────
+    expected_mat = (
+        txn_df["Transaction Date"] + pd.to_timedelta(txn_df["Tenor Days"], unit="D")
+    ).dt.date
+    bad_mat = txn_df[expected_mat != txn_df["Maturity Date"].dt.date]
+    if bad_mat.empty:
+        tenor_icon, tenor_msg = "✅", "All maturity dates consistent with tenor_days"
+    else:
+        tenor_icon, tenor_msg = "🔴", f"{len(bad_mat)} maturity date(s) inconsistent with tenor_days"
+
+    # ── Check 4: Known tenors only ────────────────────────────────────────────
+    unk = txn_df[~txn_df["Tenor Days"].isin({1, 7, 14, 28})]
+    if unk.empty:
+        tenorval_icon, tenorval_msg = "✅", "All tenors are standard (1D / 7D / 14D / 28D)"
+    else:
+        tenorval_icon, tenorval_msg = (
+            "⚠️",
+            f"{len(unk)} record(s) with non-standard tenor: {sorted(unk['Tenor Days'].unique())}",
+        )
+
+    # ── Check 5: Duplicates (same date + instrument + tenor) ─────────────────
+    grp = txn_df.groupby(
+        [txn_df["Transaction Date"].dt.date, "Instrument", "Tenor Days"]
+    ).size()
+    dup_groups = grp[grp > 1]
+    if dup_groups.empty:
+        dup_icon, dup_msg = "✅", "No duplicate (date, instrument, tenor) combinations"
+    else:
+        dup_icon, dup_msg = (
+            "⚠️",
+            f"{len(dup_groups)} (date, instrument, tenor) group(s) with multiple records",
+        )
+
+    # ── Summary banner ────────────────────────────────────────────────────────
+    red_items  = [m for ic, m in [
+        (fresh_icon, fresh_msg), (rate_icon, rate_msg), (tenor_icon, tenor_msg),
+    ] if ic == "🔴"]
+    warn_items = [m for ic, m in [
+        (fresh_icon, fresh_msg), (rate_icon, rate_msg),
+        (tenorval_icon, tenorval_msg), (dup_icon, dup_msg),
+    ] if ic == "⚠️"]
+
+    if red_items:
+        st.error(f"**{len(red_items)} issue(s):** {' | '.join(red_items)}")
+    elif warn_items:
+        st.warning(f"**{len(warn_items)} warning(s):** {' | '.join(warn_items)}")
+    else:
+        st.success("All checks passed — data looks clean")
+
+    st.dataframe(
+        pd.DataFrame([
+            {"Check": "Data Freshness",      "Status": fresh_icon,    "Detail": fresh_msg},
+            {"Check": "Rate Coverage",        "Status": rate_icon,     "Detail": rate_msg},
+            {"Check": "Maturity Consistency", "Status": tenor_icon,    "Detail": tenor_msg},
+            {"Check": "Standard Tenors",      "Status": tenorval_icon, "Detail": tenorval_msg},
+            {"Check": "No Duplicates",        "Status": dup_icon,      "Detail": dup_msg},
+        ]),
+        use_container_width=True, hide_index=True,
+    )
+
+    if not bad_mat.empty:
+        with st.expander("🔴 Maturity date mismatches", expanded=True):
+            st.dataframe(
+                bad_mat[["Transaction Date", "Instrument", "Tenor", "Tenor Days", "Maturity Date"]],
+                use_container_width=True, hide_index=True,
+            )
+
+    if not dup_groups.empty:
+        with st.expander("⚠️ Duplicate records", expanded=False):
+            mask = pd.Series(False, index=txn_df.index)
+            for (d, instr, tdays) in dup_groups.index:
+                mask |= (
+                    (txn_df["Transaction Date"].dt.date == d) &
+                    (txn_df["Instrument"] == instr) &
+                    (txn_df["Tenor Days"] == tdays)
+                )
+            st.dataframe(
+                txn_df[mask].sort_values(["Transaction Date", "Instrument"]),
+                use_container_width=True, hide_index=True,
+            )
+
+    # ── Daily BB crosscheck table ─────────────────────────────────────────────
+    st.markdown("#### Daily Net Injection Crosscheck")
+    st.caption(
+        "Per transaction date: new flows, maturities, and computed net. "
+        "**Net Change** = (New Inj − New Abs) + (Mat Abs − Mat Inj). "
+        "Compare **Outstanding Net** with BB's published 'Net Liquidity Injection' to verify parsing."
+    )
+
+    xrows = []
+    for d in sorted(txn_df["Transaction Date"].dt.date.unique()):
+        day_txns = txn_df[txn_df["Transaction Date"].dt.date == d]
+        mat_txns = txn_df[txn_df["Maturity Date"].dt.date    == d]
+
+        new_inj = day_txns.loc[day_txns["Direction"] == "INJECTION",  "Amount (Cr)"].sum()
+        new_abs = day_txns.loc[day_txns["Direction"] == "ABSORPTION", "Amount (Cr)"].sum()
+        mat_inj = mat_txns.loc[mat_txns["Direction"] == "INJECTION",  "Amount (Cr)"].sum()
+        mat_abs = mat_txns.loc[mat_txns["Direction"] == "ABSORPTION", "Amount (Cr)"].sum()
+
+        active  = txn_df[
+            (txn_df["Transaction Date"].dt.date <= d) &
+            (txn_df["Maturity Date"].dt.date     >  d)
+        ]
+        out_inj = active.loc[active["Direction"] == "INJECTION",  "Amount (Cr)"].sum()
+        out_abs = active.loc[active["Direction"] == "ABSORPTION", "Amount (Cr)"].sum()
+
+        xrows.append({
+            "Date":                  d.strftime("%d-%b-%Y"),
+            "New Inj (Cr)":          round(new_inj, 2) if new_inj else None,
+            "New Abs (Cr)":          round(new_abs, 2) if new_abs else None,
+            "Mat Inj (Cr)":          round(mat_inj, 2) if mat_inj else None,
+            "Mat Abs (Cr)":          round(mat_abs, 2) if mat_abs else None,
+            "Net Change (Cr)":       round((new_inj - new_abs) + (mat_abs - mat_inj), 2),
+            "Outstanding Net (Cr)":  round(out_inj - out_abs, 2),
+        })
+
+    xdf = pd.DataFrame(xrows).sort_values("Date", ascending=False)
+    st.dataframe(xdf, use_container_width=True, hide_index=True, height=400)
+    st.caption(
+        "Units: BDT Crore  ·  "
+        "**Outstanding Net** = active injections minus active absorptions at end of day  ·  "
+        "Positive = banking system is net receiving liquidity from BB"
+    )
+
+
 def _render_omo_tab(today: datetime.date):
     st.header("Open Market Operations (OMO) — Outstanding Liquidity")
 
@@ -737,8 +888,11 @@ def _render_omo_tab(today: datetime.date):
     # ── Outstanding timeline ──────────────────────────────────────────────────
     st.subheader("Outstanding Liquidity Timeline")
     st.caption(
-        "Cumulative outstanding = all not-yet-matured transactions per instrument per day. "
-        "Shaded area = future (upcoming maturities)."
+        f"**Last BB data: {max_date.strftime('%d %b %Y')}** — "
+        "No new data beyond this date. "
+        "Values after the 'Today' line are existing transactions still running — "
+        "e.g. a 14-day CB Repo done Apr 21 remains outstanding until May 5. "
+        "Shaded area = projection from already-stored transactions (no new injections assumed)."
     )
 
     c1, c2 = st.columns([3, 1])
@@ -792,7 +946,8 @@ def _render_omo_tab(today: datetime.date):
     st.plotly_chart(fig, use_container_width=True)
 
     # ── Net injection chart ───────────────────────────────────────────────────
-    st.subheader("Net Injection vs Absorption")
+    st.subheader("Net Injection vs Absorption (Outstanding Stock)")
+    st.caption("Future values = existing transactions still in market. No new BB data beyond the Today line.")
     fig2 = go.Figure()
     fig2.add_trace(go.Bar(x=outstanding["Date"], y=outstanding["Total Injection"],
                           name="Injection", marker_color="#1a7f37",
@@ -1006,6 +1161,9 @@ def _render_omo_tab(today: datetime.date):
             f"omo-transactions-{today:%Y%m%d}.csv", "text/csv", key="dl_omo",
         )
 
+    st.divider()
+    _render_omo_data_check(txn_df, today)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # RENDER — called on every page load/reload
@@ -1103,13 +1261,13 @@ div[data-testid="metric-container"] { background:#f0f4fa; border-radius:8px; pad
 
     st.sidebar.markdown("---")
     omo_days = st.sidebar.selectbox(
-        "OMO lookback (days)", [7, 14, 28, 60], index=2, key="sb_omo_days",
-        help="How many days back to fetch OMO press releases",
+        "OMO lookback (days)", [7, 14, 28, 60, 180], index=2, key="sb_omo_days",
+        help="Use 180 days to capture all outstanding AR 180D transactions",
     )
     if st.sidebar.button("📥 Fetch OMO Data (BB Press Release)", use_container_width=True):
         with st.spinner(f"Fetching last {omo_days} days of OMO PDFs — opening Chrome…"):
             st.cache_data.clear()
-            result = run_omo_fetch(days_back=omo_days, max_files=15)
+            result = run_omo_fetch(days_back=omo_days, max_files=max(20, omo_days + 20))
             if result["errors"]:
                 st.sidebar.error(f"Errors: {result['errors']}")
             else:

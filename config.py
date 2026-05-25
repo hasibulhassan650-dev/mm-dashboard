@@ -6,6 +6,13 @@ import os
 import datetime
 from pathlib import Path
 
+# Load .env file if present (local development)
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent / ".env")
+except ImportError:
+    pass
+
 ROOT      = Path(__file__).parent
 SEEDS_DIR = ROOT / "data" / "seeds"
 LOGS_DIR  = ROOT / "logs"

@@ -159,6 +159,10 @@ def _parse_page(html: str, snapshot_date: datetime.date) -> List[Dict]:
                 stype = "T_BILL"
             elif "frt" in tenor_name:
                 stype = "FRTB"
+                # rem_cell gives "3Y" but label must be "3Y_FRTB" — fix the label too
+                if not tenor_label.endswith("_FRTB"):
+                    m = re.match(r"^(\d+)", tenor_label)
+                    tenor_label = f"{m.group(1)}Y_FRTB" if m else "3Y_FRTB"
             elif "t.bond" in tenor_name or "tbond" in tenor_name:
                 stype = "T_BOND"
 
@@ -244,50 +248,39 @@ def _chrome_major_version() -> Optional[int]:
 
 def fetch_primary_yields_history(months_back: int = 6) -> List[Dict]:
     """
-    Fetch primary market yields for the current month + last (months_back-1) months.
-    Opens Chrome once, passes the F5 bot challenge, then uses the date_picker
-    POST form to navigate to each month.
+    Fetch primary market yields for the last months_back months (including current).
+    Opens Chrome once, passes the F5 bot challenge, then submits the date_picker form
+    for EVERY month — including the current month.
 
-    Tested working approach (from live debug):
-      - Set date_picker value via JS: execute_script("arguments[0].value = '...'", field, month_str)
-      - Click submit via: forms[0].find_element(TAG_NAME,'button') → execute_script click
+    Root cause of prior bug: only the current month was read from the default page view,
+    which shows only the most recent auction result. All months must be explicitly submitted
+    to get the full list of auction results for that month.
+
+    TSPD bot protection allows 2 form submits per fresh page load.
+    Batching: 2 months per fresh load. Total page loads = ceil(months_back / 2).
     """
     try:
         import undetected_chromedriver as uc
         from selenium.webdriver.common.by import By
-        from selenium.webdriver.support.ui import WebDriverWait
-        from selenium.webdriver.support import expected_conditions as EC
     except ImportError as e:
         log.warning("undetected-chromedriver not available: %s", e)
         return []
 
     import time
 
-    # Build month list: current month first, then going back
+    # Build month list: (form_string, snap_date), current month first.
+    # snap_date is used as the snapshot_date label on stored rows; we use
+    # the 28th of the month as a stable within-month proxy.
     today = datetime.date.today()
-    months: List[tuple] = []   # (month_str, snap_date)
+    months: List[tuple] = []
+    d = today.replace(day=1)
     for i in range(months_back):
-        # i=0 → current month, i=1 → one month back, etc.
-        first_of = (today.replace(day=1) - datetime.timedelta(days=1)) \
-                   if i > 0 else today
-        for _ in range(i - 1):
-            first_of = (first_of.replace(day=1) - datetime.timedelta(days=1))
-        if i == 0:
-            snap = today
-            mstr = today.strftime("%B, %Y")
-        else:
-            # last day of target month
-            snap  = first_of.replace(day=1) - datetime.timedelta(days=1)
-            snap  = snap.replace(day=1)
-            # go i months before current
-            d = today.replace(day=1)
-            for _ in range(i):
-                d = (d - datetime.timedelta(days=1)).replace(day=1)
-            snap  = (d.replace(day=28))          # end-of-month proxy for snap_date
-            mstr  = d.strftime("%B, %Y")
+        mstr = d.strftime("%B, %Y")
+        snap = d.replace(day=min(28, today.day) if i == 0 else 28)
         months.append((mstr, snap))
+        d = (d - datetime.timedelta(days=1)).replace(day=1)  # go back one month
 
-    log.info("Treasury history: fetching months %s", [m for m, _ in months])
+    log.info("Treasury history: fetching %s", [m for m, _ in months])
 
     options = uc.ChromeOptions()
     options.add_argument("--window-position=-10000,-10000")
@@ -300,7 +293,6 @@ def fetch_primary_yields_history(months_back: int = 6) -> List[Dict]:
     all_rows: List[Dict] = []
 
     def _wait_for_real_page(drv, timeout=60) -> bool:
-        """Wait until date_picker is present (real page, not bot challenge)."""
         for _ in range(timeout // 3):
             time.sleep(3)
             if drv.find_elements(By.NAME, "date_picker"):
@@ -312,7 +304,6 @@ def fetch_primary_yields_history(months_back: int = 6) -> List[Dict]:
         return "support ID" in src or "human visitor" in src
 
     def _submit(drv, mstr: str) -> bool:
-        """Submit the form for mstr. Returns True on success."""
         field = drv.find_element(By.NAME, "date_picker")
         drv.execute_script("arguments[0].value = arguments[1]", field, mstr)
         drv.execute_script(
@@ -321,66 +312,29 @@ def fetch_primary_yields_history(months_back: int = 6) -> List[Dict]:
         time.sleep(5)
         return not _is_captcha(drv)
 
+    # TSPD allows 2 submits per fresh page load. Batch all months in groups of 2.
+    SUBMITS_PER_SESSION = 2
+    batches = [months[i:i + SUBMITS_PER_SESSION]
+               for i in range(0, len(months), SUBMITS_PER_SESSION)]
+
     try:
         driver = uc.Chrome(options=options, version_main=chrome_ver)
 
-        # TSPD allows 2 form submits per fresh page load before triggering CAPTCHA.
-        # Strategy: fresh load → grab current month + submit 2 historical months → reload → repeat.
-        SUBMITS_PER_SESSION = 2
-
-        # Split months into batches: first batch is [current, hist1, hist2],
-        # next batches are [hist3, hist4], [hist5, hist6], ...
-        # First month is always the current page (no submit needed).
-        current_month = months[0]
-        hist_months   = months[1:]
-
-        # Batch the historical months into groups of SUBMITS_PER_SESSION
-        batches: List[List] = []
-        for i in range(0, len(hist_months), SUBMITS_PER_SESSION):
-            batches.append(hist_months[i:i + SUBMITS_PER_SESSION])
-
-        # ── Batch 0: initial load gives current month; submit first 2 hist months ──
-        log.info("Fresh load (batch 0)…")
-        driver.get(BB_TREASURY_URL)
-        if not _wait_for_real_page(driver):
-            raise RuntimeError("Initial page load failed to pass bot challenge")
-        time.sleep(1)
-
-        # Parse current month
-        rows = _parse_page(driver.page_source, current_month[1])
-        log.info("  %s → %d rows", current_month[0], len(rows))
-        all_rows.extend(rows)
-
-        # Submit first batch of historical months
-        if batches:
-            for mstr, snap_date in batches[0]:
-                log.info("  Submitting %s…", mstr)
-                if not _submit(driver, mstr):
-                    log.warning("  %s: CAPTCHA triggered — will retry in next session", mstr)
-                    break
-                rows = _parse_page(driver.page_source, snap_date)
-                log.info("  %s → %d rows", mstr, len(rows))
-                all_rows.extend(rows)
-            remaining_batches = batches[1:]
-        else:
-            remaining_batches = []
-
-        # ── Subsequent batches: each gets a fresh page load ───────────────────
-        for batch_idx, batch in enumerate(remaining_batches):
-            log.info("Fresh load (batch %d)…", batch_idx + 1)
+        for batch_idx, batch in enumerate(batches):
+            log.info("Fresh page load (batch %d / %d)…", batch_idx + 1, len(batches))
             driver.get(BB_TREASURY_URL)
             if not _wait_for_real_page(driver):
-                log.warning("Batch %d: bot challenge failed — stopping", batch_idx + 1)
+                log.warning("Batch %d: bot challenge not cleared — stopping", batch_idx + 1)
                 break
             time.sleep(1)
 
             for mstr, snap_date in batch:
                 log.info("  Submitting %s…", mstr)
                 if not _submit(driver, mstr):
-                    log.warning("  %s: CAPTCHA triggered", mstr)
+                    log.warning("  %s: CAPTCHA triggered — stopping batch", mstr)
                     break
                 rows = _parse_page(driver.page_source, snap_date)
-                log.info("  %s → %d rows", mstr, len(rows))
+                log.info("  %s => %d rows", mstr, len(rows))
                 all_rows.extend(rows)
 
     except Exception as exc:
@@ -390,7 +344,7 @@ def fetch_primary_yields_history(months_back: int = 6) -> List[Dict]:
             try: driver.quit()
             except: pass
 
-    # Deduplicate: one record per (tenor_label, auction_date)
+    # Deduplicate: keep first occurrence per (tenor_label, auction_date)
     seen: Dict[tuple, Dict] = {}
     for r in all_rows:
         key = (r["tenor_label"], str(r["auction_date"]))

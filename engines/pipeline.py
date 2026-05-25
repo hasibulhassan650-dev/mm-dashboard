@@ -321,7 +321,12 @@ def run_omo_fetch(days_back: int = 28, max_files: int = 20) -> dict:
                 tenor_days         = r["tenor_days"],
                 accepted_bdt_crore = r["accepted_bdt_crore"],
             ).first()
-            if not existing:
+            if existing:
+                # Update maturity_bdt_crore if not yet populated from PDF
+                if existing.maturity_bdt_crore is None and r.get("maturity_bdt_crore"):
+                    existing.maturity_bdt_crore = r["maturity_bdt_crore"]
+                    saved += 1
+            else:
                 session.add(OMOTransaction(
                     transaction_date   = r["transaction_date"],
                     maturity_date      = r["maturity_date"],
@@ -329,6 +334,7 @@ def run_omo_fetch(days_back: int = 28, max_files: int = 20) -> dict:
                     tenor_label        = r["tenor_label"],
                     tenor_days         = r["tenor_days"],
                     accepted_bdt_crore = r["accepted_bdt_crore"],
+                    maturity_bdt_crore = r.get("maturity_bdt_crore"),
                     rate_pct           = r.get("rate_pct"),
                     direction          = r["direction"],
                     source_pdf         = r.get("source_pdf"),

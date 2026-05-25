@@ -9,10 +9,10 @@ st.set_page_config(
     layout="wide",
 )
 
-# ── Run pipeline once on first load, show progress to user ───────────────────
+# ── Run pipeline once per day, cached by date so it auto-refreshes at midnight ─
 @st.cache_resource(show_spinner=False)
-def initialise():
-    """Run once per server session. Cached so it does not repeat on page reload."""
+def initialise(today: datetime.date):
+    """Run once per calendar day. Re-runs automatically when the date changes."""
     from db import init_db
     from seeds_loader import load_holiday_file
     from engines.pipeline import run_pipeline
@@ -24,7 +24,6 @@ def initialise():
     if seed.exists():
         load_holiday_file(str(seed))
 
-    # Load holidays into memory
     from db import get_session, HolidayCalendar
     session = get_session()
     rows = session.query(HolidayCalendar).all()
@@ -32,17 +31,23 @@ def initialise():
     session.close()
 
     summary = run_pipeline(
-        datetime.date.today() - datetime.timedelta(days=60),
-        datetime.date.today() + datetime.timedelta(days=120),
+        today - datetime.timedelta(days=60),
+        today + datetime.timedelta(days=120),
     )
     return summary
 
-# Show spinner while initialising
-with st.spinner("Loading data — please wait up to 60 seconds on first visit..."):
-    summary = initialise()
+# ── Only show spinner on actual first load, not on every widget interaction ───
+today = datetime.date.today()
+if "init_done" not in st.session_state:
+    with st.spinner("Loading today's data — please wait up to 60 seconds on first visit..."):
+        summary = initialise(today)
+    st.session_state["init_done"] = True
+    st.session_state["init_errors"] = summary.get("errors", [])
+else:
+    summary = initialise(today)  # returns instantly from cache
 
-if summary.get("errors"):
-    st.warning(f"Pipeline completed with warnings: {summary['errors']}")
+if st.session_state.get("init_errors"):
+    st.warning(f"Pipeline completed with warnings: {st.session_state['init_errors']}")
 
 # ── Load the main dashboard ───────────────────────────────────────────────────
 from dashboard.app import render

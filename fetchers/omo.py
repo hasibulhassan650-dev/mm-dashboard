@@ -125,7 +125,10 @@ def _parse_date_from_text(text: str) -> Optional[datetime.date]:
 def parse_omo_pdf(pdf_bytes: bytes, hint_date: Optional[datetime.date], pdf_url: str) -> List[Dict]:
     """
     Parse a BB OMO press release PDF.
-    Returns list of transaction dicts, one per (instrument, tenor) row where accepted != 0.
+    Returns list of dicts, one per (instrument, tenor) line.
+    Tries table extraction first (reliable column alignment); falls back to text parsing.
+
+    PDF columns: Instruments | Tenor | Offered | Accepted | Rate | Maturity | Net
     """
     if not pdf_bytes or pdf_bytes[:4] != b"%PDF":
         log.warning("Not a valid PDF (%s...)", pdf_bytes[:8] if pdf_bytes else b"")
@@ -138,58 +141,160 @@ def parse_omo_pdf(pdf_bytes: bytes, hint_date: Optional[datetime.date], pdf_url:
         return []
 
     full_text = ""
+    all_tables: List[List] = []
     try:
         with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
             for page in pdf.pages:
                 full_text += (page.extract_text() or "") + "\n"
+                for tbl in (page.extract_tables() or []):
+                    all_tables.extend(tbl)
     except Exception as exc:
         log.error("pdfplumber failed for %s: %s", pdf_url, exc)
         return []
 
-    # Extract transaction date from PDF text (e.g. "as on 21 April 2026")
     txn_date = _parse_date_from_text(full_text) or hint_date or datetime.date.today()
+    # BB PDF text sometimes has an off-by-one date (e.g. says "23 May" but file is pr_20260524.pdf).
+    # OMO never happens on Fri/Sat (BD weekend). If text date lands on a weekend, trust the URL date.
+    if txn_date.weekday() in (4, 5):  # Friday=4, Saturday=5
+        url_date = _parse_date_from_text(pdf_url)
+        if url_date and url_date.weekday() not in (4, 5):
+            log.info("Date corrected %s->%s (text was weekend, using URL date)", txn_date, url_date)
+            txn_date = url_date
+        elif hint_date and hint_date.weekday() not in (4, 5):
+            log.info("Date corrected %s->%s (text was weekend, using hint date)", txn_date, hint_date)
+            txn_date = hint_date
     log.debug("OMO PDF date: %s from %s", txn_date, pdf_url)
+
+    # ── Text-based parsing is primary: instrument identification is reliable ──
+    # Table parser has a known bug where pdfplumber sometimes places the section
+    # header (e.g. "IBLF") on a later row, causing the first row to inherit the
+    # wrong instrument via carry-forward.  Text extraction always puts the
+    # instrument name on its own line before the data rows.
+    transactions = _parse_via_text(full_text, txn_date, pdf_url)
+    if transactions:
+        log.info("Parsed %d rows via text parser (date=%s, url=%s)",
+                 len(transactions), txn_date, Path(pdf_url).name)
+        return transactions
+
+    # ── Fallback: table-based parsing ─────────────────────────────────────────
+    log.debug("Text parser yielded nothing, falling back to table extraction")
+    transactions = _parse_via_table(all_tables, txn_date, pdf_url)
+    log.info("Parsed %d rows via table fallback (date=%s, url=%s)",
+             len(transactions), txn_date, Path(pdf_url).name)
+    return transactions
+
+
+def _build_txn(instr: str, direction: str, tenor_days: int,
+               accepted: float, maturity: float, rate: Optional[float],
+               txn_date: datetime.date, pdf_url: str) -> Optional[Dict]:
+    """Build a transaction dict. Only stores rows where a new acceptance happened."""
+    if abs(accepted) < 0.01:
+        return None
+    mat_date = (txn_date + datetime.timedelta(days=tenor_days)
+                if abs(accepted) >= 0.01 else txn_date)
+    return {
+        "transaction_date":   txn_date,
+        "maturity_date":      mat_date,
+        "instrument":         instr,
+        "tenor_label":        f"{tenor_days}D",
+        "tenor_days":         tenor_days,
+        "accepted_bdt_crore": abs(accepted),
+        "maturity_bdt_crore": maturity,
+        "rate_pct":           rate,
+        "direction":          direction,
+        "source_pdf":         pdf_url,
+    }
+
+
+def _parse_via_table(rows: List[List], txn_date: datetime.date, pdf_url: str) -> List[Dict]:
+    """
+    Parse using pdfplumber table rows.
+    Expected columns (by position): Instrument | Tenor | Offered | Accepted | Rate | Maturity | Net
+    Instrument cell may be empty for continuation rows — carry the last seen value.
+    """
+    transactions: List[Dict] = []
+    current_instrument: Optional[str] = None
+    current_direction:  Optional[str] = None
+
+    for row in rows:
+        if not row or len(row) < 5:
+            continue
+        cells = [str(c or "").strip() for c in row]
+
+        # Skip header/footer rows
+        joined = " ".join(cells).lower()
+        if any(kw in joined for kw in ("instruments", "sub-total", "grand total",
+                                       "net liquidity", "offered amount", "tenor")):
+            continue
+
+        # Column 0: instrument (may be blank for continuation rows)
+        if cells[0]:
+            m = _match_instrument(cells[0])
+            if m:
+                current_instrument, current_direction = m
+            elif not any(_parse_tenor(c) for c in cells[1:2]):
+                # Non-instrument, non-tenor first cell — skip
+                continue
+
+        if not current_instrument:
+            continue
+
+        # Column 1: tenor
+        tenor_days = _parse_tenor(cells[1]) if len(cells) > 1 else None
+        if tenor_days is None:
+            continue
+
+        # Columns 2,3,4,5,6 = Offered, Accepted, Rate, Maturity, Net
+        # We need at least Accepted (col 3) and Maturity (col 5)
+        accepted  = _clean_num(cells[3]) if len(cells) > 3 else None
+        maturity  = _clean_num(cells[5]) if len(cells) > 5 else None
+        rate_raw  = cells[4]             if len(cells) > 4 else ""
+
+        if accepted is None:
+            continue
+
+        # Rate may be a range "4.00-5.25" — take the first number
+        rate = next(
+            (v for v in (_clean_num(t) for t in re.split(r'[-–]', rate_raw)) if v and 0 < v < 30),
+            None
+        )
+        mat_abs = abs(maturity) if maturity is not None else 0.0
+
+        txn = _build_txn(current_instrument, current_direction, tenor_days,
+                         abs(accepted), mat_abs, rate, txn_date, pdf_url)
+        if txn:
+            transactions.append(txn)
+
+    return transactions
+
+
+def _parse_via_text(full_text: str, txn_date: datetime.date, pdf_url: str) -> List[Dict]:
+    """
+    Text-based fallback parser.
+    Column layout: Offered | Accepted | Rate (1-2 nums if range) | Maturity | Net
+    maturity = nums[-2], net = nums[-1] — reliable regardless of rate format.
+    """
+    def _extract_nums(line: str) -> List[float]:
+        s = re.sub(r'\d+\s*[-\s]*(days?|day)\b', '', line, flags=re.I)
+        s = re.sub(r'[A-Za-z\s\(\)\[\]/]+', ' ', s)
+        return [v for v in (_clean_num(t) for t in re.findall(r'-?[\d,]+\.?\d*', s))
+                if v is not None]
 
     transactions: List[Dict] = []
     current_instrument: Optional[str] = None
     current_direction:  Optional[str] = None
-    # Some PDFs put the tenor data row BEFORE the instrument name (e.g. CB_REPO in Apr 21).
-    # We save that orphan row and assign the instrument when the name appears on the next line.
     pending: Optional[Dict] = None
+    # Index of the last row added via carry-forward that duplicated an existing
+    # instrument+tenor — a signal that it was misclassified and may need reassigning
+    # when the real instrument name later appears inline.
+    suspect_idx: Optional[int] = None
 
-    def _extract_nums(line: str, tenor_days: int) -> List[float]:
-        """Extract all numbers in positional order — KEEP zeros, they are real column values."""
-        s = re.sub(r'\d+\s*[-\s]*(days?|day)\b', '', line, flags=re.I)
-        s = re.sub(r'[A-Za-z\s\(\)\[\]/]+', ' ', s)
-        result = []
-        for tok in re.findall(r'-?[\d,]+\.?\d*', s):
-            v = _clean_num(tok)
-            if v is not None:
-                result.append(v)
-        return result
-
-    def _make_txn(instr, direction, tenor_days, nums, txn_date, pdf_url) -> Optional[Dict]:
-        """Build a transaction dict. Returns None if accepted == 0 (maturity-only row)."""
-        if len(nums) < 2:
-            return None
-        # Column layout: Offered | Accepted | Rate (may split to 2 if "4.00-5.25") | Maturity | Net
-        # Zeros are real — accepted = nums[1], not filtered
-        accepted = nums[1]
-        if abs(accepted) < 0.01:
-            # No new transaction today for this instrument/tenor (only maturities happened)
-            return None
-        rate = next((n for n in nums[2:] if 0 < abs(n) < 30), None)
-        return {
-            "transaction_date":   txn_date,
-            "maturity_date":      txn_date + datetime.timedelta(days=tenor_days),
-            "instrument":         instr,
-            "tenor_label":        f"{tenor_days}D",
-            "tenor_days":         tenor_days,
-            "accepted_bdt_crore": abs(accepted),
-            "rate_pct":           rate,
-            "direction":          direction,
-            "source_pdf":         pdf_url,
-        }
+    def _is_duplicate(instr: str, tdays: int) -> bool:
+        """True if (instr, tenor_days) already appears in transactions (excluding last entry)."""
+        return any(
+            t["instrument"] == instr and t["tenor_days"] == tdays
+            for t in transactions[:-1]
+        )
 
     for raw_line in full_text.split("\n"):
         line = raw_line.strip()
@@ -199,47 +304,78 @@ def parse_omo_pdf(pdf_bytes: bytes, hint_date: Optional[datetime.date], pdf_url:
         tenor_days = _parse_tenor(line)
 
         if tenor_days is None:
-            # Instrument name line — set current instrument and flush any pending orphan row
             m = _match_instrument(line)
             if m:
                 current_instrument, current_direction = m
                 if pending is not None:
-                    # Retroactively assign instrument to the orphan row we held
-                    txn = _make_txn(current_instrument, current_direction,
-                                    pending["tenor_days"], pending["nums"],
-                                    txn_date, pdf_url)
-                    if txn:
-                        transactions.append(txn)
+                    nums = pending["nums"]
+                    if len(nums) >= 4:
+                        accepted = nums[1]
+                        maturity = abs(nums[-2])
+                        rate = next((n for n in nums[2:-2] if 0 < abs(n) < 30), None)
+                        txn = _build_txn(current_instrument, current_direction,
+                                         pending["tenor_days"], abs(accepted), maturity,
+                                         rate, txn_date, pdf_url)
+                        if txn:
+                            transactions.append(txn)
                     pending = None
+                suspect_idx = None
             continue
 
-        # ── Data row with a tenor ─────────────────────────────────────────────
-        nums = _extract_nums(line, tenor_days)
-
-        # Instrument may be inline on this line
+        nums = _extract_nums(line)
         instr_match = _match_instrument(line)
         if instr_match:
-            current_instrument, current_direction = instr_match
-            pending = None  # inline instrument means no orphan issue
+            new_instr, new_dir = instr_match
+            # Look-back fix: if the last carry-forward row created a duplicate
+            # instrument+tenor and now a different instrument appears inline,
+            # the carry-forward row was misclassified — reassign it.
+            if (suspect_idx is not None and
+                    new_instr != current_instrument and
+                    suspect_idx < len(transactions)):
+                transactions[suspect_idx]["instrument"] = new_instr
+                transactions[suspect_idx]["direction"]  = new_dir
+                log.debug("Look-back fix: reassigned row %d from %s to %s",
+                          suspect_idx, current_instrument, new_instr)
+            current_instrument, current_direction = new_instr, new_dir
+            pending = None
+            suspect_idx = None
 
         if not current_instrument:
-            # Orphan row — save it, instrument name will appear on the next line
             pending = {"tenor_days": tenor_days, "nums": nums}
-            log.debug("Orphan tenor row saved (tenor=%dD): %s", tenor_days, line)
+            suspect_idx = None
             continue
 
         pending = None
-        txn = _make_txn(current_instrument, current_direction,
-                        tenor_days, nums, txn_date, pdf_url)
-        if txn:
-            transactions.append(txn)
-        else:
-            log.debug("Skipped zero-accepted row: %s", line)
+        if len(nums) >= 4:
+            accepted = nums[1]
+            maturity = abs(nums[-2])
+            rate = next((n for n in nums[2:-2] if 0 < abs(n) < 30), None)
+            txn = _build_txn(current_instrument, current_direction, tenor_days,
+                             abs(accepted), maturity, rate, txn_date, pdf_url)
+            if txn:
+                transactions.append(txn)
+                # Mark as suspect (eligible for look-back reassignment) if ANY of:
+                # (a) carry-forward creates a duplicate instrument+tenor
+                # (b) SDF got tenor > 1D — SDF is strictly overnight-only
+                # (c) CB_REPO got rate < 8% — CB_REPO standard rate is 10%
+                if instr_match is None and (
+                    _is_duplicate(current_instrument, tenor_days)
+                    or (current_instrument == 'SDF' and tenor_days > 1)
+                    or (current_instrument == 'CB_REPO' and rate is not None and rate < 8.0)
+                ):
+                    suspect_idx = len(transactions) - 1
+                else:
+                    suspect_idx = None
 
-    log.info(
-        "Parsed %d transactions from OMO PDF (date=%s, url=%s)",
-        len(transactions), txn_date, Path(pdf_url).name,
-    )
+    # ── Post-processing: fix impossible instrument/tenor combinations ─────────
+    # SDF is physically only ever 1-Day (overnight deposit at BB).
+    # Any SDF row with tenor > 1D is a parser misclassification — always AR.
+    for txn in transactions:
+        if txn['instrument'] == 'SDF' and txn['tenor_days'] > 1:
+            log.debug("Post-fix: SDF %dD → AR (SDF is 1D-only)", txn['tenor_days'])
+            txn['instrument'] = 'AR'
+            txn['direction']  = 'INJECTION'
+
     return transactions
 
 

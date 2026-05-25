@@ -154,20 +154,23 @@ class PrimaryYieldSnapshot(Base):
 
 
 class OMOTransaction(Base):
-    """One row = one new OMO transaction done on transaction_date."""
+    """One row = one OMO instrument/tenor line from a BB press release PDF.
+    Rows with accepted_bdt_crore=0 are maturity-only lines (no new transaction today).
+    """
     __tablename__ = "omo_transactions"
     __table_args__ = (UniqueConstraint("transaction_date", "instrument", "tenor_days", "accepted_bdt_crore"),)
-    id                 = Column(Integer, primary_key=True, autoincrement=True)
-    transaction_date   = Column(Date, nullable=False)
-    maturity_date      = Column(Date)              # transaction_date + tenor_days
-    instrument         = Column(String(30), nullable=False)  # CB_REPO, SLF, IBLF, AR, SDF
-    tenor_label        = Column(String(10))        # "7D", "14D", "1D", "28D"
-    tenor_days         = Column(Integer)
-    accepted_bdt_crore = Column(Float)             # positive value for both injection + absorption
-    rate_pct           = Column(Float)
-    direction          = Column(String(20))        # INJECTION or ABSORPTION
-    source_pdf         = Column(String(300))
-    ingested_utc       = Column(DateTime)
+    id                  = Column(Integer, primary_key=True, autoincrement=True)
+    transaction_date    = Column(Date, nullable=False)
+    maturity_date       = Column(Date)              # txn_date + tenor_days; txn_date if accepted=0
+    instrument          = Column(String(30), nullable=False)  # CB_REPO, SLF, IBLF, AR, SDF
+    tenor_label         = Column(String(10))        # "7D", "14D", "1D", "28D"
+    tenor_days          = Column(Integer)
+    accepted_bdt_crore  = Column(Float)             # 0 for maturity-only rows
+    maturity_bdt_crore  = Column(Float)             # what matured today for this instrument/tenor (from PDF)
+    rate_pct            = Column(Float)
+    direction           = Column(String(20))        # INJECTION or ABSORPTION
+    source_pdf          = Column(String(300))
+    ingested_utc        = Column(DateTime)
 
 
 class HolidayCalendar(Base):
@@ -214,4 +217,14 @@ def get_session():
 def init_db():
     engine = get_engine()
     Base.metadata.create_all(engine)
+    # Add maturity_bdt_crore column if it doesn't exist yet (migration for existing DBs)
+    with engine.connect() as conn:
+        try:
+            conn.execute(__import__("sqlalchemy").text(
+                "ALTER TABLE omo_transactions ADD COLUMN maturity_bdt_crore REAL"
+            ))
+            conn.commit()
+            log.info("Migrated omo_transactions: added maturity_bdt_crore column")
+        except Exception:
+            pass  # column already exists
     log.info("Database initialised at %s", DB_PATH)
