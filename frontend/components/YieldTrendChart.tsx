@@ -1,9 +1,6 @@
 "use client";
 import { useState } from "react";
-import {
-  LineChart, Line, XAxis, YAxis, Tooltip,
-  ResponsiveContainer, CartesianGrid, Legend,
-} from "recharts";
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from "recharts";
 import { YieldRow } from "@/lib/api";
 
 const TENOR_ORDER = ["14D","91D","182D","364D","2Y","3Y_FRTB","5Y","10Y","15Y","20Y"];
@@ -21,30 +18,27 @@ const TENOR_COLORS: Record<string, string> = {
 };
 
 const N_OPTIONS = [6, 10, 20, 50, 0] as const;
-type NOption = typeof N_OPTIONS[number];
 
 export default function YieldTrendChart({ data }: { data: YieldRow[] }) {
   const available = TENOR_ORDER.filter(t => data.some(r => r.tenor_label === t));
   const [selected, setSelected] = useState<string[]>(available);
-  const [nAuctions, setNAuctions] = useState<NOption>(6);
+  const [nAuctions, setNAuctions] = useState<number>(6);
 
   const toggle = (t: string) =>
     setSelected(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t]);
 
-  // Keep last N per tenor
-  const filtered = data.filter(r => selected.includes(r.tenor_label));
   const byTenor: Record<string, YieldRow[]> = {};
-  for (const r of filtered) {
+  for (const r of data) {
     if (!byTenor[r.tenor_label]) byTenor[r.tenor_label] = [];
     byTenor[r.tenor_label].push(r);
   }
+
   const kept: YieldRow[] = [];
   for (const tenor of selected) {
-    const rows = (byTenor[tenor] ?? []).sort((a, b) => a.auction_date.localeCompare(b.auction_date));
+    const rows = [...(byTenor[tenor] ?? [])].sort((a, b) => a.auction_date.localeCompare(b.auction_date));
     kept.push(...(nAuctions === 0 ? rows : rows.slice(-nAuctions)));
   }
 
-  // Pivot to date rows
   const dateMap = new Map<string, Record<string, number | string>>();
   for (const r of kept) {
     if (!dateMap.has(r.auction_date)) dateMap.set(r.auction_date, { date: r.auction_date });
@@ -54,22 +48,8 @@ export default function YieldTrendChart({ data }: { data: YieldRow[] }) {
     String(a.date).localeCompare(String(b.date))
   );
 
-  const CustomLabel = (props: { x?: number; y?: number; value?: number; index?: number; data?: typeof chartData; dataKey?: string }) => {
-    const { x, y, value, index, data: d, dataKey } = props;
-    if (!d || !dataKey || index === undefined || x === undefined || y === undefined || value === undefined) return null;
-    // Only label the last point per tenor
-    if (index !== d.length - 1) return null;
-    const color = TENOR_COLORS[dataKey] ?? "#888";
-    return (
-      <text x={x + 4} y={y - 4} fill={color} fontSize={10} textAnchor="start">
-        {Number(value).toFixed(2)}%
-      </text>
-    );
-  };
-
   return (
     <div>
-      {/* Controls */}
       <div className="flex flex-wrap items-center gap-3 mb-4">
         <div className="flex flex-wrap gap-1.5">
           {available.map(t => (
@@ -88,7 +68,7 @@ export default function YieldTrendChart({ data }: { data: YieldRow[] }) {
           ))}
         </div>
         <div className="ml-auto flex items-center gap-2 text-xs text-gray-400">
-          <span>Last N auctions:</span>
+          <span>Last N per tenor:</span>
           {N_OPTIONS.map(n => (
             <button
               key={n}
@@ -102,7 +82,7 @@ export default function YieldTrendChart({ data }: { data: YieldRow[] }) {
       </div>
 
       <ResponsiveContainer width="100%" height={320}>
-        <LineChart data={chartData} margin={{ top: 12, right: 48, bottom: 4, left: 4 }}>
+        <LineChart data={chartData} margin={{ top: 8, right: 16, bottom: 4, left: 4 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
           <XAxis dataKey="date" tick={{ fill: "#9ca3af", fontSize: 10 }}
             tickFormatter={d => String(d).slice(2, 7)} interval="preserveStartEnd" />
@@ -120,7 +100,6 @@ export default function YieldTrendChart({ data }: { data: YieldRow[] }) {
               stroke={TENOR_COLORS[t] ?? "#6b7280"} strokeWidth={2}
               dot={{ r: 4, fill: TENOR_COLORS[t] ?? "#6b7280", stroke: "white", strokeWidth: 1 }}
               connectNulls
-              label={<CustomLabel dataKey={t} data={chartData} />}
             />
           ))}
         </LineChart>
