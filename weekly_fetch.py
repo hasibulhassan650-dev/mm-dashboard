@@ -165,7 +165,7 @@ def main():
         from fetchers.refrate import fetch_refrate
         from db import RefRate
         import datetime as _dt
-        rows_rr = fetch_refrate()
+        rows_rr = fetch_refrate(days_back=35)
         now_utc = _dt.datetime.utcnow()
         session = get_session()
         saved_rr = 0
