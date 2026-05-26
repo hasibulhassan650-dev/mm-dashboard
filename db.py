@@ -205,6 +205,20 @@ class CallMoneyRate(Base):
     ingested_utc     = Column(DateTime)
 
 
+class RefRate(Base):
+    """Money market reference rates — DOMMR and BOFR — per product per day."""
+    __tablename__ = "ref_rates"
+    __table_args__ = (UniqueConstraint("trade_date", "rate_type", "product"),)
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    trade_date  = Column(Date, nullable=False)
+    rate_type   = Column(String(10), nullable=False)   # DOMMR or BOFR
+    product     = Column(String(20), nullable=False)   # Overnight, 1W, 1M, 3M
+    amount_crore = Column(Float)
+    rate_pct    = Column(Float)
+    num_deals   = Column(Integer)
+    ingested_utc = Column(DateTime)
+
+
 class HolidayCalendar(Base):
     __tablename__ = "holiday_calendar"
     calendar_date  = Column(Date, primary_key=True)

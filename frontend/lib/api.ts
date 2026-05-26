@@ -19,6 +19,7 @@ export const api = {
   flows:           (months = 6) => get<FlowRow[]>("/api/flows", { months }),
   callmoney:       (days = 30)  => get<CallMoneyResult>("/api/callmoney", { days }),
   fx:              (days = 365) => get<FxAuctionRow[]>("/api/fx", { days }),
+  refrate:         (days = 60)  => get<RefRateRow[]>("/api/refrate", { days }),
   drilldown:       (date: string) => get<DrilldownResult>(`/api/flows/drilldown`, { date }),
 };
 
@@ -76,6 +77,11 @@ export interface CallMoneyResult {
   daily_summary: CallMoneyDailySummary[];
   latest_breakdown: CallMoneyBreakdownRow[];
   latest_date: string | null;
+}
+
+export interface RefRateRow {
+  trade_date: string; rate_type: string; product: string;
+  amount_crore: number | null; rate_pct: number | null; num_deals: number | null;
 }
 
 export interface FxAuctionRow {

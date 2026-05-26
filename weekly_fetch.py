@@ -159,6 +159,32 @@ def main():
         log.exception("FX fetch failed: %s", exc)
         errors.append(f"fx: {exc}")
 
+    # ── 6. Money market reference rates (DOMMR + BOFR, today only) ───────────
+    log.info("--- Step 6: Money market reference rates ---")
+    try:
+        from fetchers.refrate import fetch_refrate
+        from db import RefRate
+        import datetime as _dt
+        rows_rr = fetch_refrate()
+        now_utc = _dt.datetime.utcnow()
+        session = get_session()
+        saved_rr = 0
+        for r in rows_rr:
+            r["ingested_utc"] = now_utc
+            if not session.query(RefRate).filter_by(
+                trade_date=r["trade_date"],
+                rate_type=r["rate_type"],
+                product=r["product"],
+            ).first():
+                session.add(RefRate(**r))
+                saved_rr += 1
+        session.commit()
+        session.close()
+        log.info("RefRate OK | new_rows=%d (fetched %d)", saved_rr, len(rows_rr))
+    except Exception as exc:
+        log.exception("RefRate fetch failed: %s", exc)
+        errors.append(f"refrate: {exc}")
+
     # ── Summary ───────────────────────────────────────────────────────────────
     elapsed = (datetime.datetime.now() - start).seconds
     if errors:

@@ -9,6 +9,7 @@ const links = [
   { href: "/yields",     label: "Yields" },
   { href: "/callmoney",  label: "Call Money" },
   { href: "/fx",         label: "FX Auctions" },
+  { href: "/refrate",    label: "Ref Rates" },
   { href: "/securities", label: "Securities" },
 ];
 
