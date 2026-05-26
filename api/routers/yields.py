@@ -57,3 +57,37 @@ def get_yield_curve():
         return sorted([dict(r._mapping) for r in rows], key=lambda x: x["tenor_years"] or 0)
     finally:
         session.close()
+
+
+@router.get("/secondary")
+def get_secondary_curve():
+    """Secondary market yield curve — latest GSOM MTM snapshot per ISIN."""
+    import datetime
+    today = datetime.date.today()
+    session = get_session()
+    try:
+        rows = session.execute(text("""
+            SELECT DISTINCT ON (m.isin)
+                   m.isin, m.settlement_date, m.market_yield_pct,
+                   m.outstanding_bdt_mill,
+                   s.security_name_norm, s.security_type,
+                   s.maturity_date, s.issue_date
+            FROM mtm_snapshots m
+            LEFT JOIN securities s ON m.isin = s.isin
+            WHERE m.market_yield_pct IS NOT NULL
+            ORDER BY m.isin, m.settlement_date DESC
+        """)).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r._mapping)
+            mat = d.get("maturity_date")
+            if mat is None:
+                continue
+            rem_years = (mat - today).days / 365.25
+            if rem_years < 0:
+                continue
+            d["remaining_years"] = round(rem_years, 3)
+            result.append(d)
+        return sorted(result, key=lambda x: x["remaining_years"])
+    finally:
+        session.close()

@@ -13,6 +13,7 @@ export const api = {
   omoOutstanding:  (days = 90) => get<OmoOutstandingRow[]>("/api/omo/outstanding", { days }),
   omoTransactions: (days = 60) => get<OmoTxnRow[]>("/api/omo/transactions", { days }),
   yieldCurve:      () => get<YieldRow[]>("/api/yields/curve"),
+  yieldSecondary:  () => get<SecondaryYieldRow[]>("/api/yields/secondary"),
   yields:          (months = 12) => get<YieldRow[]>("/api/yields", { months }),
   securities:      () => get<Security[]>("/api/securities"),
   flows:           (months = 6) => get<FlowRow[]>("/api/flows", { months }),
@@ -30,6 +31,12 @@ export interface OmoTxnRow {
   transaction_date: string; maturity_date: string; instrument: string;
   tenor_label: string; accepted_bdt_crore: number; rate_pct: number | null; direction: string;
 }
+export interface SecondaryYieldRow {
+  isin: string; settlement_date: string; market_yield_pct: number;
+  outstanding_bdt_mill: number; security_name_norm: string;
+  security_type: string; maturity_date: string; remaining_years: number;
+}
+
 export interface YieldRow {
   tenor_label: string; tenor_years: number; security_type: string;
   cutoff_yield_pct: number; auction_date: string;
