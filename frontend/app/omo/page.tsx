@@ -1,6 +1,7 @@
 import { api } from "@/lib/api";
 import StatCard from "@/components/StatCard";
 import OmoOutstandingChart from "@/components/OmoOutstandingChart";
+import DownloadButton from "@/components/DownloadButton";
 
 export const revalidate = 300;
 
@@ -39,7 +40,10 @@ export default async function OmoPage() {
       </div>
 
       <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
-        <h2 className="text-sm font-medium text-gray-300 mb-4">Recent Transactions (last 60 days)</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-medium text-gray-300">Recent Transactions (last 60 days)</h2>
+          <DownloadButton data={txns} filename="omo_transactions" />
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>

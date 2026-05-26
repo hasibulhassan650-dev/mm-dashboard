@@ -2,6 +2,7 @@ import { api } from "@/lib/api";
 import StatCard from "@/components/StatCard";
 import CashFlowChart from "@/components/CashFlowChart";
 import Link from "next/link";
+import DownloadButton from "@/components/DownloadButton";
 
 export const revalidate = 300;
 
@@ -37,7 +38,10 @@ export default async function CashFlowsPage() {
       </div>
 
       <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
-        <h2 className="text-sm font-medium text-gray-300 mb-4">Upcoming Events (next 30 days)</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-medium text-gray-300">Upcoming Events (next 30 days)</h2>
+          <DownloadButton data={flows} filename="cash_flows" />
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>

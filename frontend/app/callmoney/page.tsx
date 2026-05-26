@@ -1,6 +1,7 @@
 import { api } from "@/lib/api";
 import CallMoneyChart from "@/components/CallMoneyChart";
 import PeriodSelector from "@/components/PeriodSelector";
+import DownloadButton from "@/components/DownloadButton";
 
 export const revalidate = 300;
 
@@ -140,7 +141,10 @@ export default async function CallMoneyPage({
 
       {/* History table */}
       <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
-        <h2 className="text-sm font-medium text-gray-300 mb-4">Daily Summary ({summary.length} days)</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-medium text-gray-300">Daily Summary ({summary.length} days)</h2>
+          <DownloadButton data={summary} filename="callmoney_daily" />
+        </div>
         <div className="overflow-x-auto max-h-96 overflow-y-auto">
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-gray-900">

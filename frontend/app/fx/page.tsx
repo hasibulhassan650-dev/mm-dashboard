@@ -1,6 +1,7 @@
 import { api } from "@/lib/api";
 import FxChart from "@/components/FxChart";
 import PeriodSelector from "@/components/PeriodSelector";
+import DownloadButton from "@/components/DownloadButton";
 
 export const revalidate = 300;
 
@@ -102,7 +103,10 @@ export default async function FxPage({
 
       {/* Auction history table */}
       <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
-        <h2 className="text-sm font-medium text-gray-300 mb-4">Auction History ({rows.length} auctions)</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-medium text-gray-300">Auction History ({rows.length} auctions)</h2>
+          <DownloadButton data={rows} filename="fx_auction_history" />
+        </div>
         <div className="overflow-x-auto max-h-96 overflow-y-auto">
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-gray-900">

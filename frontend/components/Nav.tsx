@@ -3,38 +3,49 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const links = [
-  { href: "/",           label: "Overview" },
-  { href: "/cashflows",  label: "Cash Flows" },
-  { href: "/omo",        label: "OMO" },
-  { href: "/yields",     label: "Yields" },
-  { href: "/callmoney",  label: "Call Money" },
+  { href: "/",           label: "Overview"    },
+  { href: "/cashflows",  label: "Cash Flows"  },
+  { href: "/omo",        label: "OMO"         },
+  { href: "/yields",     label: "Yields"      },
+  { href: "/callmoney",  label: "Call Money"  },
   { href: "/fx",         label: "FX Auctions" },
-  { href: "/refrate",    label: "Ref Rates" },
-  { href: "/securities", label: "Securities" },
+  { href: "/refrate",    label: "Ref Rates"   },
+  { href: "/securities", label: "Securities"  },
 ];
 
 export default function Nav() {
   const path = usePathname();
   return (
-    <header className="border-b border-gray-800 bg-gray-900">
-      <div className="max-w-7xl mx-auto px-4 flex items-center gap-8 h-14">
-        <span className="font-semibold text-white tracking-tight">MM Dashboard</span>
-        <nav className="flex gap-1">
+    <header className="border-b border-gray-800 bg-gray-950">
+      <div className="max-w-7xl mx-auto px-6">
+        {/* Brand row */}
+        <div className="flex items-center justify-between h-12 border-b border-gray-800/60">
+          <div className="flex items-center gap-3">
+            <span className="w-1.5 h-6 rounded-sm bg-teal-500" />
+            <span className="text-sm font-semibold tracking-widest uppercase text-teal-400 letter-spacing-wide">
+              BB Market Intelligence
+            </span>
+          </div>
+          <span className="text-xs text-gray-500 font-mono">
+            Bangladesh Bank · Live Data
+          </span>
+        </div>
+        {/* Nav row */}
+        <nav className="flex items-center gap-0.5 h-10 overflow-x-auto">
           {links.map(({ href, label }) => (
             <Link
               key={href}
               href={href}
-              className={`px-3 py-1.5 rounded text-sm transition-colors ${
+              className={`px-3 py-1 text-xs font-medium transition-colors whitespace-nowrap ${
                 path === href
-                  ? "bg-blue-600 text-white"
-                  : "text-gray-400 hover:text-white hover:bg-gray-800"
+                  ? "text-teal-400 border-b-2 border-teal-500"
+                  : "text-gray-400 hover:text-gray-200"
               }`}
             >
               {label}
             </Link>
           ))}
         </nav>
-        <span className="ml-auto text-xs text-gray-500">Bangladesh Bank · Live Data</span>
       </div>
     </header>
   );

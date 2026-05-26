@@ -1,5 +1,6 @@
 import { api } from "@/lib/api";
 import StatCard from "@/components/StatCard";
+import DownloadButton from "@/components/DownloadButton";
 
 export const revalidate = 300;
 
@@ -36,7 +37,10 @@ export default async function SecuritiesPage() {
         { label: "Treasury Bills (T-Bill)", items: tbills },
       ].map(({ label, items }) => items.length > 0 && (
         <div key={label} className="rounded-xl border border-gray-800 bg-gray-900 p-4">
-          <h2 className="text-sm font-medium text-gray-300 mb-4">{label} ({items.length})</h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-medium text-gray-300">{label} ({items.length})</h2>
+            <DownloadButton data={items} filename={label.split(" ")[0].toLowerCase() + "_securities"} />
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
