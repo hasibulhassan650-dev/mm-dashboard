@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from routers import omo, yields, securities, flows, callmoney
+from routers import omo, yields, securities, flows, callmoney, fx
 
 app = FastAPI(title="MM Dashboard API", version="1.0.0")
 
@@ -35,6 +35,7 @@ app.include_router(yields.router,      prefix="/api/yields",     tags=["Yields"]
 app.include_router(securities.router,  prefix="/api/securities", tags=["Securities"])
 app.include_router(flows.router,       prefix="/api/flows",      tags=["Flows"])
 app.include_router(callmoney.router,   prefix="/api/callmoney",  tags=["CallMoney"])
+app.include_router(fx.router,          prefix="/api/fx",          tags=["FX"])
 
 
 @app.get("/health")

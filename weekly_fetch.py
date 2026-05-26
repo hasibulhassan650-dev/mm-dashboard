@@ -134,6 +134,31 @@ def main():
         log.exception("Call money fetch failed: %s", exc)
         errors.append(f"callmoney: {exc}")
 
+    # ── 5. FX auction results ─────────────────────────────────────────────────
+    log.info("--- Step 5: FX auction results ---")
+    try:
+        from fetchers.fx import fetch_fx_auctions
+        from db import FxAuctionResult
+        import datetime as _dt
+        rows_fx = fetch_fx_auctions()
+        now_utc = _dt.datetime.utcnow()
+        session = get_session()
+        saved_fx = 0
+        for r in rows_fx:
+            r["ingested_utc"] = now_utc
+            if not session.query(FxAuctionResult).filter_by(
+                auction_date=r["auction_date"],
+                auction_type=r["auction_type"],
+            ).first():
+                session.add(FxAuctionResult(**r))
+                saved_fx += 1
+        session.commit()
+        session.close()
+        log.info("FX OK | new_rows=%d (fetched %d)", saved_fx, len(rows_fx))
+    except Exception as exc:
+        log.exception("FX fetch failed: %s", exc)
+        errors.append(f"fx: {exc}")
+
     # ── Summary ───────────────────────────────────────────────────────────────
     elapsed = (datetime.datetime.now() - start).seconds
     if errors:

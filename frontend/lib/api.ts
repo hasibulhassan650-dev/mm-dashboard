@@ -18,6 +18,7 @@ export const api = {
   securities:      () => get<Security[]>("/api/securities"),
   flows:           (months = 6) => get<FlowRow[]>("/api/flows", { months }),
   callmoney:       (days = 30)  => get<CallMoneyResult>("/api/callmoney", { days }),
+  fx:              (days = 365) => get<FxAuctionRow[]>("/api/fx", { days }),
   drilldown:       (date: string) => get<DrilldownResult>(`/api/flows/drilldown`, { date }),
 };
 
@@ -75,6 +76,14 @@ export interface CallMoneyResult {
   daily_summary: CallMoneyDailySummary[];
   latest_breakdown: CallMoneyBreakdownRow[];
   latest_date: string | null;
+}
+
+export interface FxAuctionRow {
+  auction_date: string; settlement_date: string | null; auction_type: string;
+  num_bids: number | null; bid_amount_usd_mill: number | null;
+  bid_range: string | null; num_accepted: number | null;
+  accepted_amount_usd_mill: number | null;
+  cutoff_rate: number | null; weighted_avg_rate: number | null;
 }
 
 export interface DrilldownResult {

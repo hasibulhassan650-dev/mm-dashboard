@@ -173,6 +173,23 @@ class OMOTransaction(Base):
     ingested_utc        = Column(DateTime)
 
 
+class FxAuctionResult(Base):
+    __tablename__ = "fx_auction_results"
+    __table_args__ = (UniqueConstraint("auction_date", "auction_type"),)
+    id                       = Column(Integer, primary_key=True, autoincrement=True)
+    auction_date             = Column(Date, nullable=False)
+    settlement_date          = Column(Date)
+    auction_type             = Column(String(10))
+    num_bids                 = Column(Integer)
+    bid_amount_usd_mill      = Column(Float)
+    bid_range                = Column(String(30))
+    num_accepted             = Column(Integer)
+    accepted_amount_usd_mill = Column(Float)
+    cutoff_rate              = Column(Float)
+    weighted_avg_rate        = Column(Float)
+    ingested_utc             = Column(DateTime)
+
+
 class CallMoneyRate(Base):
     __tablename__ = "call_money_rates"
     __table_args__ = (UniqueConstraint("trade_date", "product", "maturity_days"),)
