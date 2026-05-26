@@ -30,40 +30,6 @@ log = logging.getLogger(__name__)
 _URL = "https://www.bb.org.bd/en/index.php/monetaryactivity/call_money_market"
 
 
-def _chrome_major_version() -> Optional[int]:
-    import re as _re
-    try:
-        import winreg
-        for hive, path in [
-            (winreg.HKEY_CURRENT_USER,  r"Software\Google\Chrome\BLBeacon"),
-            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Google\Chrome\BLBeacon"),
-            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Google\Chrome\BLBeacon"),
-        ]:
-            try:
-                key = winreg.OpenKey(hive, path)
-                ver, _ = winreg.QueryValueEx(key, "version")
-                m = _re.match(r"(\d+)\.", str(ver))
-                if m:
-                    return int(m.group(1))
-            except OSError:
-                continue
-    except Exception:
-        pass
-    try:
-        import subprocess
-        out = subprocess.check_output(
-            ["powershell", "-c",
-             r"(Get-Item 'C:\Program Files\Google\Chrome\Application\chrome.exe').VersionInfo.ProductVersion"],
-            text=True, timeout=8, stderr=subprocess.DEVNULL,
-        )
-        m = _re.match(r"(\d+)\.", out.strip())
-        if m:
-            return int(m.group(1))
-    except Exception:
-        pass
-    return None
-
-
 def _parse_maturity_days(s: str) -> Optional[int]:
     """'1 Day(/s)' → 1, '14 Day(/s)' → 14, '3 Month(/s)' → 90"""
     s = s.strip()
@@ -151,73 +117,31 @@ def _parse_table(html: str) -> List[Dict]:
 
 def fetch_call_money(days_back: int = 30) -> List[Dict]:
     """
-    Open BB call money page with Chrome, submit date range, parse and return rows.
-    Falls back gracefully if Chrome or undetected_chromedriver is unavailable.
-    """
-    try:
-        import undetected_chromedriver as uc
-        from selenium.webdriver.common.by import By
-    except ImportError as e:
-        log.warning("undetected-chromedriver not available: %s", e)
-        return []
+    Fetch BB call money market rates for the last `days_back` days.
 
-    import time
+    Uses Chrome to clear F5 JS challenge and capture session cookies,
+    then curl_cffi POSTs the date-range form with Chrome TLS impersonation
+    to bypass F5 fingerprinting.
+    """
+    from fetchers.bb_session import get_f5_cookies, bb_post
 
     today     = datetime.date.today()
     date_from = today - datetime.timedelta(days=days_back)
     range_str = f"{date_from.strftime('%d/%m/%Y')} - {today.strftime('%d/%m/%Y')}"
     log.info("Call money: fetching %s", range_str)
 
-    options = uc.ChromeOptions()
-    options.add_argument("--window-position=-10000,-10000")
-    options.add_argument("--window-size=1920,1080")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-
-    driver = None
     try:
-        driver = uc.Chrome(options=options, version_main=_chrome_major_version())
-        driver.get(_URL)
-
-        # Wait for bot challenge to clear
-        for _ in range(20):
-            time.sleep(3)
-            if driver.find_elements(By.NAME, "date_picker"):
-                break
-        else:
-            log.warning("Call money: page never cleared bot check")
-            return []
-
-        time.sleep(1)
-
-        # Set date range and submit
-        field = driver.find_element(By.NAME, "date_picker")
-        # Set value + fire change event so Bootstrap DateRangePicker internal state updates
-        driver.execute_script(
-            "arguments[0].value = arguments[1];"
-            "arguments[0].dispatchEvent(new Event('change', {bubbles:true}));",
-            field, range_str,
-        )
-        time.sleep(1)
-
-        try:
-            btn = driver.find_element(By.CSS_SELECTOR, "button[type=submit], input[type=submit]")
-            driver.execute_script("arguments[0].click()", btn)
-        except Exception:
-            driver.execute_script("document.querySelector('form').submit()")
-
-        time.sleep(5)
-
-        rows = _parse_table(driver.page_source)
-        log.info("Call money: parsed %d rows", len(rows))
-        return rows
-
+        cookies, ua = get_f5_cookies(_URL, wait_selector="input[name='date_picker']")
     except Exception as exc:
-        log.error("Call money fetch error: %s", exc)
+        log.error("Call money: Chrome cookie capture failed: %s", exc)
         return []
-    finally:
-        if driver:
-            try:
-                driver.quit()
-            except Exception:
-                pass
+
+    try:
+        html = bb_post(_URL, {"date_picker": range_str}, cookies, ua)
+    except Exception as exc:
+        log.error("Call money: POST failed: %s", exc)
+        return []
+
+    rows = _parse_table(html)
+    log.info("Call money: parsed %d rows", len(rows))
+    return rows
