@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import DeployStatus from "@/components/DeployStatus";
 
 const links = [
   { href: "/",           label: "Overview"    },
@@ -26,9 +27,7 @@ export default function Nav() {
               BB Market Intelligence
             </span>
           </div>
-          <span className="text-xs text-gray-500 font-mono">
-            Bangladesh Bank · Live Data
-          </span>
+          <DeployStatus />
         </div>
         {/* Nav row */}
         <nav className="flex items-center gap-0.5 h-10 overflow-x-auto">
