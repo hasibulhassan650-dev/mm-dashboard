@@ -17,6 +17,7 @@ export const api = {
   yields:          (months = 12) => get<YieldRow[]>("/api/yields", { months }),
   securities:      () => get<Security[]>("/api/securities"),
   flows:           (months = 6) => get<FlowRow[]>("/api/flows", { months }),
+  callmoney:       (days = 30)  => get<CallMoneyResult>("/api/callmoney", { days }),
   drilldown:       (date: string) => get<DrilldownResult>(`/api/flows/drilldown`, { date }),
 };
 
@@ -52,6 +53,28 @@ export interface FlowRow {
   total_inflow_bdt_mill: number; auction_outflow_planned_mill: number;
   auction_outflow_confirmed_mill: number; net_borrowing_bdt_mill: number;
   coupon_payment_count: number; inflow_security_count: number; data_complete: boolean;
+}
+
+export interface CallMoneyDailySummary {
+  trade_date: string;
+  total_volume_crore: number;
+  total_deals: number;
+  overnight_volume_crore: number | null;
+  overnight_deals: number | null;
+  overnight_wavg_rate: number | null;
+  overnight_high: number | null;
+  overnight_low: number | null;
+}
+export interface CallMoneyBreakdownRow {
+  trade_date: string; product: string; maturity_days: number | null;
+  amount_crore: number; highest_rate_pct: number | null;
+  lowest_rate_pct: number | null; average_rate_pct: number | null;
+  num_deals: number | null;
+}
+export interface CallMoneyResult {
+  daily_summary: CallMoneyDailySummary[];
+  latest_breakdown: CallMoneyBreakdownRow[];
+  latest_date: string | null;
 }
 
 export interface DrilldownResult {

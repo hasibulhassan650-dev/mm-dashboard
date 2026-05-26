@@ -7,6 +7,7 @@ const links = [
   { href: "/cashflows",  label: "Cash Flows" },
   { href: "/omo",        label: "OMO" },
   { href: "/yields",     label: "Yields" },
+  { href: "/callmoney",  label: "Call Money" },
   { href: "/securities", label: "Securities" },
 ];
 
