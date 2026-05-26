@@ -16,6 +16,7 @@ export const api = {
   yields:          (months = 12) => get<YieldRow[]>("/api/yields", { months }),
   securities:      () => get<Security[]>("/api/securities"),
   flows:           (months = 6) => get<FlowRow[]>("/api/flows", { months }),
+  drilldown:       (date: string) => get<DrilldownResult>(`/api/flows/drilldown`, { date }),
 };
 
 export interface OmoSummaryRow {
@@ -42,5 +43,21 @@ export interface Security {
 export interface FlowRow {
   flow_date: string; coupon_inflow_bdt_mill: number; principal_inflow_bdt_mill: number;
   total_inflow_bdt_mill: number; auction_outflow_planned_mill: number;
-  net_borrowing_bdt_mill: number;
+  auction_outflow_confirmed_mill: number; net_borrowing_bdt_mill: number;
+  coupon_payment_count: number; inflow_security_count: number; data_complete: boolean;
+}
+
+export interface DrilldownResult {
+  date: string;
+  summary: {
+    maturity_inflow_mill: number; coupon_inflow_mill: number;
+    total_inflow_mill: number; auction_outflow_mill: number; net_borrowing_mill: number;
+  };
+  maturities: { isin: string; security_name_norm: string; security_type: string;
+    payment_date: string; principal_bdt_mill: number; roll_days: number }[];
+  coupons: { isin: string; security_name_norm: string; coupon_rate_used_pct: number;
+    payment_date: string; amount_bdt_mill: number; formula_string: string }[];
+  auctions: { auction_date: string; security_type: string; tenor_label: string;
+    offered_amount_bdt_mill: number; accepted_amount_bdt_mill: number;
+    weighted_avg_yield_pct: number; outflow_status: string; roll_days: number }[];
 }
