@@ -17,9 +17,9 @@ export const api = {
   yields:          (months = 12) => get<YieldRow[]>("/api/yields", { months }),
   securities:      () => get<Security[]>("/api/securities"),
   flows:           (months = 6) => get<FlowRow[]>("/api/flows", { months }),
-  callmoney:       (days = 30)  => get<CallMoneyResult>("/api/callmoney", { days }),
+  callmoney:       (days = 90)  => get<CallMoneyResult>("/api/callmoney", { days }),
   fx:              (days = 365) => get<FxAuctionRow[]>("/api/fx", { days }),
-  refrate:         (days = 60)  => get<RefRateRow[]>("/api/refrate", { days }),
+  refrate:         (days = 90)  => get<RefRateRow[]>("/api/refrate", { days }),
   drilldown:       (date: string) => get<DrilldownResult>(`/api/flows/drilldown`, { date }),
 };
 

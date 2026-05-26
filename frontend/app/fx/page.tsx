@@ -1,10 +1,25 @@
 import { api } from "@/lib/api";
 import FxChart from "@/components/FxChart";
+import PeriodSelector from "@/components/PeriodSelector";
 
 export const revalidate = 300;
 
-export default async function FxPage() {
-  const rows = await api.fx(365);
+const PERIODS = [
+  { label: "90d",  days: 90  },
+  { label: "180d", days: 180 },
+  { label: "1y",   days: 365 },
+  { label: "2y",   days: 730 },
+  { label: "All",  days: 0   },
+];
+
+export default async function FxPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ days?: string }>;
+}) {
+  const sp   = await searchParams;
+  const days = parseInt(sp.days ?? "365", 10);
+  const rows = await api.fx(days);
 
   const latest   = rows[0] ?? null;
   const prev     = rows[1] ?? null;
@@ -19,12 +34,15 @@ export default async function FxPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold text-white">FX Auction Results</h1>
-        <p className="text-sm text-gray-400">
-          Bangladesh Bank USD/BDT intervention auctions · last 12 months
-          {latest && <span className="ml-2 text-gray-500">Latest: {latest.auction_date}</span>}
-        </p>
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-xl font-semibold text-white">FX Auction Results</h1>
+          <p className="text-sm text-gray-400">
+            Bangladesh Bank USD/BDT intervention auctions
+            {latest && <span className="ml-2 text-gray-500">Latest: {latest.auction_date}</span>}
+          </p>
+        </div>
+        <PeriodSelector periods={PERIODS} current={days} />
       </div>
 
       {/* KPI strip */}

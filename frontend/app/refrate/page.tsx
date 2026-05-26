@@ -1,12 +1,27 @@
 import { api } from "@/lib/api";
 import RefRateChart from "@/components/RefRateChart";
+import PeriodSelector from "@/components/PeriodSelector";
 
 export const revalidate = 300;
 
 const PRODUCTS = ["Overnight", "1W", "1M", "3M"];
 
-export default async function RefRatePage() {
-  const rows = await api.refrate(60);
+const PERIODS = [
+  { label: "30d",  days: 30  },
+  { label: "90d",  days: 90  },
+  { label: "180d", days: 180 },
+  { label: "1y",   days: 365 },
+  { label: "All",  days: 0   },
+];
+
+export default async function RefRatePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ days?: string }>;
+}) {
+  const sp   = await searchParams;
+  const days = parseInt(sp.days ?? "90", 10);
+  const rows = await api.refrate(days);
 
   const dommr = rows.filter(r => r.rate_type === "DOMMR");
   const bofr  = rows.filter(r => r.rate_type === "BOFR");
@@ -34,12 +49,15 @@ export default async function RefRatePage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold text-white">Money Market Reference Rates</h1>
-        <p className="text-sm text-gray-400">
-          DOMMR &amp; BOFR · Bangladesh Bank · last 60 days
-          {latestDate && <span className="ml-2 text-gray-500">Latest: {latestDate}</span>}
-        </p>
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-xl font-semibold text-white">Money Market Reference Rates</h1>
+          <p className="text-sm text-gray-400">
+            DOMMR &amp; BOFR · Bangladesh Bank
+            {latestDate && <span className="ml-2 text-gray-500">Latest: {latestDate}</span>}
+          </p>
+        </div>
+        <PeriodSelector periods={PERIODS} current={days} />
       </div>
 
       {noData && (

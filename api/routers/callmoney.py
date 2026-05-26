@@ -6,25 +6,29 @@ router = APIRouter()
 
 
 @router.get("")
-def get_callmoney(days: int = Query(30, ge=1, le=180)):
+def get_callmoney(days: int = Query(90, ge=0, le=3650)):
     """
-    Returns two things:
-    - daily_summary: one row per trade_date — overnight weighted avg rate, total volume, num deals
-    - latest_breakdown: all product/maturity rows for the most recent date
+    Returns daily_summary and latest_breakdown.
+    days=0 returns all stored history.
     """
     import datetime
-    since = datetime.date.today() - datetime.timedelta(days=days)
     session = get_session()
     try:
-        # Daily summary: overnight weighted average rate + total volume across all products
-        daily = session.execute(text("""
+        if days == 0:
+            where = ""
+            params: dict = {}
+        else:
+            since = datetime.date.today() - datetime.timedelta(days=days)
+            where = "WHERE trade_date >= :since"
+            params = {"since": str(since)}
+
+        daily = session.execute(text(f"""
             SELECT
                 trade_date,
                 SUM(amount_crore)                                            AS total_volume_crore,
                 SUM(num_deals)                                               AS total_deals,
                 SUM(CASE WHEN product = 'Overnight' THEN amount_crore END)   AS overnight_volume_crore,
                 SUM(CASE WHEN product = 'Overnight' THEN num_deals    END)   AS overnight_deals,
-                -- volume-weighted average of overnight average_rate
                 CASE WHEN SUM(CASE WHEN product = 'Overnight' THEN amount_crore END) > 0
                      THEN SUM(CASE WHEN product = 'Overnight' THEN average_rate_pct * amount_crore END)
                           / SUM(CASE WHEN product = 'Overnight' THEN amount_crore END)
@@ -32,12 +36,11 @@ def get_callmoney(days: int = Query(30, ge=1, le=180)):
                 MAX(CASE WHEN product = 'Overnight' THEN highest_rate_pct END) AS overnight_high,
                 MIN(CASE WHEN product = 'Overnight' THEN lowest_rate_pct  END) AS overnight_low
             FROM call_money_rates
-            WHERE trade_date >= :since
+            {where}
             GROUP BY trade_date
             ORDER BY trade_date
-        """), {"since": str(since)}).fetchall()
+        """), params).fetchall()
 
-        # Latest date full breakdown
         latest_date = session.execute(text(
             "SELECT MAX(trade_date) FROM call_money_rates"
         )).scalar()

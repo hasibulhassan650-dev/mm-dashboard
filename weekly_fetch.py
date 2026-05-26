@@ -113,7 +113,7 @@ def main():
     try:
         from fetchers.callmoney import fetch_call_money
         from db import CallMoneyRate
-        rows_cm = fetch_call_money(days_back=35)
+        rows_cm = fetch_call_money(days_back=90)
         import datetime as _dt
         now_utc = _dt.datetime.utcnow()
         session = get_session()
@@ -165,7 +165,7 @@ def main():
         from fetchers.refrate import fetch_refrate
         from db import RefRate
         import datetime as _dt
-        rows_rr = fetch_refrate(days_back=35)
+        rows_rr = fetch_refrate(days_back=90)
         now_utc = _dt.datetime.utcnow()
         session = get_session()
         saved_rr = 0
