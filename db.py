@@ -173,6 +173,21 @@ class OMOTransaction(Base):
     ingested_utc        = Column(DateTime)
 
 
+class CallMoneyRate(Base):
+    __tablename__ = "call_money_rates"
+    __table_args__ = (UniqueConstraint("trade_date", "product", "maturity_days"),)
+    id               = Column(Integer, primary_key=True, autoincrement=True)
+    trade_date       = Column(Date, nullable=False)
+    product          = Column(String(20))          # Overnight, Short Notice, Term
+    maturity_days    = Column(Integer)
+    amount_crore     = Column(Float)
+    highest_rate_pct = Column(Float)
+    lowest_rate_pct  = Column(Float)
+    average_rate_pct = Column(Float)
+    num_deals        = Column(Integer)
+    ingested_utc     = Column(DateTime)
+
+
 class HolidayCalendar(Base):
     __tablename__ = "holiday_calendar"
     calendar_date  = Column(Date, primary_key=True)

@@ -108,6 +108,32 @@ def main():
         log.exception("Treasury fetch failed: %s", exc)
         errors.append(f"treasury: {exc}")
 
+    # ── 4. Call money market rates (last 35 days) ────────────────────────────
+    log.info("--- Step 4: Call money market rates (35 days) ---")
+    try:
+        from fetchers.callmoney import fetch_call_money
+        from db import CallMoneyRate
+        rows_cm = fetch_call_money(days_back=35)
+        import datetime as _dt
+        now_utc = _dt.datetime.utcnow()
+        session = get_session()
+        saved_cm = 0
+        for r in rows_cm:
+            r["ingested_utc"] = now_utc
+            if not session.query(CallMoneyRate).filter_by(
+                trade_date=r["trade_date"],
+                product=r["product"],
+                maturity_days=r["maturity_days"],
+            ).first():
+                session.add(CallMoneyRate(**r))
+                saved_cm += 1
+        session.commit()
+        session.close()
+        log.info("Call money OK | new_rows=%d (fetched %d)", saved_cm, len(rows_cm))
+    except Exception as exc:
+        log.exception("Call money fetch failed: %s", exc)
+        errors.append(f"callmoney: {exc}")
+
     # ── Summary ───────────────────────────────────────────────────────────────
     elapsed = (datetime.datetime.now() - start).seconds
     if errors:
