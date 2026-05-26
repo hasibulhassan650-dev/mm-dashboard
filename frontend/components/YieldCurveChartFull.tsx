@@ -1,4 +1,5 @@
 "use client";
+import { useState } from "react";
 import { ScatterChart, Scatter, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { YieldRow, SecondaryYieldRow } from "@/lib/api";
 
@@ -7,6 +8,11 @@ const TYPE_COLOR: Record<string, string> = {
   T_BOND: "#1f6feb",
   FRTB:   "#d1780f",
 };
+
+const CURVE_SERIES = [
+  { key: "secondary", label: "Secondary (MTM)",    color: "#94a3b8" },
+  { key: "primary",   label: "Primary (Auction)",  color: "#e5e7eb" },
+];
 
 interface DotProps { cx?: number; cy?: number; fill?: string }
 
@@ -21,9 +27,7 @@ function PrimaryDiamond({ cx, cy, fill }: DotProps) {
   return (
     <polygon
       points={`${cx},${cy - s} ${cx + s},${cy} ${cx},${cy + s} ${cx - s},${cy}`}
-      fill={fill}
-      stroke="white"
-      strokeWidth={1}
+      fill={fill} stroke="white" strokeWidth={1}
     />
   );
 }
@@ -62,6 +66,11 @@ function groupByType<T>(arr: T[], key: keyof T): Record<string, T[]> {
 interface Props { primary: YieldRow[]; secondary: SecondaryYieldRow[] }
 
 export default function YieldCurveChartFull({ primary, secondary }: Props) {
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const toggle = (key: string) => setHidden(prev => {
+    const next = new Set(prev); next.has(key) ? next.delete(key) : next.add(key); return next;
+  });
+
   const types = [...new Set([
     ...primary.map(r => r.security_type),
     ...secondary.map(r => r.security_type),
@@ -70,16 +79,33 @@ export default function YieldCurveChartFull({ primary, secondary }: Props) {
   const priByType = groupByType(primary,   "security_type");
   const secByType = groupByType(secondary, "security_type");
 
+  const showPrimary   = !hidden.has("primary");
+  const showSecondary = !hidden.has("secondary");
+
   return (
     <div>
-      <div className="flex flex-wrap gap-4 mb-3 text-xs text-gray-400">
-        {types.map(t => (
-          <span key={t} className="flex items-center gap-2">
-            <span style={{ background: TYPE_COLOR[t] ?? "#888", width: 20, height: 2, display: "inline-block" }} />
-            <span style={{ color: TYPE_COLOR[t] ?? "#888" }}>{t}</span>
-          </span>
-        ))}
-        <span className="ml-auto text-gray-600">◆ primary (auction) · ● secondary (MTM)</span>
+      <div className="flex flex-wrap items-center gap-3 mb-3">
+        <div className="flex flex-wrap gap-1.5">
+          {CURVE_SERIES.map(s => {
+            const active = !hidden.has(s.key);
+            return (
+              <button key={s.key} onClick={() => toggle(s.key)}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border transition-all"
+                style={{ background: active ? s.color + "22" : "transparent", borderColor: active ? s.color + "88" : "#374151", color: active ? s.color : "#4b5563" }}>
+                <span className="inline-block" style={{ width: 14, height: 2, background: active ? s.color : "#4b5563", marginBottom: 1 }} />
+                {s.label}
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex flex-wrap gap-3 text-xs text-gray-500 ml-auto">
+          {types.map(t => (
+            <span key={t} className="flex items-center gap-1.5">
+              <span style={{ background: TYPE_COLOR[t] ?? "#888", width: 16, height: 2, display: "inline-block" }} />
+              <span style={{ color: TYPE_COLOR[t] ?? "#888" }}>{t}</span>
+            </span>
+          ))}
+        </div>
       </div>
 
       {types.map(t => {
@@ -91,8 +117,14 @@ export default function YieldCurveChartFull({ primary, secondary }: Props) {
         const priData = pri.map(r => ({ x: r.tenor_years ?? 0, y: r.cutoff_yield_pct, label: r.tenor_label, series: `${t}_pri` }));
         const secData = sec.map(r => ({ x: r.remaining_years, y: r.market_yield_pct, label: r.security_name_norm ?? r.isin, series: `${t}_sec` }));
 
-        const allX = [...priData.map(d => d.x), ...secData.map(d => d.x)];
-        const allY = [...priData.map(d => d.y), ...secData.map(d => d.y)];
+        const visibleData = [
+          ...(showPrimary   ? priData : []),
+          ...(showSecondary ? secData : []),
+        ];
+        if (!visibleData.length) return null;
+
+        const allX = visibleData.map(d => d.x);
+        const allY = visibleData.map(d => d.y);
         const xMin = Math.max(0, Math.min(...allX) - 0.2);
         const xMax = Math.max(...allX) + 0.5;
         const yMin = Math.max(0, Math.min(...allY) - 0.5);
@@ -100,37 +132,24 @@ export default function YieldCurveChartFull({ primary, secondary }: Props) {
 
         return (
           <div key={t} className="mb-4">
-            <div className="text-xs font-medium mb-1 ml-1" style={{ color: color }}>{t}</div>
+            <div className="text-xs font-medium mb-1 ml-1" style={{ color }}>{t}</div>
             <ResponsiveContainer width="100%" height={180}>
               <ScatterChart margin={{ top: 4, right: 16, bottom: 8, left: 4 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
-                <XAxis
-                  type="number" dataKey="x" name="Maturity (yr)"
-                  domain={[xMin, xMax]}
-                  tick={{ fill: "#9ca3af", fontSize: 10 }}
-                  tickFormatter={v => `${Number(v).toFixed(1)}yr`}
-                />
-                <YAxis
-                  type="number" dataKey="y" name="Yield (%)"
-                  domain={[yMin, yMax]}
-                  tick={{ fill: "#9ca3af", fontSize: 10 }}
-                  tickFormatter={v => `${Number(v).toFixed(1)}%`}
-                  width={42}
-                />
+                <XAxis type="number" dataKey="x" name="Maturity (yr)" domain={[xMin, xMax]}
+                  tick={{ fill: "#9ca3af", fontSize: 10 }} tickFormatter={v => `${Number(v).toFixed(1)}yr`} />
+                <YAxis type="number" dataKey="y" name="Yield (%)" domain={[yMin, yMax]}
+                  tick={{ fill: "#9ca3af", fontSize: 10 }} tickFormatter={v => `${Number(v).toFixed(1)}%`} width={42} />
                 <Tooltip content={<YieldTooltip />} />
-                {secData.length > 0 && (
-                  <Scatter
-                    name={`${t} Secondary`} data={secData} fill={color}
+                {showSecondary && secData.length > 0 && (
+                  <Scatter name={`${t} Secondary`} data={secData} fill={color}
                     shape={<SecondaryDot fill={color} />}
-                    line={{ stroke: color, strokeWidth: 1.5, strokeOpacity: 0.4 }}
-                  />
+                    line={{ stroke: color, strokeWidth: 1.5, strokeOpacity: 0.4 }} />
                 )}
-                {priData.length > 0 && (
-                  <Scatter
-                    name={`${t} Primary`} data={priData} fill={color}
+                {showPrimary && priData.length > 0 && (
+                  <Scatter name={`${t} Primary`} data={priData} fill={color}
                     shape={<PrimaryDiamond fill={color} />}
-                    line={{ stroke: color, strokeWidth: 2, strokeDasharray: "6 3" }}
-                  />
+                    line={{ stroke: color, strokeWidth: 2, strokeDasharray: "6 3" }} />
                 )}
               </ScatterChart>
             </ResponsiveContainer>
