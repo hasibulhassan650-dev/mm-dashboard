@@ -36,7 +36,23 @@ export const api = {
     try { return await get<PolicyCorridor>("/api/policy"); }
     catch { return { current: null, history: [] }; }
   },
+  macro:           async (): Promise<MacroSeries> => {
+    try { return await get<MacroSeries>("/api/macro/reserves"); }
+    catch { return { series: [], latest: null }; }
+  },
 };
+
+export interface MacroRow {
+  month: string;
+  gross_reserves_usd_bn: number | null;
+  net_reserves_bpm6_usd_bn: number | null;
+  remittance_usd_mn: number | null;
+  note?: string;
+}
+export interface MacroSeries {
+  series: MacroRow[];
+  latest: MacroRow | null;
+}
 
 export interface PolicyRateSnapshot {
   effective_date: string;

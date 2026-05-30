@@ -96,6 +96,18 @@ export const GLOSSARY: GlossaryEntry[] = [
     def: "The marginal accepted USD/BDT rate at a BB FX intervention auction.",
   },
   {
+    term: "Gross reserves", category: "FX",
+    def: "Total official foreign-currency reserves held by Bangladesh Bank, before deducting short-term liabilities. The headline reserves figure.",
+  },
+  {
+    term: "Net reserves (BPM6)", category: "FX",
+    def: "Reserves measured on the IMF Balance of Payments Manual 6th edition basis — gross reserves less specified short-term FX liabilities (e.g. ACU, swaps). Lower than gross; the figure the IMF programme tracks.",
+  },
+  {
+    term: "Remittance", category: "FX",
+    def: "Wage-earner remittance inflows — money sent home by Bangladeshis working abroad. A primary source of FX supply and a key external-sector indicator.",
+  },
+  {
     term: "Weighted-avg rate (FX)", category: "FX",
     def: "The accepted-amount-weighted average USD/BDT rate at an FX auction.",
   },

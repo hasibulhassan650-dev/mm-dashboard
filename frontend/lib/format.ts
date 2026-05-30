@@ -60,6 +60,19 @@ export function fmtDate(iso: string | null | undefined): string {
   return `${String(d.getDate()).padStart(2, "0")} ${MONTHS[d.getMonth()]} ${yy}`;
 }
 
+/** "YYYY-MM" (or any parseable date) → "MMM YY". */
+export function fmtMonth(s: string | null | undefined): string {
+  if (!s) return DASH;
+  const m = /^(\d{4})-(\d{2})/.exec(s);
+  if (m) {
+    const mi = parseInt(m[2], 10) - 1;
+    return `${MONTHS[mi] ?? m[2]} ${m[1].slice(2)}`;
+  }
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return s;
+  return `${MONTHS[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`;
+}
+
 /** Short axis label → "DD MMM". */
 export function fmtDateShort(iso: string | null | undefined): string {
   if (!iso) return DASH;

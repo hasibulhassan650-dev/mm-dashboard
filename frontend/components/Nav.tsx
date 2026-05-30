@@ -11,6 +11,7 @@ const links = [
   { href: "/callmoney",  label: "Call Money"  },
   { href: "/fx",         label: "FX Auctions" },
   { href: "/refrate",    label: "Ref Rates"   },
+  { href: "/macro",      label: "External"    },
   { href: "/securities", label: "Securities"  },
   { href: "/portfolio",  label: "Portfolio"   },
   { href: "/glossary",   label: "Glossary"    },

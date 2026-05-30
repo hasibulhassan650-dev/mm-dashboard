@@ -1,0 +1,47 @@
+# ============================================================================
+# Bangladesh - FX Reserves & Remittances (monthly series)
+# ============================================================================
+#
+#   *** DRAFT / ILLUSTRATIVE VALUES - REPLACE WITH REAL DATA ***
+#
+# The numbers below are placeholders so the charts render. They are NOT real.
+# Replace them with the official monthly figures from Bangladesh Bank
+# (Economic Data / Monthly Economic Indicators) before relying on this page.
+#
+# HOW TO MAINTAIN:
+#   - One row per month (`month: "YYYY-MM"`).
+#   - Append a new row each month; keep history for the trend charts.
+#   - Leave a field blank/omit it if a figure isn't available for that month.
+#
+# FIELDS (all USD):
+#   gross_reserves_usd_bn      - Gross official reserves, USD billion
+#   net_reserves_bpm6_usd_bn   - Net reserves (BPM6 / IMF basis), USD billion
+#   remittance_usd_mn          - Wage-earner remittance inflow for the month, USD million
+# ============================================================================
+
+series:
+  - month: "2025-12"
+    gross_reserves_usd_bn: 24.0
+    net_reserves_bpm6_usd_bn: 19.0
+    remittance_usd_mn: 2200
+    note: "DRAFT - replace with real BB figure"
+  - month: "2026-01"
+    gross_reserves_usd_bn: 24.4
+    net_reserves_bpm6_usd_bn: 19.4
+    remittance_usd_mn: 2100
+    note: "DRAFT - replace with real BB figure"
+  - month: "2026-02"
+    gross_reserves_usd_bn: 24.8
+    net_reserves_bpm6_usd_bn: 19.7
+    remittance_usd_mn: 2050
+    note: "DRAFT - replace with real BB figure"
+  - month: "2026-03"
+    gross_reserves_usd_bn: 25.1
+    net_reserves_bpm6_usd_bn: 20.0
+    remittance_usd_mn: 2750
+    note: "DRAFT - replace with real BB figure"
+  - month: "2026-04"
+    gross_reserves_usd_bn: 25.5
+    net_reserves_bpm6_usd_bn: 20.3
+    remittance_usd_mn: 2400
+    note: "DRAFT - replace with real BB figure"
