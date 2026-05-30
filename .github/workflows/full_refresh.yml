@@ -1,0 +1,86 @@
+# .github/workflows/full_refresh.yml
+#
+# FULL data refresh in the cloud — so your PC can stay off.
+# Runs the entire weekly_fetch pipeline, INCLUDING the Chrome-based BB fetchers
+# (OMO, Treasury, Call Money, FX, Ref Rates) that need a real browser to clear
+# BB's F5/TSPD bot protection. Chrome runs "headful" inside a virtual display
+# (xvfb), and curl_cffi replays the cleared session with Chrome's TLS fingerprint.
+#
+# Writes to Supabase (DATABASE_URL secret). Idempotent: upserts skip existing rows.
+#
+# NOTE: Whether BB's F5 protection accepts GitHub's datacenter IP is the open
+# question — trigger this manually once (Actions tab -> Full Data Refresh ->
+# Run workflow) and check the uploaded log artifact to confirm the Chrome
+# fetchers succeeded from the cloud. If BB blocks the runner IP, see the repo
+# notes for fallbacks (self-hosted runner on an always-on box, etc.).
+
+name: Full Data Refresh
+
+on:
+  schedule:
+    - cron: "0 16 * * 0-4"     # 16:00 UTC = 22:00 Bangladesh, Sun–Thu (BD working days)
+  workflow_dispatch:            # manual "Run workflow" button
+
+# Avoid overlapping runs if one is slow
+concurrency:
+  group: full-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      # Lighter windows for daily cloud runs (DB already holds history; upserts
+      # skip existing rows, so we only need to catch the last few weeks).
+      OMO_DAYS_BACK: "45"
+      OMO_MAX_FILES: "60"
+      TREASURY_MONTHS: "2"
+      CALLMONEY_DAYS: "40"
+      REFRATE_DAYS: "40"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Google Chrome + xvfb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb wget
+          wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo apt-get install -y ./google-chrome-stable_current_amd64.deb
+          google-chrome --version
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run full refresh (Chrome under virtual display)
+        env:
+          DISPLAY: ":99"
+        run: |
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" python weekly_fetch.py
+
+      - name: Summarise log
+        if: always()
+        run: |
+          echo "===== weekly_fetch.log (tail) ====="
+          tail -n 60 logs/weekly_fetch.log || echo "(no log file)"
+
+      - name: Upload log artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: refresh-log
+          path: logs/weekly_fetch.log
+          if-no-files-found: ignore
+          retention-days: 14

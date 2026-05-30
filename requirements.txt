@@ -11,3 +11,7 @@ psycopg2-binary>=2.9.10
 pyyaml>=6.0.2
 tenacity>=9.0.0
 pdfplumber>=0.11.4
+# Chrome-based BB fetchers (F5/TSPD bypass) — needed for cloud automation too
+selenium>=4.20.0
+undetected-chromedriver>=3.5.5
+curl_cffi>=0.7.0

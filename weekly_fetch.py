@@ -22,6 +22,15 @@ ROOT = Path(__file__).resolve().parent
 os.chdir(ROOT)
 sys.path.insert(0, str(ROOT))
 
+# Fetch windows — overridable via env. Defaults preserve the original local
+# behaviour; the cloud workflow sets a smaller OMO window for fast daily runs
+# (the DB already holds history, so daily runs only need to catch new days).
+OMO_DAYS_BACK   = int(os.environ.get("OMO_DAYS_BACK", "200"))
+OMO_MAX_FILES   = int(os.environ.get("OMO_MAX_FILES", "220"))
+TREASURY_MONTHS = int(os.environ.get("TREASURY_MONTHS", "2"))
+CALLMONEY_DAYS  = int(os.environ.get("CALLMONEY_DAYS", "90"))
+REFRATE_DAYS    = int(os.environ.get("REFRATE_DAYS", "90"))
+
 # ── Logging ───────────────────────────────────────────────────────────────────
 LOG_DIR = ROOT / "logs"
 LOG_DIR.mkdir(exist_ok=True)
@@ -87,9 +96,9 @@ def main():
     # AR 180D transactions from ~6 months ago are still outstanding today.
     # 14 days misses them. 200 days ensures the full outstanding picture is
     # always complete. Upserts skip already-stored rows so re-fetching is safe.
-    log.info("--- Step 2: OMO fetch (200 days) ---")
+    log.info("--- Step 2: OMO fetch (%d days) ---", OMO_DAYS_BACK)
     try:
-        result = run_omo_fetch(days_back=200, max_files=220)
+        result = run_omo_fetch(days_back=OMO_DAYS_BACK, max_files=OMO_MAX_FILES)
         log.info("OMO OK | new_rows=%s", result.get("rows"))
         if result.get("errors"):
             errors.extend(result["errors"])
@@ -98,9 +107,9 @@ def main():
         errors.append(f"omo: {exc}")
 
     # ── 3. Treasury yield history (last 2 months) ─────────────────────────────
-    log.info("--- Step 3: Treasury yield history (2 months) ---")
+    log.info("--- Step 3: Treasury yield history (%d months) ---", TREASURY_MONTHS)
     try:
-        result = run_primary_yield_history(months_back=2)
+        result = run_primary_yield_history(months_back=TREASURY_MONTHS)
         log.info("Treasury OK | new_rows=%s", result.get("rows"))
         if result.get("errors"):
             errors.extend(result["errors"])
@@ -109,11 +118,11 @@ def main():
         errors.append(f"treasury: {exc}")
 
     # ── 4. Call money market rates (last 35 days) ────────────────────────────
-    log.info("--- Step 4: Call money market rates (35 days) ---")
+    log.info("--- Step 4: Call money market rates (%d days) ---", CALLMONEY_DAYS)
     try:
         from fetchers.callmoney import fetch_call_money
         from db import CallMoneyRate
-        rows_cm = fetch_call_money(days_back=90)
+        rows_cm = fetch_call_money(days_back=CALLMONEY_DAYS)
         import datetime as _dt
         now_utc = _dt.datetime.utcnow()
         session = get_session()
@@ -165,7 +174,7 @@ def main():
         from fetchers.refrate import fetch_refrate
         from db import RefRate
         import datetime as _dt
-        rows_rr = fetch_refrate(days_back=90)
+        rows_rr = fetch_refrate(days_back=REFRATE_DAYS)
         now_utc = _dt.datetime.utcnow()
         session = get_session()
         saved_rr = 0
