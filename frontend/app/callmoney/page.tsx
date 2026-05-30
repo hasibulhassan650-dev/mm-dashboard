@@ -1,6 +1,8 @@
 import { api } from "@/lib/api";
 import CallMoneyChart from "@/components/CallMoneyChart";
 import PeriodSelector from "@/components/PeriodSelector";
+import Freshness from "@/components/Freshness";
+import { fmtDate } from "@/lib/format";
 import DownloadButton from "@/components/DownloadButton";
 
 export const revalidate = 300;
@@ -21,7 +23,7 @@ export default async function CallMoneyPage({
   const sp   = await searchParams;
   const days = parseInt(sp.days ?? "90", 10);
 
-  const data = await api.callmoney(days);
+  const [data, fresh] = await Promise.all([api.callmoney(days), api.freshness()]);
   const summary = data.daily_summary;
   const latest  = data.latest_breakdown;
   const latestDate = data.latest_date;
@@ -41,8 +43,9 @@ export default async function CallMoneyPage({
           <h1 className="text-xl font-semibold text-white">Call Money Market</h1>
           <p className="text-sm text-gray-400">
             Interbank overnight &amp; short-term lending rates · Bangladesh Bank
-            {latestDate && <span className="ml-2 text-gray-500">Latest: {latestDate}</span>}
+            {latestDate && <span className="ml-2 text-gray-500">Latest: {fmtDate(latestDate)}</span>}
           </p>
+          <div className="mt-1"><Freshness updated={fresh.callmoney} /></div>
         </div>
         <PeriodSelector periods={PERIODS} current={days} />
       </div>
@@ -97,7 +100,7 @@ export default async function CallMoneyPage({
       {/* Latest day breakdown */}
       {latest.length > 0 && (
         <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
-          <h2 className="text-sm font-medium text-gray-300 mb-4">Latest Day Breakdown — {latestDate}</h2>
+          <h2 className="text-sm font-medium text-gray-300 mb-4">Latest Day Breakdown — {fmtDate(latestDate)}</h2>
           <div className="grid md:grid-cols-3 gap-4">
             {products.map(product => {
               const rows = latest.filter(r => r.product === product)
@@ -161,7 +164,7 @@ export default async function CallMoneyPage({
             <tbody>
               {[...summary].reverse().map((r, i) => (
                 <tr key={i} className="border-b border-gray-800/50 hover:bg-gray-800/30">
-                  <td className="py-1.5 pr-4 text-gray-300">{r.trade_date}</td>
+                  <td className="py-1.5 pr-4 text-gray-300">{fmtDate(r.trade_date)}</td>
                   <td className="py-1.5 pr-4 text-right font-mono text-amber-400">{r.overnight_wavg_rate?.toFixed(2) ?? "—"}%</td>
                   <td className="py-1.5 pr-4 text-right font-mono text-red-400">{r.overnight_high?.toFixed(2) ?? "—"}%</td>
                   <td className="py-1.5 pr-4 text-right font-mono text-green-400">{r.overnight_low?.toFixed(2) ?? "—"}%</td>

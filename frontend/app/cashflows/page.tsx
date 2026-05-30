@@ -3,11 +3,13 @@ import StatCard from "@/components/StatCard";
 import CashFlowChart from "@/components/CashFlowChart";
 import Link from "next/link";
 import DownloadButton from "@/components/DownloadButton";
+import Freshness from "@/components/Freshness";
+import { fmtDate } from "@/lib/format";
 
 export const revalidate = 300;
 
 export default async function CashFlowsPage() {
-  const flows = await api.flows(6);
+  const [flows, fresh] = await Promise.all([api.flows(6), api.freshness()]);
 
   const today = new Date().toISOString().slice(0, 10);
   const todayRow = [...flows].reverse().find(r => r.flow_date <= today) ?? flows[flows.length - 1];
@@ -21,11 +23,12 @@ export default async function CashFlowsPage() {
       <div>
         <h1 className="text-xl font-semibold text-white">Daily Cash Flows</h1>
         <p className="text-sm text-gray-400">Coupon inflows, principal maturities, auction outflows — last 6 months + 4 months ahead</p>
+        <div className="mt-1"><Freshness updated={fresh.flows} /></div>
       </div>
 
       {todayRow && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <StatCard label="Today Inflow" value={`${(todayRow.total_inflow_bdt_mill/1000).toFixed(1)}k mn`} sub={todayRow.flow_date} color="green" />
+          <StatCard label="Today Inflow" value={`${(todayRow.total_inflow_bdt_mill/1000).toFixed(1)}k mn`} sub={fmtDate(todayRow.flow_date)} color="green" />
           <StatCard label="Today Outflow" value={`${((todayRow.auction_outflow_confirmed_mill||todayRow.auction_outflow_planned_mill)/1000).toFixed(1)}k mn`} sub="auction settlements" color="red" />
           <StatCard label="Net Borrowing" value={`${(todayRow.net_borrowing_bdt_mill/1000).toFixed(1)}k mn`} sub={todayRow.net_borrowing_bdt_mill > 0 ? "net borrower" : "net repayer"} color={todayRow.net_borrowing_bdt_mill > 0 ? "amber" : "blue"} />
           <StatCard label="6M Total Inflow" value={`${(totalInflow/1000).toFixed(0)}k mn`} sub={`vs ${(totalOutflow/1000).toFixed(0)}k mn outflow`} color="blue" />
@@ -63,7 +66,7 @@ export default async function CashFlowsPage() {
                   <tr key={i} className={`border-b border-gray-800/50 hover:bg-gray-800/30 ${isToday ? "bg-blue-500/10" : ""}`}>
                     <td className="py-1.5 pr-4">
                       <Link href={`/drilldown?date=${r.flow_date}`} className="text-blue-400 hover:text-blue-300 hover:underline">
-                        {r.flow_date}{isToday && " ◀ today"}
+                        {fmtDate(r.flow_date)}{isToday && " ◀ today"}
                       </Link>
                     </td>
                     <td className="py-1.5 pr-4 text-right font-mono text-gray-300">{r.principal_inflow_bdt_mill.toLocaleString()}</td>

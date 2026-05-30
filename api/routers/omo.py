@@ -70,10 +70,11 @@ def get_outstanding(days: int = Query(90, ge=7, le=365)):
                 if isinstance(mat_date, str):
                     mat_date = datetime.date.fromisoformat(mat_date)
                 if txn_date <= d < mat_date:
-                    key = t["instrument"]
+                    key = (t["instrument"], t["direction"])
                     by_instr[key] = by_instr.get(key, 0.0) + (t["accepted_bdt_crore"] or 0.0)
-            for instr, amt in by_instr.items():
-                result.append({"date": str(d), "instrument": instr, "outstanding_bdt_crore": round(amt, 2)})
+            for (instr, direction), amt in by_instr.items():
+                result.append({"date": str(d), "instrument": instr,
+                               "direction": direction, "outstanding_bdt_crore": round(amt, 2)})
             d += datetime.timedelta(days=1)
 
         return result

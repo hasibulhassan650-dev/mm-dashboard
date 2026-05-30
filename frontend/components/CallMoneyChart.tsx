@@ -5,6 +5,7 @@ import {
   ResponsiveContainer, CartesianGrid,
 } from "recharts";
 import { CallMoneyDailySummary } from "@/lib/api";
+import { fmtDateShort, fmtCrore, fmtPct } from "@/lib/format";
 
 const SERIES = [
   { key: "avg",    label: "Avg Rate",  color: "#f59e0b" },
@@ -22,7 +23,7 @@ function CMTooltip({ active, payload, label }: TooltipProps) {
       <div style={{ color: "#e5e7eb", marginBottom: 6, fontWeight: 600 }}>{label}</div>
       {payload.map((p, i) => (
         <div key={i} style={{ color: p.color, fontFamily: "monospace" }}>
-          {p.name}: {p.name.includes("Volume") ? `${Number(p.value).toLocaleString()} cr` : `${Number(p.value).toFixed(2)}%`}
+          {p.name}: {p.name.includes("Volume") ? fmtCrore(Number(p.value)) : fmtPct(Number(p.value))}
         </div>
       ))}
     </div>
@@ -36,7 +37,7 @@ export default function CallMoneyChart({ data }: { data: CallMoneyDailySummary[]
   });
 
   const chartData = data.map(r => ({
-    date:    r.trade_date.slice(5),
+    date:    fmtDateShort(r.trade_date),
     avg:     r.overnight_wavg_rate ?? null,
     high:    r.overnight_high ?? null,
     low:     r.overnight_low ?? null,

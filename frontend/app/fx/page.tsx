@@ -1,6 +1,8 @@
 import { api } from "@/lib/api";
 import FxChart from "@/components/FxChart";
 import PeriodSelector from "@/components/PeriodSelector";
+import Freshness from "@/components/Freshness";
+import { fmtDate } from "@/lib/format";
 import DownloadButton from "@/components/DownloadButton";
 
 export const revalidate = 300;
@@ -20,7 +22,7 @@ export default async function FxPage({
 }) {
   const sp   = await searchParams;
   const days = parseInt(sp.days ?? "365", 10);
-  const rows = await api.fx(days);
+  const [rows, fresh] = await Promise.all([api.fx(days), api.freshness()]);
 
   const latest   = rows[0] ?? null;
   const prev     = rows[1] ?? null;
@@ -40,8 +42,9 @@ export default async function FxPage({
           <h1 className="text-xl font-semibold text-white">FX Auction Results</h1>
           <p className="text-sm text-gray-400">
             Bangladesh Bank USD/BDT intervention auctions
-            {latest && <span className="ml-2 text-gray-500">Latest: {latest.auction_date}</span>}
+            {latest && <span className="ml-2 text-gray-500">Latest: {fmtDate(latest.auction_date)}</span>}
           </p>
+          <div className="mt-1"><Freshness updated={fresh.fx} /></div>
         </div>
         <PeriodSelector periods={PERIODS} current={days} />
       </div>
@@ -126,8 +129,8 @@ export default async function FxPage({
             <tbody>
               {rows.map((r, i) => (
                 <tr key={i} className="border-b border-gray-800/50 hover:bg-gray-800/30">
-                  <td className="py-1.5 pr-4 text-gray-300">{r.auction_date}</td>
-                  <td className="py-1.5 pr-4 text-gray-400">{r.settlement_date ?? "—"}</td>
+                  <td className="py-1.5 pr-4 text-gray-300">{fmtDate(r.auction_date)}</td>
+                  <td className="py-1.5 pr-4 text-gray-400">{fmtDate(r.settlement_date)}</td>
                   <td className="py-1.5 pr-4 text-gray-400">{r.auction_type}</td>
                   <td className="py-1.5 pr-4 text-right font-mono text-gray-300">{r.num_bids ?? "—"}</td>
                   <td className="py-1.5 pr-4 text-right font-mono text-gray-300">

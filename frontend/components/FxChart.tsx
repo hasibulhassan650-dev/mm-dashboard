@@ -5,6 +5,7 @@ import {
   ResponsiveContainer, CartesianGrid,
 } from "recharts";
 import { FxAuctionRow } from "@/lib/api";
+import { fmtDateShort, fmtUSDmn, fmtRate } from "@/lib/format";
 
 const SERIES = [
   { key: "wavg",     label: "Wtd Avg Rate", color: "#38bdf8" },
@@ -21,7 +22,7 @@ function FxTooltip({ active, payload, label }: TooltipProps) {
       <div style={{ color: "#e5e7eb", marginBottom: 6, fontWeight: 600 }}>{label}</div>
       {payload.map((p, i) => (
         <div key={i} style={{ color: p.color, fontFamily: "monospace" }}>
-          {p.name}: {p.name === "Accepted ($m)" ? `$${Number(p.value).toFixed(1)}m` : Number(p.value).toFixed(4)}
+          {p.name}: {p.name === "Accepted ($m)" ? fmtUSDmn(Number(p.value)) : fmtRate(Number(p.value))}
         </div>
       ))}
     </div>
@@ -35,7 +36,7 @@ export default function FxChart({ data }: { data: FxAuctionRow[] }) {
   });
 
   const chartData = [...data].reverse().map(r => ({
-    date:     r.auction_date.slice(5),
+    date:     fmtDateShort(r.auction_date),
     wavg:     r.weighted_avg_rate ?? null,
     cutoff:   r.cutoff_rate ?? null,
     accepted: r.accepted_amount_usd_mill ?? null,

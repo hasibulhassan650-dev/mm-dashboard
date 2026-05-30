@@ -1,15 +1,23 @@
 import { api } from "@/lib/api";
 import YieldCurveChartFull from "@/components/YieldCurveChartFull";
 import YieldTrendChart from "@/components/YieldTrendChart";
+import BidCoverChart from "@/components/BidCoverChart";
+import CurveSlopeChart from "@/components/CurveSlopeChart";
 import DownloadButton from "@/components/DownloadButton";
+import { bidToCover } from "@/lib/analytics";
+import Freshness from "@/components/Freshness";
+import InfoTip from "@/components/InfoTip";
+import { fmtDate } from "@/lib/format";
 
 export const revalidate = 300;
 
 export default async function YieldsPage() {
-  const [primary, secondary, history] = await Promise.all([
+  const [primary, secondary, history, slope, fresh] = await Promise.all([
     api.yieldCurve(),
     api.yieldSecondary(),
     api.yields(12),
+    api.yieldSlope(24),
+    api.freshness(),
   ]);
 
   const latestAuction = primary.length
@@ -25,6 +33,7 @@ export default async function YieldsPage() {
       <div>
         <h1 className="text-xl font-semibold text-white">Yield Curve</h1>
         <p className="text-sm text-gray-400">Primary (BB Treasury auctions) · Secondary (GSOM MTM) · T-Bills, T-Bonds, FRTB</p>
+        <div className="mt-1"><Freshness updated={fresh.yields} /></div>
       </div>
 
       {/* KPI strip */}
@@ -60,18 +69,29 @@ export default async function YieldsPage() {
         <div className="flex items-start justify-between mb-1">
           <h2 className="text-sm font-medium text-gray-300">Yield Curve — Primary &amp; Secondary</h2>
           <div className="text-xs text-gray-500 text-right">
-            {snapDate && <div>Secondary (GSOM): {snapDate}</div>}
-            {latestAuction && <div>Primary (BB Treasury): {latestAuction}</div>}
+            {snapDate && <div>Secondary (GSOM): {fmtDate(snapDate)}</div>}
+            {latestAuction && <div>Primary (BB Treasury): {fmtDate(latestAuction)}</div>}
           </div>
         </div>
         <YieldCurveChartFull primary={primary} secondary={secondary} />
+      </div>
+
+      {/* Curve slope over time */}
+      <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
+        <h2 className="text-sm font-medium text-gray-300 mb-1 flex items-center">
+          Curve Slope — Term Spreads<InfoTip term="Yield-curve slope (2s10s)" />
+        </h2>
+        <p className="text-xs text-gray-500 mb-4">
+          10Y minus 2Y (2s10s) and 10Y minus 91D, in basis points, from primary auction yields. Below zero = inverted.
+        </p>
+        <CurveSlopeChart data={slope} />
       </div>
 
       {/* Data tables */}
       <div className="grid md:grid-cols-2 gap-6">
         {/* Secondary market table */}
         <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
-          <h2 className="text-sm font-medium text-gray-300 mb-3">Secondary Market (GSOM MTM) — {secondary.length} securities</h2>
+          <h2 className="text-sm font-medium text-gray-300 mb-3">Secondary Market (GSOM<InfoTip term="GSOM" /> MTM<InfoTip term="MTM" />) — {secondary.length} securities</h2>
           <div className="overflow-x-auto max-h-72 overflow-y-auto">
             <table className="w-full text-xs">
               <thead className="sticky top-0 bg-gray-900">
@@ -145,6 +165,17 @@ export default async function YieldsPage() {
         <YieldTrendChart data={history} />
       </div>
 
+      {/* Bid-to-cover by tenor */}
+      <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
+        <h2 className="text-sm font-medium text-gray-300 mb-1 flex items-center">
+          Bid-to-Cover by Tenor<InfoTip term="Bid-to-cover" />
+        </h2>
+        <p className="text-xs text-gray-500 mb-4">
+          Amount bid ÷ amount accepted at the latest auction per tenor. Bars below the dashed 1.0 line (red) flag weak demand.
+        </p>
+        <BidCoverChart rows={history} />
+      </div>
+
       {/* Full auction history table */}
       <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
         <div className="flex items-center justify-between mb-4">
@@ -160,20 +191,29 @@ export default async function YieldsPage() {
                 <th className="pb-2 pr-4">Tenor</th>
                 <th className="pb-2 pr-4 text-right">Yield</th>
                 <th className="pb-2 pr-4 text-right">Offered (cr)</th>
-                <th className="pb-2 text-right">Accepted (cr)</th>
+                <th className="pb-2 pr-4 text-right">Accepted (cr)</th>
+                <th className="pb-2 text-right">B/C</th>
               </tr>
             </thead>
             <tbody>
               {history.map((r, i) => (
                 <tr key={i} className="border-b border-gray-800/50 hover:bg-gray-800/30">
-                  <td className="py-1.5 pr-4 text-gray-300">{r.auction_date}</td>
+                  <td className="py-1.5 pr-4 text-gray-300">{fmtDate(r.auction_date)}</td>
                   <td className="py-1.5 pr-4">
                     <span className="px-1.5 py-0.5 rounded text-xs bg-gray-700 text-gray-300">{r.security_type}</span>
                   </td>
                   <td className="py-1.5 pr-4 text-gray-300">{r.tenor_label}</td>
                   <td className="py-1.5 pr-4 text-right text-white font-mono">{r.cutoff_yield_pct.toFixed(4)}%</td>
                   <td className="py-1.5 pr-4 text-right text-gray-400 font-mono">{r.offered_bdt_crore?.toFixed(0) ?? "—"}</td>
-                  <td className="py-1.5 text-right text-gray-400 font-mono">{r.accepted_bdt_crore?.toFixed(0) ?? "—"}</td>
+                  <td className="py-1.5 pr-4 text-right text-gray-400 font-mono">{r.accepted_bdt_crore?.toFixed(0) ?? "—"}</td>
+                  {(() => {
+                    const bc = bidToCover(r);
+                    return (
+                      <td className={`py-1.5 text-right font-mono ${bc == null ? "text-gray-600" : bc < 1.1 ? "text-red-400" : "text-teal-400"}`}>
+                        {bc == null ? "—" : `${bc.toFixed(2)}×`}
+                      </td>
+                    );
+                  })()}
                 </tr>
               ))}
             </tbody>

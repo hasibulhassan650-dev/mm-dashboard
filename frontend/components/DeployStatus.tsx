@@ -1,18 +1,7 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
 import type { DeployStatusPayload } from "@/app/api/deploy-status/route";
-
-function timeAgo(iso: string | null): string {
-  if (!iso) return "—";
-  const diffMs = Date.now() - new Date(iso).getTime();
-  const s = Math.floor(diffMs / 1000);
-  if (s < 60)  return `${s}s ago`;
-  const m = Math.floor(s / 60);
-  if (m < 60)  return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24)  return `${h}h ago`;
-  return `${Math.floor(h / 24)}d ago`;
-}
+import { timeAgo } from "@/lib/format";
 
 const STATE_CONFIG = {
   BUILDING: { dot: "bg-yellow-400 animate-pulse", label: "Deploying…", text: "text-yellow-400" },

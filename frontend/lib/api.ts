@@ -15,12 +15,32 @@ export const api = {
   yieldCurve:      () => get<YieldRow[]>("/api/yields/curve"),
   yieldSecondary:  () => get<SecondaryYieldRow[]>("/api/yields/secondary"),
   yields:          (months = 12) => get<YieldRow[]>("/api/yields", { months }),
+  // New endpoint — degrade to empty until the backend is deployed with /api/yields/slope.
+  yieldSlope:      async (months = 24): Promise<CurveSlopeRow[]> => {
+    try { return await get<CurveSlopeRow[]>("/api/yields/slope", { months }); }
+    catch { return []; }
+  },
   securities:      () => get<Security[]>("/api/securities"),
   flows:           (months = 6) => get<FlowRow[]>("/api/flows", { months }),
   callmoney:       (days = 90)  => get<CallMoneyResult>("/api/callmoney", { days }),
   fx:              (days = 365) => get<FxAuctionRow[]>("/api/fx", { days }),
   refrate:         (days = 90)  => get<RefRateRow[]>("/api/refrate", { days }),
   drilldown:       (date: string) => get<DrilldownResult>(`/api/flows/drilldown`, { date }),
+  // Non-critical: must never break a page. Returns all-nulls if the endpoint is unavailable.
+  freshness:       async (): Promise<Freshness> => {
+    try { return await get<Freshness>("/api/meta/freshness"); }
+    catch { return EMPTY_FRESHNESS; }
+  },
+};
+
+export type FreshnessKey =
+  | "securities" | "yields" | "secondary" | "omo"
+  | "fx" | "callmoney" | "refrate" | "flows";
+export type Freshness = Record<FreshnessKey, string | null>;
+
+const EMPTY_FRESHNESS: Freshness = {
+  securities: null, yields: null, secondary: null, omo: null,
+  fx: null, callmoney: null, refrate: null, flows: null,
 };
 
 export interface OmoSummaryRow {
@@ -29,6 +49,7 @@ export interface OmoSummaryRow {
 }
 export interface OmoOutstandingRow {
   date: string; instrument: string; outstanding_bdt_crore: number;
+  direction?: string;
 }
 export interface OmoTxnRow {
   transaction_date: string; maturity_date: string; instrument: string;
@@ -44,6 +65,11 @@ export interface YieldRow {
   tenor_label: string; tenor_years: number; security_type: string;
   cutoff_yield_pct: number; auction_date: string;
   offered_bdt_crore?: number; accepted_bdt_crore?: number;
+}
+export interface CurveSlopeRow {
+  date: string;
+  y_91d: number | null; y_2y: number | null; y_10y: number | null;
+  two_ten: number | null; short_ten: number | null;
 }
 export interface Security {
   isin: string; security_name_norm: string; security_type: string;

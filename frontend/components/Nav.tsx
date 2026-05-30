@@ -12,6 +12,8 @@ const links = [
   { href: "/fx",         label: "FX Auctions" },
   { href: "/refrate",    label: "Ref Rates"   },
   { href: "/securities", label: "Securities"  },
+  { href: "/portfolio",  label: "Portfolio"   },
+  { href: "/glossary",   label: "Glossary"    },
 ];
 
 export default function Nav() {

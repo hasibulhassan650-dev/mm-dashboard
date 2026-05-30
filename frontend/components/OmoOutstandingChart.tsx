@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { OmoOutstandingRow } from "@/lib/api";
+import { fmtDateShort, fmtCrore } from "@/lib/format";
 
 const COLORS: Record<string, string> = {
   CB_REPO: "#3b82f6",
@@ -44,12 +45,12 @@ export default function OmoOutstandingChart({ data }: { data: OmoOutstandingRow[
       <ResponsiveContainer width="100%" height={220}>
         <AreaChart data={chartData} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
           <XAxis dataKey="date" tick={{ fill: "#9ca3af", fontSize: 10 }}
-            tickFormatter={d => String(d).slice(5)} interval="preserveStartEnd" />
+            tickFormatter={d => fmtDateShort(String(d))} interval="preserveStartEnd" />
           <YAxis tick={{ fill: "#9ca3af", fontSize: 11 }} tickFormatter={v => `${(v/1000).toFixed(0)}k`} width={40} />
           <Tooltip
             contentStyle={{ backgroundColor: "#111827", border: "1px solid #374151", borderRadius: 8 }}
             labelStyle={{ color: "#e5e7eb", fontSize: 12 }}
-            formatter={(v, name) => [`${Number(v).toFixed(0)} cr`, String(name)]}
+            formatter={(v, name) => [fmtCrore(Number(v)), String(name)]}
           />
           {instruments.map(instr => (
             <Area key={instr} type="monotone" dataKey={instr}

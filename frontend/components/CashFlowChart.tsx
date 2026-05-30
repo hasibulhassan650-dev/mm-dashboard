@@ -5,6 +5,7 @@ import {
   ResponsiveContainer, CartesianGrid, ReferenceLine
 } from "recharts";
 import { FlowRow } from "@/lib/api";
+import { fmtDateShort, fmtBDTmn } from "@/lib/format";
 
 const SERIES = [
   { key: "maturity", label: "Maturity",   color: "#1d4ed8" },
@@ -20,7 +21,7 @@ export default function CashFlowChart({ data }: { data: FlowRow[] }) {
   });
 
   const chartData = data.map(r => ({
-    date:     r.flow_date.slice(5),
+    date:     fmtDateShort(r.flow_date),
     maturity: r.principal_inflow_bdt_mill,
     coupon:   r.coupon_inflow_bdt_mill,
     outflow:  -(r.auction_outflow_confirmed_mill || r.auction_outflow_planned_mill),
@@ -51,7 +52,7 @@ export default function CashFlowChart({ data }: { data: FlowRow[] }) {
           <Tooltip
             contentStyle={{ backgroundColor: "#111827", border: "1px solid #374151", borderRadius: 8 }}
             labelStyle={{ color: "#e5e7eb", fontSize: 11 }}
-            formatter={(v, name) => [`${Number(v).toLocaleString()} mn`, String(name)]}
+            formatter={(v, name) => [fmtBDTmn(Number(v)), String(name)]}
           />
           <ReferenceLine yAxisId="left" y={0} stroke="#374151" />
           <Bar yAxisId="left" dataKey="maturity" name="Maturity Inflow" stackId="a" fill="#1d4ed8" fillOpacity={0.8} hide={hidden.has("maturity")} />

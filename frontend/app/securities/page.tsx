@@ -1,11 +1,13 @@
 import { api } from "@/lib/api";
 import StatCard from "@/components/StatCard";
 import DownloadButton from "@/components/DownloadButton";
+import Freshness from "@/components/Freshness";
+import { fmtDate } from "@/lib/format";
 
 export const revalidate = 300;
 
 export default async function SecuritiesPage() {
-  const securities = await api.securities();
+  const [securities, fresh] = await Promise.all([api.securities(), api.freshness()]);
 
   const tbonds = securities.filter(s => s.security_type === "T_BOND");
   const tbills = securities.filter(s => s.security_type === "T_BILL");
@@ -13,15 +15,17 @@ export default async function SecuritiesPage() {
 
   const totalOutstanding = securities.reduce((s, r) => s + (r.outstanding_bdt_mill ?? 0), 0);
 
-  const today = new Date().toISOString().slice(0, 10);
-  const maturing90 = securities.filter(s => s.maturity_date >= today &&
-    s.maturity_date <= new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10));
+  const now = new Date();
+  const today   = now.toISOString().slice(0, 10);
+  const cutoff90 = new Date(now.getTime() + 90 * 86400000).toISOString().slice(0, 10);
+  const maturing90 = securities.filter(s => s.maturity_date >= today && s.maturity_date <= cutoff90);
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-xl font-semibold text-white">Securities</h1>
         <p className="text-sm text-gray-400">GSOM — T-Bills, T-Bonds, FRTB outstanding</p>
+        <div className="mt-1"><Freshness updated={fresh.securities} /></div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -59,9 +63,9 @@ export default async function SecuritiesPage() {
                     <td className="py-1.5 pr-4 font-mono text-xs text-gray-300">{s.isin}</td>
                     <td className="py-1.5 pr-4 text-gray-200 max-w-[200px] truncate">{s.security_name_norm}</td>
                     <td className="py-1.5 pr-4 text-right text-white font-mono">{s.coupon_rate_pct?.toFixed(2) ?? "—"}%</td>
-                    <td className="py-1.5 pr-4 text-gray-400 text-xs">{s.issue_date}</td>
-                    <td className={`py-1.5 pr-4 text-xs ${s.maturity_date <= new Date(Date.now() + 90*86400000).toISOString().slice(0,10) ? "text-amber-400" : "text-gray-400"}`}>
-                      {s.maturity_date}
+                    <td className="py-1.5 pr-4 text-gray-400 text-xs">{fmtDate(s.issue_date)}</td>
+                    <td className={`py-1.5 pr-4 text-xs ${s.maturity_date <= cutoff90 ? "text-amber-400" : "text-gray-400"}`}>
+                      {fmtDate(s.maturity_date)}
                     </td>
                     <td className="py-1.5 text-right font-mono text-gray-300">{s.outstanding_bdt_mill?.toLocaleString() ?? "—"}</td>
                   </tr>

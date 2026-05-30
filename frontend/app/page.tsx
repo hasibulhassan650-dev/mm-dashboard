@@ -2,6 +2,8 @@ import { api } from "@/lib/api";
 import StatCard from "@/components/StatCard";
 import YieldCurveChart from "@/components/YieldCurveChart";
 import OmoOutstandingChart from "@/components/OmoOutstandingChart";
+import Freshness from "@/components/Freshness";
+import { fmtDate } from "@/lib/format";
 
 export const revalidate = 300;
 
@@ -11,10 +13,11 @@ function fmt(n: number) {
 }
 
 export default async function Home() {
-  const [summary, curve, outstanding] = await Promise.all([
+  const [summary, curve, outstanding, fresh] = await Promise.all([
     api.omoSummary(),
     api.yieldCurve(),
     api.omoOutstanding(60),
+    api.freshness(),
   ]);
 
   const totalInjection = summary
@@ -29,12 +32,13 @@ export default async function Home() {
       <div>
         <h1 className="text-xl font-semibold text-white">Overview</h1>
         <p className="text-sm text-gray-400">Bangladesh money market · live data from Bangladesh Bank</p>
+        <div className="mt-1"><Freshness updated={fresh.omo} /></div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard label="OMO Net Injection" value={`৳${fmt(totalInjection)} cr`} sub="outstanding today" color="blue" />
-        <StatCard label="10Y T-Bond Yield" value={tenYear ? `${tenYear.cutoff_yield_pct.toFixed(2)}%` : "—"} sub={tenYear?.auction_date ?? ""} color="green" />
-        <StatCard label="91D T-Bill Yield" value={tbill91 ? `${tbill91.cutoff_yield_pct.toFixed(2)}%` : "—"} sub={tbill91?.auction_date ?? ""} color="amber" />
+        <StatCard label="10Y T-Bond Yield" value={tenYear ? `${tenYear.cutoff_yield_pct.toFixed(2)}%` : "—"} sub={tenYear ? fmtDate(tenYear.auction_date) : ""} color="green" />
+        <StatCard label="91D T-Bill Yield" value={tbill91 ? `${tbill91.cutoff_yield_pct.toFixed(2)}%` : "—"} sub={tbill91 ? fmtDate(tbill91.auction_date) : ""} color="amber" />
         <StatCard label="OMO Instruments" value={String(summary.length)} sub={`${summary.filter(r => r.direction === "INJECTION").length} injection active`} color="blue" />
       </div>
 

@@ -59,6 +59,56 @@ def get_yield_curve():
         session.close()
 
 
+@router.get("/slope")
+def get_curve_slope(months: int = Query(24, ge=3, le=60)):
+    """
+    Yield-curve slope over time, built from primary auction yields.
+    Tenors auction on different dates, so for each date with a new print we
+    forward-fill the latest available yield per key tenor, then compute spreads.
+    Returns: [{date, y_91d, y_2y, y_10y, two_ten, short_ten}, ...] chronological.
+    """
+    import datetime
+    since = datetime.date.today()
+    for _ in range(months - 1):
+        since = (since.replace(day=1) - datetime.timedelta(days=1))
+    since = since.replace(day=1)
+
+    session = get_session()
+    try:
+        rows = session.execute(text("""
+            SELECT auction_date, tenor_label, cutoff_yield_pct
+            FROM primary_yield_snapshots
+            WHERE cutoff_yield_pct IS NOT NULL
+              AND tenor_label IN ('91D', '2Y', '10Y')
+              AND auction_date >= :since
+            ORDER BY auction_date
+        """), {"since": str(since)}).fetchall()
+
+        # forward-fill latest yield per tenor as the date advances
+        last = {"91D": None, "2Y": None, "10Y": None}
+        by_date: dict = {}
+        for r in rows:
+            d = str(r._mapping["auction_date"])
+            last[r._mapping["tenor_label"]] = r._mapping["cutoff_yield_pct"]
+            by_date[d] = {
+                "date": d,
+                "y_91d": last["91D"],
+                "y_2y":  last["2Y"],
+                "y_10y": last["10Y"],
+            }
+
+        result = []
+        for d in sorted(by_date):
+            row = by_date[d]
+            y91, y2, y10 = row["y_91d"], row["y_2y"], row["y_10y"]
+            row["two_ten"]   = round(y10 - y2, 4) if (y10 is not None and y2 is not None) else None
+            row["short_ten"] = round(y10 - y91, 4) if (y10 is not None and y91 is not None) else None
+            result.append(row)
+        return result
+    finally:
+        session.close()
+
+
 @router.get("/secondary")
 def get_secondary_curve():
     """Secondary market yield curve — latest GSOM MTM snapshot per ISIN."""

@@ -2,6 +2,9 @@ import { api } from "@/lib/api";
 import RefRateChart from "@/components/RefRateChart";
 import PeriodSelector from "@/components/PeriodSelector";
 import DownloadButton from "@/components/DownloadButton";
+import Freshness from "@/components/Freshness";
+import InfoTip from "@/components/InfoTip";
+import { fmtDate } from "@/lib/format";
 
 export const revalidate = 300;
 
@@ -22,7 +25,7 @@ export default async function RefRatePage({
 }) {
   const sp   = await searchParams;
   const days = parseInt(sp.days ?? "90", 10);
-  const rows = await api.refrate(days);
+  const [rows, fresh] = await Promise.all([api.refrate(days), api.freshness()]);
 
   const dommr = rows.filter(r => r.rate_type === "DOMMR");
   const bofr  = rows.filter(r => r.rate_type === "BOFR");
@@ -55,23 +58,23 @@ export default async function RefRatePage({
           <h1 className="text-xl font-semibold text-white">Money Market Reference Rates</h1>
           <p className="text-sm text-gray-400">
             DOMMR &amp; BOFR · Bangladesh Bank
-            {latestDate && <span className="ml-2 text-gray-500">Latest: {latestDate}</span>}
+            {latestDate && <span className="ml-2 text-gray-500">Latest: {fmtDate(latestDate)}</span>}
           </p>
+          <div className="mt-1"><Freshness updated={fresh.refrate} /></div>
         </div>
         <PeriodSelector periods={PERIODS} current={days} />
       </div>
 
       {noData && (
-        <div className="rounded-xl border border-yellow-800 bg-yellow-950/30 p-4 text-sm text-yellow-300">
-          No data yet. Save the BB reference rate page as <code>refrate_history.html</code> and run{" "}
-          <code>py -3.14 load_refrate_html.py</code> to load history.
+        <div className="rounded-xl border border-gray-800 bg-gray-900 p-8 text-center text-sm text-gray-400">
+          No reference-rate data available for this period. Try a wider period above.
         </div>
       )}
 
       {/* KPI strip */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="rounded-lg border border-gray-800 bg-gray-900 p-3">
-          <div className="text-xs text-gray-400 mb-1">DOMMR Overnight</div>
+          <div className="text-xs text-gray-400 mb-1">DOMMR Overnight<InfoTip term="DOMMR" /></div>
           <div className="text-2xl font-mono text-sky-400">
             {onNightDommr?.rate_pct?.toFixed(2) ?? "—"}%
           </div>
@@ -82,7 +85,7 @@ export default async function RefRatePage({
           )}
         </div>
         <div className="rounded-lg border border-gray-800 bg-gray-900 p-3">
-          <div className="text-xs text-gray-400 mb-1">BOFR Overnight</div>
+          <div className="text-xs text-gray-400 mb-1">BOFR Overnight<InfoTip term="BOFR" /></div>
           <div className="text-2xl font-mono text-violet-400">
             {onNightBofr?.rate_pct?.toFixed(2) ?? "—"}%
           </div>
@@ -142,7 +145,7 @@ export default async function RefRatePage({
               .sort((a, b) => PRODUCTS.indexOf(a.product) - PRODUCTS.indexOf(b.product));
             return (
               <div key={rtype} className="rounded-xl border border-gray-800 bg-gray-900 p-4">
-                <h2 className="text-sm font-medium text-gray-300 mb-3">{rtype} — {latestDate}</h2>
+                <h2 className="text-sm font-medium text-gray-300 mb-3">{rtype} — {fmtDate(latestDate)}</h2>
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-xs text-gray-400 border-b border-gray-800">
@@ -197,7 +200,7 @@ export default async function RefRatePage({
               <tbody>
                 {rows.map((r, i) => (
                   <tr key={i} className="border-b border-gray-800/50 hover:bg-gray-800/30">
-                    <td className="py-1.5 pr-4 text-gray-300">{r.trade_date}</td>
+                    <td className="py-1.5 pr-4 text-gray-300">{fmtDate(r.trade_date)}</td>
                     <td className="py-1.5 pr-4">
                       <span className={`text-xs font-medium ${r.rate_type === "DOMMR" ? "text-sky-400" : "text-violet-400"}`}>
                         {r.rate_type}

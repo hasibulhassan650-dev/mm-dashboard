@@ -5,6 +5,7 @@ import {
   ResponsiveContainer, CartesianGrid,
 } from "recharts";
 import { RefRateRow } from "@/lib/api";
+import { fmtDateShort, fmtPct } from "@/lib/format";
 
 const PRODUCT_COLORS: Record<string, string> = {
   Overnight: "#38bdf8",
@@ -22,7 +23,7 @@ function RRTooltip({ active, payload, label }: TooltipProps) {
       <div style={{ color: "#e5e7eb", marginBottom: 6, fontWeight: 600 }}>{label}</div>
       {payload.map((p, i) => (
         <div key={i} style={{ color: p.color, fontFamily: "monospace" }}>
-          {p.name}: {p.value != null ? `${Number(p.value).toFixed(2)}%` : "—"}
+          {p.name}: {fmtPct(p.value)}
         </div>
       ))}
     </div>
@@ -49,7 +50,7 @@ export default function RefRateChart({ rows, rateType }: Props) {
 
   const chartData = Object.entries(dateMap)
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([date, vals]) => ({ date: date.slice(5), ...vals }));
+    .map(([date, vals]) => ({ date: fmtDateShort(date), ...vals }));
 
   const allRates = filtered.map(r => r.rate_pct).filter((v): v is number => v !== null);
   const yMin = allRates.length ? Math.max(0, Math.min(...allRates) - 0.2) : 8;
