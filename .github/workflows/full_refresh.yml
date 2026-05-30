@@ -51,12 +51,21 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
-      - name: Install Google Chrome + xvfb
+      - name: Install xvfb
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb wget
-          wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-          sudo apt-get install -y ./google-chrome-stable_current_amd64.deb
+          sudo apt-get install -y xvfb
+
+      - name: Install pinned Google Chrome
+        id: chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: "131"
+          install-dependencies: true
+
+      - name: Expose Chrome as google-chrome
+        run: |
+          sudo ln -sf "${{ steps.chrome.outputs.chrome-path }}" /usr/local/bin/google-chrome
           google-chrome --version
 
       - name: Install Python dependencies
@@ -65,10 +74,9 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run full refresh (Chrome under virtual display)
-        env:
-          DISPLAY: ":99"
         run: |
-          xvfb-run -a --server-args="-screen 0 1920x1080x24" python weekly_fetch.py
+          # Let xvfb-run allocate and own the DISPLAY (no manual DISPLAY override).
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" python weekly_fetch.py
 
       - name: Summarise log
         if: always()
