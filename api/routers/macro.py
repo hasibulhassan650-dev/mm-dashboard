@@ -10,19 +10,19 @@ from fastapi import APIRouter
 
 router = APIRouter()
 
-_SEED = Path(__file__).resolve().parents[1] / "seeds" / "reserves_remittances.yaml"
+_SEEDS = Path(__file__).resolve().parents[1] / "seeds"
+_RESERVES = _SEEDS / "reserves_remittances.yaml"
+_MONETARY = _SEEDS / "monetary.yaml"
 
 
-def _load() -> list[dict]:
-    """Monthly rows sorted ascending by month. [] if missing/unreadable."""
+def _read_yaml(path) -> dict:
+    """Parse a seed YAML to a dict. {} if missing/unreadable."""
     try:
         import yaml
-        with open(_SEED, "r", encoding="utf-8") as fh:
-            data = yaml.safe_load(fh) or {}
-        rows = data.get("series", []) or []
-        return sorted(rows, key=lambda r: str(r.get("month", "")))
+        with open(path, "r", encoding="utf-8") as fh:
+            return yaml.safe_load(fh) or {}
     except Exception:
-        return []
+        return {}
 
 
 @router.get("/reserves")
@@ -31,5 +31,25 @@ def get_reserves_remittances():
     FX reserves & remittances monthly series.
       { series: [ ...ascending... ], latest: {...} | null }
     """
-    rows = _load()
+    rows = sorted(_read_yaml(_RESERVES).get("series", []) or [],
+                  key=lambda r: str(r.get("month", "")))
     return {"series": rows, "latest": rows[-1] if rows else None}
+
+
+@router.get("/monetary")
+def get_monetary():
+    """
+    Monetary & prices: CPI inflation, monetary aggregates, deposit/lending
+    rates (monthly), plus effective-dated CRR/SLR requirements.
+      { monthly: [...asc...], latest: {...}|null,
+        reserve_requirements: { current: {...}|null, history: [...asc...] } }
+    """
+    data = _read_yaml(_MONETARY)
+    monthly = sorted(data.get("monthly", []) or [], key=lambda r: str(r.get("month", "")))
+    rr = sorted(data.get("reserve_requirements", []) or [],
+                key=lambda r: str(r.get("effective_date", "")))
+    return {
+        "monthly": monthly,
+        "latest": monthly[-1] if monthly else None,
+        "reserve_requirements": {"current": rr[-1] if rr else None, "history": rr},
+    }

@@ -3,7 +3,7 @@ export interface GlossaryEntry {
   term: string;
   full?: string;       // full expansion of an acronym
   def: string;         // plain-language definition
-  category: "Rates" | "Instruments" | "Operations" | "Securities" | "Metrics" | "FX";
+  category: "Rates" | "Instruments" | "Operations" | "Securities" | "Metrics" | "FX" | "Macro";
 }
 
 export const GLOSSARY: GlossaryEntry[] = [
@@ -110,5 +110,33 @@ export const GLOSSARY: GlossaryEntry[] = [
   {
     term: "Weighted-avg rate (FX)", category: "FX",
     def: "The accepted-amount-weighted average USD/BDT rate at an FX auction.",
+  },
+  {
+    term: "CPI (point-to-point)", category: "Macro",
+    def: "Consumer Price Index inflation measured as the % change versus the same month a year earlier (year-on-year). The headline monthly inflation print from BBS. The 12-month average smooths it over the trailing year.",
+  },
+  {
+    term: "M2 / Broad money", category: "Macro",
+    def: "Broad money supply — currency in circulation plus demand and time deposits. Its YoY growth gauges monetary expansion.",
+  },
+  {
+    term: "Reserve money", category: "Macro",
+    def: "Base/high-powered money — currency plus banks' reserves at the central bank. The monetary base BB controls most directly.",
+  },
+  {
+    term: "Private-sector credit", category: "Macro",
+    def: "Bank lending to the private sector. Its YoY growth is a key gauge of credit conditions and a BB monetary-policy target.",
+  },
+  {
+    term: "Lending-deposit spread", category: "Macro",
+    def: "Weighted-average lending rate minus weighted-average deposit rate across the banking system — a measure of bank intermediation margin and cost-of-funds pressure.",
+  },
+  {
+    term: "CRR", full: "Cash Reserve Ratio", category: "Macro",
+    def: "The share of deposits banks must hold as cash reserves with Bangladesh Bank. A reserve-requirement tool; conventional banks differ from Islamic banks.",
+  },
+  {
+    term: "SLR", full: "Statutory Liquidity Ratio", category: "Macro",
+    def: "The share of deposits banks must hold in liquid assets (cash, gold, approved securities) including the CRR. Higher SLR drains lendable funds.",
   },
 ];

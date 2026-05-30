@@ -3,7 +3,7 @@ import { GLOSSARY, GlossaryEntry } from "@/lib/glossary";
 export const metadata = { title: "Glossary · BB Market Intelligence" };
 
 const ORDER: GlossaryEntry["category"][] = [
-  "Rates", "Operations", "Securities", "Metrics", "FX", "Instruments",
+  "Rates", "Operations", "Securities", "Metrics", "FX", "Macro", "Instruments",
 ];
 
 export default function GlossaryPage() {

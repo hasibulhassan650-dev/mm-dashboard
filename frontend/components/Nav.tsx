@@ -12,6 +12,7 @@ const links = [
   { href: "/fx",         label: "FX Auctions" },
   { href: "/refrate",    label: "Ref Rates"   },
   { href: "/macro",      label: "External"    },
+  { href: "/monetary",   label: "Monetary"    },
   { href: "/securities", label: "Securities"  },
   { href: "/portfolio",  label: "Portfolio"   },
   { href: "/glossary",   label: "Glossary"    },

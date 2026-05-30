@@ -1,0 +1,81 @@
+# ============================================================================
+# Bangladesh - Monetary & Prices indicators
+# ============================================================================
+#
+#   *** DRAFT / ILLUSTRATIVE VALUES - REPLACE WITH REAL DATA ***
+#
+# The numbers below are placeholders so the charts render. They are NOT real.
+# Replace them with official figures:
+#   - CPI inflation: Bangladesh Bureau of Statistics (BBS) monthly CPI release
+#   - Monetary aggregates: Bangladesh Bank Monthly Economic Trends / Monetary Survey
+#   - Deposit/lending rates: Bangladesh Bank weighted-average interest rate statistics
+#   - CRR / SLR: Bangladesh Bank circulars (change rarely)
+#
+# HOW TO MAINTAIN:
+#   - `monthly`: one row per month (YYYY-MM); append a new row each month.
+#   - `reserve_requirements`: one row per change (effective-dated); latest = current.
+#   - Omit a field if a figure isn't available for that month.
+#
+# FIELDS (monthly), all percent:
+#   cpi_p2p               - CPI inflation, point-to-point (YoY)
+#   cpi_12mo_avg          - CPI inflation, 12-month moving average
+#   m2_growth             - Broad money (M2) growth, YoY
+#   reserve_money_growth  - Reserve money growth, YoY
+#   private_credit_growth - Private-sector credit growth, YoY
+#   wavg_deposit          - Weighted-average deposit rate (banking system)
+#   wavg_lending          - Weighted-average lending rate (banking system)
+# (lending-deposit spread is computed by the app)
+# ============================================================================
+
+monthly:
+  - month: "2025-12"
+    cpi_p2p: 9.5
+    cpi_12mo_avg: 10.0
+    m2_growth: 8.5
+    reserve_money_growth: 6.0
+    private_credit_growth: 7.5
+    wavg_deposit: 6.0
+    wavg_lending: 11.8
+    note: "DRAFT - replace with real BBS/BB figure"
+  - month: "2026-01"
+    cpi_p2p: 9.2
+    cpi_12mo_avg: 9.9
+    m2_growth: 8.6
+    reserve_money_growth: 6.2
+    private_credit_growth: 7.3
+    wavg_deposit: 6.1
+    wavg_lending: 11.9
+    note: "DRAFT - replace with real BBS/BB figure"
+  - month: "2026-02"
+    cpi_p2p: 9.0
+    cpi_12mo_avg: 9.8
+    m2_growth: 8.7
+    reserve_money_growth: 6.1
+    private_credit_growth: 7.2
+    wavg_deposit: 6.2
+    wavg_lending: 12.0
+    note: "DRAFT - replace with real BBS/BB figure"
+  - month: "2026-03"
+    cpi_p2p: 8.8
+    cpi_12mo_avg: 9.6
+    m2_growth: 8.9
+    reserve_money_growth: 6.3
+    private_credit_growth: 7.4
+    wavg_deposit: 6.3
+    wavg_lending: 12.1
+    note: "DRAFT - replace with real BBS/BB figure"
+  - month: "2026-04"
+    cpi_p2p: 8.5
+    cpi_12mo_avg: 9.4
+    m2_growth: 9.0
+    reserve_money_growth: 6.5
+    private_credit_growth: 7.6
+    wavg_deposit: 6.3
+    wavg_lending: 12.1
+    note: "DRAFT - replace with real BBS/BB figure"
+
+reserve_requirements:
+  - effective_date: "2024-01-01"
+    crr: 4.00
+    slr: 13.00
+    note: "DRAFT - verify; conventional banks. Islamic banks differ (e.g. SLR 5.5%)."

@@ -40,7 +40,27 @@ export const api = {
     try { return await get<MacroSeries>("/api/macro/reserves"); }
     catch { return { series: [], latest: null }; }
   },
+  monetary:        async (): Promise<MonetaryData> => {
+    try { return await get<MonetaryData>("/api/macro/monetary"); }
+    catch { return { monthly: [], latest: null, reserve_requirements: { current: null, history: [] } }; }
+  },
 };
+
+export interface MonetaryRow {
+  month: string;
+  cpi_p2p: number | null; cpi_12mo_avg: number | null;
+  m2_growth: number | null; reserve_money_growth: number | null; private_credit_growth: number | null;
+  wavg_deposit: number | null; wavg_lending: number | null;
+  note?: string;
+}
+export interface ReserveRequirement {
+  effective_date: string; crr: number | null; slr: number | null; note?: string;
+}
+export interface MonetaryData {
+  monthly: MonetaryRow[];
+  latest: MonetaryRow | null;
+  reserve_requirements: { current: ReserveRequirement | null; history: ReserveRequirement[] };
+}
 
 export interface MacroRow {
   month: string;
