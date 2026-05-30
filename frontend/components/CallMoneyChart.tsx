@@ -2,16 +2,19 @@
 import { useState } from "react";
 import {
   ComposedChart, Area, Line, XAxis, YAxis, Tooltip,
-  ResponsiveContainer, CartesianGrid,
+  ResponsiveContainer, CartesianGrid, ReferenceLine,
 } from "recharts";
 import { CallMoneyDailySummary } from "@/lib/api";
 import { fmtDateShort, fmtCrore, fmtPct } from "@/lib/format";
 
+export interface Corridor { repo: number | null; sdf: number | null; slf: number | null }
+
 const SERIES = [
-  { key: "avg",    label: "Avg Rate",  color: "#f59e0b" },
-  { key: "high",   label: "High Rate", color: "#dc2626" },
-  { key: "low",    label: "Low Rate",  color: "#16a34a" },
-  { key: "volume", label: "Volume",    color: "#4b5563" },
+  { key: "avg",      label: "Avg Rate",  color: "#f59e0b" },
+  { key: "high",     label: "High Rate", color: "#dc2626" },
+  { key: "low",      label: "Low Rate",  color: "#16a34a" },
+  { key: "volume",   label: "Volume",    color: "#4b5563" },
+  { key: "corridor", label: "Corridor",  color: "#5eead4" },
 ];
 
 interface TooltipProps { active?: boolean; payload?: { value: number; name: string; color: string }[]; label?: string }
@@ -30,7 +33,7 @@ function CMTooltip({ active, payload, label }: TooltipProps) {
   );
 }
 
-export default function CallMoneyChart({ data }: { data: CallMoneyDailySummary[] }) {
+export default function CallMoneyChart({ data, corridor }: { data: CallMoneyDailySummary[]; corridor?: Corridor }) {
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const toggle = (key: string) => setHidden(prev => {
     const next = new Set(prev); next.has(key) ? next.delete(key) : next.add(key); return next;
@@ -44,14 +47,21 @@ export default function CallMoneyChart({ data }: { data: CallMoneyDailySummary[]
     volume:  r.overnight_volume_crore ?? null,
   }));
 
+  const showCorridor = !!corridor && !hidden.has("corridor");
+  const corridorVals = corridor
+    ? [corridor.repo, corridor.sdf, corridor.slf].filter((v): v is number => v != null)
+    : [];
+
+  // Include corridor levels in the domain so reference lines aren't clipped.
   const rates = chartData.map(d => d.avg).filter((v): v is number => v !== null);
-  const yMin  = rates.length ? Math.max(0, Math.min(...rates) - 0.5) : 0;
-  const yMax  = rates.length ? Math.max(...rates) + 0.5 : 15;
+  const domainVals = showCorridor ? [...rates, ...corridorVals] : rates;
+  const yMin  = domainVals.length ? Math.max(0, Math.min(...domainVals) - 0.5) : 0;
+  const yMax  = domainVals.length ? Math.max(...domainVals) + 0.5 : 15;
 
   return (
     <div>
       <div className="flex flex-wrap gap-1.5 mb-3">
-        {SERIES.map(s => {
+        {SERIES.filter(s => s.key !== "corridor" || corridor).map(s => {
           const active = !hidden.has(s.key);
           return (
             <button key={s.key} onClick={() => toggle(s.key)}
@@ -70,6 +80,18 @@ export default function CallMoneyChart({ data }: { data: CallMoneyDailySummary[]
           <YAxis yAxisId="rate" domain={[yMin, yMax]} tick={{ fill: "#9ca3af", fontSize: 10 }} tickFormatter={v => `${v}%`} width={42} />
           <YAxis yAxisId="vol" orientation="right" tick={{ fill: "#374151", fontSize: 10 }} tickFormatter={v => `${(v/1000).toFixed(0)}k`} width={40} />
           <Tooltip content={<CMTooltip />} />
+          {showCorridor && corridor!.slf != null && (
+            <ReferenceLine yAxisId="rate" y={corridor!.slf} stroke="#f87171" strokeDasharray="5 3" strokeOpacity={0.7}
+              label={{ value: `SLF ${corridor!.slf}%`, position: "insideTopRight", fill: "#f87171", fontSize: 9 }} />
+          )}
+          {showCorridor && corridor!.repo != null && (
+            <ReferenceLine yAxisId="rate" y={corridor!.repo} stroke="#5eead4" strokeDasharray="5 3" strokeOpacity={0.8}
+              label={{ value: `Repo ${corridor!.repo}%`, position: "insideTopRight", fill: "#5eead4", fontSize: 9 }} />
+          )}
+          {showCorridor && corridor!.sdf != null && (
+            <ReferenceLine yAxisId="rate" y={corridor!.sdf} stroke="#4ade80" strokeDasharray="5 3" strokeOpacity={0.7}
+              label={{ value: `SDF ${corridor!.sdf}%`, position: "insideBottomRight", fill: "#4ade80", fontSize: 9 }} />
+          )}
           <Area yAxisId="vol" type="monotone" dataKey="volume" name="Overnight Volume"
             fill="#1f2937" stroke="#374151" fillOpacity={0.4} strokeWidth={1} dot={false}
             hide={hidden.has("volume")} />

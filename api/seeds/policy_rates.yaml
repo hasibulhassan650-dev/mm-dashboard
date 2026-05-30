@@ -1,0 +1,39 @@
+# ============================================================================
+# Bangladesh Bank - Policy Rate Corridor (effective-dated)
+# ============================================================================
+#
+#   *** DRAFT VALUES - VERIFY BEFORE RELYING ON THESE ***
+#
+# These figures are placeholders drafted from memory and WILL be wrong/stale.
+# As the desk, please confirm each number against the BB Monetary Policy
+# circulars / press releases and correct them. The dashboard reads this file
+# directly, so editing here + redeploying the backend is all that's needed.
+#
+# HOW TO MAINTAIN:
+#   - Each entry is the FULL corridor as it stood on `effective_date`.
+#   - When BB changes ANY rate (MPC announcement), copy the latest block,
+#     set the new `effective_date`, update the changed rate(s), keep the rest.
+#   - The most recent block (by date) is treated as "current" by the app.
+#
+# DEFINITIONS (see /glossary):
+#   repo       - Repo / policy rate (the anchor)
+#   slf        - Standing Lending Facility = corridor CEILING
+#   sdf        - Standing Deposit Facility = corridor FLOOR
+#   bank_rate  - Bank Rate
+# All values are percent per annum.
+# ============================================================================
+
+corridor:
+  - effective_date: "2024-09-25"
+    repo: 9.50
+    slf: 11.00
+    sdf: 8.00
+    bank_rate: 4.00
+    note: "DRAFT - verify against BB MPC circular"
+
+  - effective_date: "2024-10-27"
+    repo: 10.00
+    slf: 11.50
+    sdf: 8.50
+    bank_rate: 5.00
+    note: "DRAFT - verify; assumed current corridor"

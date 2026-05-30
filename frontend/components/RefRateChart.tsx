@@ -2,7 +2,7 @@
 import { useState } from "react";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip,
-  ResponsiveContainer, CartesianGrid,
+  ResponsiveContainer, CartesianGrid, ReferenceLine,
 } from "recharts";
 import { RefRateRow } from "@/lib/api";
 import { fmtDateShort, fmtPct } from "@/lib/format";
@@ -30,9 +30,9 @@ function RRTooltip({ active, payload, label }: TooltipProps) {
   );
 }
 
-interface Props { rows: RefRateRow[]; rateType: "DOMMR" | "BOFR" }
+interface Props { rows: RefRateRow[]; rateType: "DOMMR" | "BOFR"; repoRate?: number | null }
 
-export default function RefRateChart({ rows, rateType }: Props) {
+export default function RefRateChart({ rows, rateType, repoRate }: Props) {
   const filtered = rows.filter(r => r.rate_type === rateType);
   const products = [...new Set(filtered.map(r => r.product))].sort();
 
@@ -53,8 +53,9 @@ export default function RefRateChart({ rows, rateType }: Props) {
     .map(([date, vals]) => ({ date: fmtDateShort(date), ...vals }));
 
   const allRates = filtered.map(r => r.rate_pct).filter((v): v is number => v !== null);
-  const yMin = allRates.length ? Math.max(0, Math.min(...allRates) - 0.2) : 8;
-  const yMax = allRates.length ? Math.max(...allRates) + 0.2 : 12;
+  const domainVals = repoRate != null ? [...allRates, repoRate] : allRates;
+  const yMin = domainVals.length ? Math.max(0, Math.min(...domainVals) - 0.2) : 8;
+  const yMax = domainVals.length ? Math.max(...domainVals) + 0.2 : 12;
 
   return (
     <div>
@@ -78,6 +79,10 @@ export default function RefRateChart({ rows, rateType }: Props) {
           <XAxis dataKey="date" tick={{ fill: "#9ca3af", fontSize: 10 }} interval="preserveStartEnd" />
           <YAxis domain={[yMin, yMax]} tick={{ fill: "#9ca3af", fontSize: 10 }} tickFormatter={v => `${v}%`} width={42} />
           <Tooltip content={<RRTooltip />} />
+          {repoRate != null && (
+            <ReferenceLine y={repoRate} stroke="#5eead4" strokeDasharray="5 3" strokeOpacity={0.7}
+              label={{ value: `Repo ${repoRate}%`, position: "insideTopRight", fill: "#5eead4", fontSize: 9 }} />
+          )}
           {products.map(p => (
             <Line key={p} type="monotone" dataKey={p} name={p}
               stroke={PRODUCT_COLORS[p] ?? "#94a3b8"} strokeWidth={2}

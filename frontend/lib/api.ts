@@ -31,7 +31,22 @@ export const api = {
     try { return await get<Freshness>("/api/meta/freshness"); }
     catch { return EMPTY_FRESHNESS; }
   },
+  // New endpoint — degrade to empty corridor until the backend is deployed.
+  policy:          async (): Promise<PolicyCorridor> => {
+    try { return await get<PolicyCorridor>("/api/policy"); }
+    catch { return { current: null, history: [] }; }
+  },
 };
+
+export interface PolicyRateSnapshot {
+  effective_date: string;
+  repo: number | null; slf: number | null; sdf: number | null;
+  bank_rate: number | null; note?: string;
+}
+export interface PolicyCorridor {
+  current: PolicyRateSnapshot | null;
+  history: PolicyRateSnapshot[];
+}
 
 export type FreshnessKey =
   | "securities" | "yields" | "secondary" | "omo"

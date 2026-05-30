@@ -2,7 +2,8 @@ import { api } from "@/lib/api";
 import CallMoneyChart from "@/components/CallMoneyChart";
 import PeriodSelector from "@/components/PeriodSelector";
 import Freshness from "@/components/Freshness";
-import { fmtDate } from "@/lib/format";
+import InfoTip from "@/components/InfoTip";
+import { fmtDate, fmtPct } from "@/lib/format";
 import DownloadButton from "@/components/DownloadButton";
 
 export const revalidate = 300;
@@ -23,8 +24,9 @@ export default async function CallMoneyPage({
   const sp   = await searchParams;
   const days = parseInt(sp.days ?? "90", 10);
 
-  const [data, fresh] = await Promise.all([api.callmoney(days), api.freshness()]);
+  const [data, fresh, corridor] = await Promise.all([api.callmoney(days), api.freshness(), api.policy()]);
   const summary = data.daily_summary;
+  const cur = corridor.current;
   const latest  = data.latest_breakdown;
   const latestDate = data.latest_date;
 
@@ -91,10 +93,52 @@ export default async function CallMoneyPage({
         </div>
       </div>
 
+      {/* Policy corridor strip */}
+      {cur && (
+        <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
+          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <h2 className="text-sm font-medium text-gray-300 flex items-center">
+              Policy Rate Corridor<InfoTip term="SLF" /><InfoTip term="SDF" />
+            </h2>
+            <span className="text-xs text-gray-500">
+              Effective {fmtDate(cur.effective_date)}
+              {rateNow != null && cur.slf != null && cur.sdf != null && (
+                <span className="ml-2">
+                  · O/N {rateNow >= cur.slf ? "at/above ceiling (tight)"
+                    : rateNow <= cur.sdf ? "at/below floor (flush)"
+                    : "inside corridor"}
+                </span>
+              )}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="rounded-lg border border-red-900/50 bg-red-950/20 p-3">
+              <div className="text-xs text-gray-400 mb-1">SLF — Ceiling</div>
+              <div className="text-xl font-mono text-red-400">{fmtPct(cur.slf)}</div>
+            </div>
+            <div className="rounded-lg border border-teal-900/50 bg-teal-950/20 p-3">
+              <div className="text-xs text-gray-400 mb-1">Repo — Policy</div>
+              <div className="text-xl font-mono text-teal-400">{fmtPct(cur.repo)}</div>
+            </div>
+            <div className="rounded-lg border border-green-900/50 bg-green-950/20 p-3">
+              <div className="text-xs text-gray-400 mb-1">SDF — Floor</div>
+              <div className="text-xl font-mono text-green-400">{fmtPct(cur.sdf)}</div>
+            </div>
+            <div className="rounded-lg border border-gray-800 bg-gray-900 p-3">
+              <div className="text-xs text-gray-400 mb-1">Bank Rate</div>
+              <div className="text-xl font-mono text-gray-300">{fmtPct(cur.bank_rate)}</div>
+            </div>
+          </div>
+          {cur.note && cur.note.includes("DRAFT") && (
+            <p className="text-xs text-amber-500/80 mt-2">⚠ Draft values — pending verification against BB circulars.</p>
+          )}
+        </div>
+      )}
+
       {/* Chart */}
       <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
-        <h2 className="text-sm font-medium text-gray-300 mb-4">Overnight Call Rate — trend</h2>
-        <CallMoneyChart data={summary} />
+        <h2 className="text-sm font-medium text-gray-300 mb-4">Overnight Call Rate — trend{cur && <span className="text-xs text-gray-500 font-normal ml-2">vs policy corridor</span>}</h2>
+        <CallMoneyChart data={summary} corridor={cur ? { repo: cur.repo, sdf: cur.sdf, slf: cur.slf } : undefined} />
       </div>
 
       {/* Latest day breakdown */}

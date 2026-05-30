@@ -25,7 +25,8 @@ export default async function RefRatePage({
 }) {
   const sp   = await searchParams;
   const days = parseInt(sp.days ?? "90", 10);
-  const [rows, fresh] = await Promise.all([api.refrate(days), api.freshness()]);
+  const [rows, fresh, corridor] = await Promise.all([api.refrate(days), api.freshness(), api.policy()]);
+  const repoRate = corridor.current?.repo ?? null;
 
   const dommr = rows.filter(r => r.rate_type === "DOMMR");
   const bofr  = rows.filter(r => r.rate_type === "BOFR");
@@ -129,11 +130,11 @@ export default async function RefRatePage({
       <div className="grid md:grid-cols-2 gap-4">
         <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
           <h2 className="text-sm font-medium text-gray-300 mb-4">DOMMR — rate by product</h2>
-          <RefRateChart rows={rows} rateType="DOMMR" />
+          <RefRateChart rows={rows} rateType="DOMMR" repoRate={repoRate} />
         </div>
         <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
           <h2 className="text-sm font-medium text-gray-300 mb-4">BOFR — rate by product</h2>
-          <RefRateChart rows={rows} rateType="BOFR" />
+          <RefRateChart rows={rows} rateType="BOFR" repoRate={repoRate} />
         </div>
       </div>
 
