@@ -194,6 +194,33 @@ def main():
         log.exception("RefRate fetch failed: %s", exc)
         errors.append(f"refrate: {exc}")
 
+    # ── 7. Wage-earner remittance (monthly, BB econdata) ─────────────────────
+    log.info("--- Step 7: Wage-earner remittance ---")
+    try:
+        from fetchers.remittance import fetch_remittance
+        from db import RemittanceMonthly
+        import datetime as _dt
+        rows_rm = fetch_remittance()
+        now_utc = _dt.datetime.utcnow()
+        session = get_session()
+        saved_rm = 0
+        for r in rows_rm:
+            existing = session.query(RemittanceMonthly).filter_by(month=r["month"]).first()
+            if existing:
+                # refresh the latest figures in case BB revised them
+                existing.remittance_usd_mn = r["remittance_usd_mn"]
+                existing.remittance_bdt_bn = r["remittance_bdt_bn"]
+                existing.ingested_utc = now_utc
+            else:
+                session.add(RemittanceMonthly(ingested_utc=now_utc, **r))
+                saved_rm += 1
+        session.commit()
+        session.close()
+        log.info("Remittance OK | new_rows=%d (fetched %d)", saved_rm, len(rows_rm))
+    except Exception as exc:
+        log.exception("Remittance fetch failed: %s", exc)
+        errors.append(f"remittance: {exc}")
+
     # ── Summary ───────────────────────────────────────────────────────────────
     elapsed = (datetime.datetime.now() - start).seconds
     if errors:

@@ -25,15 +25,48 @@ def _read_yaml(path) -> dict:
         return {}
 
 
+def _db_remittance() -> dict:
+    """Real fetched remittance per month from the DB, keyed by 'YYYY-MM'. {} on any error."""
+    out: dict = {}
+    try:
+        from sqlalchemy import text
+        from db import get_session
+        session = get_session()
+        try:
+            rows = session.execute(text(
+                "SELECT month, remittance_usd_mn, remittance_bdt_bn FROM remittance_monthly"
+            )).fetchall()
+            for r in rows:
+                m = r._mapping
+                out[m["month"]] = m["remittance_usd_mn"]
+        finally:
+            session.close()
+    except Exception:
+        pass
+    return out
+
+
 @router.get("/reserves")
 def get_reserves_remittances():
     """
-    FX reserves & remittances monthly series.
+    FX reserves (seed) + real fetched remittances (DB), merged by month.
       { series: [ ...ascending... ], latest: {...} | null }
     """
-    rows = sorted(_read_yaml(_RESERVES).get("series", []) or [],
-                  key=lambda r: str(r.get("month", "")))
-    return {"series": rows, "latest": rows[-1] if rows else None}
+    seed = {r["month"]: r for r in (_read_yaml(_RESERVES).get("series", []) or []) if r.get("month")}
+    rem = _db_remittance()
+    months = sorted(set(seed) | set(rem))
+    series = []
+    for mo in months:
+        s = seed.get(mo, {})
+        series.append({
+            "month": mo,
+            "gross_reserves_usd_bn": s.get("gross_reserves_usd_bn"),
+            "net_reserves_bpm6_usd_bn": s.get("net_reserves_bpm6_usd_bn"),
+            # prefer real fetched remittance; fall back to any seed value
+            "remittance_usd_mn": rem.get(mo, s.get("remittance_usd_mn")),
+            "note": s.get("note"),
+        })
+    return {"series": series, "latest": series[-1] if series else None}
 
 
 @router.get("/monetary")

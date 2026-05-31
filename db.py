@@ -219,6 +219,17 @@ class RefRate(Base):
     ingested_utc = Column(DateTime)
 
 
+class RemittanceMonthly(Base):
+    """Wage-earner remittance inflow per month (BB econdata)."""
+    __tablename__ = "remittance_monthly"
+    __table_args__ = (UniqueConstraint("month"),)
+    id                  = Column(Integer, primary_key=True, autoincrement=True)
+    month               = Column(String(7), nullable=False)   # "YYYY-MM"
+    remittance_usd_mn   = Column(Float)
+    remittance_bdt_bn   = Column(Float)
+    ingested_utc        = Column(DateTime)
+
+
 class HolidayCalendar(Base):
     __tablename__ = "holiday_calendar"
     calendar_date  = Column(Date, primary_key=True)
