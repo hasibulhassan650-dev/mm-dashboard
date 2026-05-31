@@ -221,6 +221,33 @@ def main():
         log.exception("Remittance fetch failed: %s", exc)
         errors.append(f"remittance: {exc}")
 
+    # ── 8. Foreign-exchange reserves (monthly, BB econdata) ──────────────────
+    log.info("--- Step 8: FX reserves ---")
+    try:
+        from fetchers.reserves import fetch_reserves
+        from db import ReservesMonthly
+        import datetime as _dt
+        rows_rs = fetch_reserves()
+        now_utc = _dt.datetime.utcnow()
+        session = get_session()
+        saved_rs = 0
+        for r in rows_rs:
+            existing = session.query(ReservesMonthly).filter_by(month=r["month"]).first()
+            if existing:
+                # refresh in case BB revised the figures
+                existing.gross_reserves_usd_mn = r["gross_reserves_usd_mn"]
+                existing.net_reserves_bpm6_usd_mn = r["net_reserves_bpm6_usd_mn"]
+                existing.ingested_utc = now_utc
+            else:
+                session.add(ReservesMonthly(ingested_utc=now_utc, **r))
+                saved_rs += 1
+        session.commit()
+        session.close()
+        log.info("Reserves OK | new_rows=%d (fetched %d)", saved_rs, len(rows_rs))
+    except Exception as exc:
+        log.exception("Reserves fetch failed: %s", exc)
+        errors.append(f"reserves: {exc}")
+
     # ── Summary ───────────────────────────────────────────────────────────────
     elapsed = (datetime.datetime.now() - start).seconds
     if errors:

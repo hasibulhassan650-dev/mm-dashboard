@@ -46,6 +46,35 @@ def _db_remittance() -> dict:
     return out
 
 
+def _db_reserves() -> dict:
+    """
+    Real fetched FX reserves per month from the DB, keyed by 'YYYY-MM'.
+    Values converted million -> billion to match the frontend. {} on any error.
+    """
+    out: dict = {}
+    try:
+        from sqlalchemy import text
+        from db import get_session
+        session = get_session()
+        try:
+            rows = session.execute(text(
+                "SELECT month, gross_reserves_usd_mn, net_reserves_bpm6_usd_mn FROM reserves_monthly"
+            )).fetchall()
+            for r in rows:
+                m = r._mapping
+                gross = m["gross_reserves_usd_mn"]
+                net = m["net_reserves_bpm6_usd_mn"]
+                out[m["month"]] = {
+                    "gross_reserves_usd_bn": gross / 1000.0 if gross is not None else None,
+                    "net_reserves_bpm6_usd_bn": net / 1000.0 if net is not None else None,
+                }
+        finally:
+            session.close()
+    except Exception:
+        pass
+    return out
+
+
 @router.get("/reserves")
 def get_reserves_remittances():
     """
@@ -54,14 +83,17 @@ def get_reserves_remittances():
     """
     seed = {r["month"]: r for r in (_read_yaml(_RESERVES).get("series", []) or []) if r.get("month")}
     rem = _db_remittance()
-    months = sorted(set(seed) | set(rem))
+    res = _db_reserves()
+    months = sorted(set(seed) | set(rem) | set(res))
     series = []
     for mo in months:
         s = seed.get(mo, {})
+        r = res.get(mo, {})
         series.append({
             "month": mo,
-            "gross_reserves_usd_bn": s.get("gross_reserves_usd_bn"),
-            "net_reserves_bpm6_usd_bn": s.get("net_reserves_bpm6_usd_bn"),
+            # prefer real fetched reserves; fall back to any seed value
+            "gross_reserves_usd_bn": r.get("gross_reserves_usd_bn", s.get("gross_reserves_usd_bn")),
+            "net_reserves_bpm6_usd_bn": r.get("net_reserves_bpm6_usd_bn", s.get("net_reserves_bpm6_usd_bn")),
             # prefer real fetched remittance; fall back to any seed value
             "remittance_usd_mn": rem.get(mo, s.get("remittance_usd_mn")),
             "note": s.get("note"),
