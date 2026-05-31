@@ -51,22 +51,11 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
-      - name: Install xvfb
+      - name: Install xvfb (Chrome is pre-installed on the runner)
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb
-
-      - name: Install pinned Google Chrome
-        id: chrome
-        uses: browser-actions/setup-chrome@v1
-        with:
-          chrome-version: "131"
-          install-dependencies: true
-
-      - name: Expose Chrome as google-chrome
-        run: |
-          sudo ln -sf "${{ steps.chrome.outputs.chrome-path }}" /usr/local/bin/google-chrome
-          google-chrome --version
+          google-chrome --version   # version is detected at runtime and matched to the driver
 
       - name: Install Python dependencies
         run: |

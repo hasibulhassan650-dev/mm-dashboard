@@ -382,24 +382,9 @@ def _parse_via_text(full_text: str, txn_date: datetime.date, pdf_url: str) -> Li
 # ── Chrome helpers ────────────────────────────────────────────────────────────
 
 def _chrome_major_version() -> Optional[int]:
-    try:
-        import winreg, re as _re
-        for hive, path in [
-            (winreg.HKEY_CURRENT_USER,  r"Software\Google\Chrome\BLBeacon"),
-            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Google\Chrome\BLBeacon"),
-            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Google\Chrome\BLBeacon"),
-        ]:
-            try:
-                k = winreg.OpenKey(hive, path)
-                ver = winreg.QueryValueEx(k, "version")[0]
-                m = _re.match(r"(\d+)\.", ver)
-                if m:
-                    return int(m.group(1))
-            except OSError:
-                continue
-    except ImportError:
-        pass
-    return None
+    # Single source of truth (Windows registry + Linux/macOS `--version`).
+    from fetchers.bb_session import get_chrome_version
+    return get_chrome_version()
 
 
 def _wait_for_content(drv, timeout: int = 60) -> bool:

@@ -47,6 +47,24 @@ def get_chrome_version() -> Optional[int]:
             return int(m.group(1))
     except Exception:
         pass
+    # Linux / macOS — parse `<chrome> --version` so undetected_chromedriver
+    # downloads a driver matching the installed browser (critical in CI).
+    try:
+        import subprocess
+        for binname in ("google-chrome", "google-chrome-stable",
+                        "chromium-browser", "chromium", "chrome"):
+            try:
+                out = subprocess.check_output(
+                    [binname, "--version"], text=True, timeout=8,
+                    stderr=subprocess.DEVNULL,
+                )
+                m = _re.search(r"(\d+)\.", out)
+                if m:
+                    return int(m.group(1))
+            except Exception:
+                continue
+    except Exception:
+        pass
     return None
 
 

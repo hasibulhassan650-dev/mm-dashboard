@@ -213,35 +213,9 @@ def _parse_page(html: str, snapshot_date: datetime.date) -> List[Dict]:
 # ── Chrome version detection ──────────────────────────────────────────────────
 
 def _chrome_major_version() -> Optional[int]:
-    import re as _re
-    try:
-        import winreg
-        for hive, path in [
-            (winreg.HKEY_CURRENT_USER,  r"Software\Google\Chrome\BLBeacon"),
-            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Google\Chrome\BLBeacon"),
-            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Google\Chrome\BLBeacon"),
-        ]:
-            try:
-                key = winreg.OpenKey(hive, path)
-                ver = winreg.QueryValueEx(key, "version")[0]
-                m = _re.match(r"(\d+)\.", ver)
-                if m: return int(m.group(1))
-            except OSError:
-                continue
-    except ImportError:
-        pass
-    try:
-        import subprocess
-        out = subprocess.check_output(
-            ["powershell", "-c",
-             r"(Get-Item 'C:\Program Files\Google\Chrome\Application\chrome.exe').VersionInfo.ProductVersion"],
-            text=True, timeout=8, stderr=subprocess.DEVNULL,
-        )
-        m = _re.match(r"(\d+)\.", out.strip())
-        if m: return int(m.group(1))
-    except Exception:
-        pass
-    return None
+    # Single source of truth (Windows registry + Linux/macOS `--version`).
+    from fetchers.bb_session import get_chrome_version
+    return get_chrome_version()
 
 
 # ── Main historical fetch ─────────────────────────────────────────────────────
