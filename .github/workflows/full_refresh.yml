@@ -29,7 +29,10 @@ concurrency:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # GSOM Step 1 alone writes ~7,600 rows one-by-one to remote Postgres (~27 min);
+    # the 5 Chrome/F5 fetchers add ~10 min. 30 min was too tight and the job was
+    # cancelled mid-pipeline. 60 gives headroom for the full end-to-end refresh.
+    timeout-minutes: 60
 
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}

@@ -8,15 +8,16 @@
 
 name: Daily Data Pipeline
 
+# DISABLED schedule: the Full Data Refresh workflow now runs the GSOM pipeline
+# (Step 1) plus all Chrome/F5 fetchers in one daily job, so this standalone
+# GSOM run is redundant. Kept as a manual-only fallback (workflow_dispatch).
 on:
-  schedule:
-    - cron: "0 3 * * *"      # 3:00 AM UTC = 9:00 AM BST daily
-  workflow_dispatch:          # also allows manual trigger from GitHub UI
+  workflow_dispatch:          # manual trigger only
 
 jobs:
   pipeline:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45    # GSOM writes ~7,600 rows to remote Postgres (~27 min)
 
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -35,19 +36,20 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run pipeline
-        run: python -c "
-from engines.pipeline import run_pipeline
-import datetime
-today = datetime.date.today()
-result = run_pipeline(
-    date_from=today - datetime.timedelta(days=30),
-    date_to=today   + datetime.timedelta(days=180),
-)
-print('Pipeline result:', result)
-if result.get('errors'):
-    print('ERRORS:', result['errors'])
-    exit(1)
-"
+        run: |
+          python - <<'PY'
+          from engines.pipeline import run_pipeline
+          import datetime
+          today = datetime.date.today()
+          result = run_pipeline(
+              date_from=today - datetime.timedelta(days=30),
+              date_to=today   + datetime.timedelta(days=180),
+          )
+          print('Pipeline result:', result)
+          if result.get('errors'):
+              print('ERRORS:', result['errors'])
+              exit(1)
+          PY
 
       - name: Log result
         if: always()
