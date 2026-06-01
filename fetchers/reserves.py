@@ -75,17 +75,13 @@ def parse_reserves_html(html: str) -> List[Dict]:
 
 def fetch_reserves() -> List[Dict]:
     """Fetch the full monthly reserves series via the F5 bypass."""
-    from fetchers.bb_session import get_f5_cookies, bb_get
-    try:
+    from fetchers.bb_session import get_f5_cookies, bb_get, fetch_with_retry
+
+    def _once():
         cookies, ua = get_f5_cookies(_URL, wait_selector="table")
-    except Exception as exc:
-        log.error("Reserves: Chrome cookie capture failed: %s", exc)
-        return []
-    try:
         html = bb_get(_URL, cookies, ua)
-    except Exception as exc:
-        log.error("Reserves: GET failed: %s", exc)
-        return []
-    rows = parse_reserves_html(html)
-    log.info("Reserves: parsed %d monthly rows", len(rows))
-    return rows
+        rows = parse_reserves_html(html)
+        log.info("Reserves: parsed %d monthly rows", len(rows))
+        return rows
+
+    return fetch_with_retry(_once, label="Reserves")

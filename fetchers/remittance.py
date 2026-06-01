@@ -76,17 +76,13 @@ def parse_remittance_html(html: str) -> List[Dict]:
 
 def fetch_remittance() -> List[Dict]:
     """Fetch the full monthly remittance series via the F5 bypass."""
-    from fetchers.bb_session import get_f5_cookies, bb_get
-    try:
+    from fetchers.bb_session import get_f5_cookies, bb_get, fetch_with_retry
+
+    def _once():
         cookies, ua = get_f5_cookies(_URL, wait_selector="table")
-    except Exception as exc:
-        log.error("Remittance: Chrome cookie capture failed: %s", exc)
-        return []
-    try:
         html = bb_get(_URL, cookies, ua)
-    except Exception as exc:
-        log.error("Remittance: GET failed: %s", exc)
-        return []
-    rows = parse_remittance_html(html)
-    log.info("Remittance: parsed %d monthly rows", len(rows))
-    return rows
+        rows = parse_remittance_html(html)
+        log.info("Remittance: parsed %d monthly rows", len(rows))
+        return rows
+
+    return fetch_with_retry(_once, label="Remittance")

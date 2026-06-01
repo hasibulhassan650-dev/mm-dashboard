@@ -85,25 +85,18 @@ def fetch_refrate(days_back: int = 35) -> List[Dict]:
     then curl_cffi POSTs the date-range form with Chrome TLS impersonation
     to bypass F5 fingerprinting.
     """
-    from fetchers.bb_session import get_f5_cookies, bb_post
+    from fetchers.bb_session import get_f5_cookies, bb_post, fetch_with_retry
 
     today = datetime.date.today()
     since = today - datetime.timedelta(days=days_back)
     range_str = f"{since.strftime('%d/%m/%Y')} - {today.strftime('%d/%m/%Y')}"
     log.info("RefRate: fetching %s", range_str)
 
-    try:
+    def _once():
         cookies, ua = get_f5_cookies(_URL)
-    except Exception as exc:
-        log.error("RefRate: Chrome cookie capture failed: %s", exc)
-        return []
-
-    try:
         html = bb_post(_URL, {"date_picker": range_str}, cookies, ua)
-    except Exception as exc:
-        log.error("RefRate: POST failed: %s", exc)
-        return []
+        rows = parse_refrate_html(html)
+        log.info("RefRate: parsed %d rows for %s", len(rows), range_str)
+        return rows
 
-    rows = parse_refrate_html(html)
-    log.info("RefRate: parsed %d rows for %s", len(rows), range_str)
-    return rows
+    return fetch_with_retry(_once, label="RefRate")

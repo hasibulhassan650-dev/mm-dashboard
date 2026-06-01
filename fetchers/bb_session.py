@@ -68,12 +68,39 @@ def get_chrome_version() -> Optional[int]:
     return None
 
 
-def get_f5_cookies(url: str, wait_selector: str = "table") -> tuple[dict, str]:
+def _cleanup_chrome() -> None:
+    """
+    Kill stray Chrome/chromedriver processes left behind by a fetcher.
+
+    A full refresh launches ~8 separate Chrome instances back-to-back; on the
+    CI runner the leftovers from earlier launches starve later ones until Chrome
+    fails to start at all. pkill frees those resources between fetchers.
+
+    NO-OP on Windows — never kill the user's own Chrome on their local machine.
+    """
+    import sys
+    if sys.platform == "win32":
+        return
+    try:
+        import subprocess
+        for pat in ("chromedriver", "chrome", "google-chrome"):
+            subprocess.run(["pkill", "-9", "-f", pat],
+                           capture_output=True, timeout=10)
+    except Exception:
+        pass
+
+
+def get_f5_cookies(url: str, wait_selector: str = "table",
+                   attempts: int = 3) -> tuple[dict, str]:
     """
     Open Chrome invisibly, load `url`, wait for the F5 JS challenge to clear
     (detected by `wait_selector` appearing), capture and return (cookies, user_agent).
 
-    Raises on failure — caller should catch and treat as empty result.
+    Retries the launch up to `attempts` times — Chrome occasionally fails to
+    start in CI (resource pressure after many sequential launches). Stray
+    processes are reaped after every attempt so the next one starts clean.
+
+    Raises the last exception if all attempts fail — caller treats as empty.
     """
     import time
     import undetected_chromedriver as uc
@@ -81,29 +108,41 @@ def get_f5_cookies(url: str, wait_selector: str = "table") -> tuple[dict, str]:
     from selenium.webdriver.support.ui import WebDriverWait
     from selenium.webdriver.support import expected_conditions as EC
 
-    options = uc.ChromeOptions()
-    options.add_argument("--window-position=-10000,-10000")
-    options.add_argument("--window-size=1920,1080")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
+    last_exc: Optional[Exception] = None
+    for i in range(attempts):
+        options = uc.ChromeOptions()
+        options.add_argument("--window-position=-10000,-10000")
+        options.add_argument("--window-size=1920,1080")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
 
-    driver = uc.Chrome(options=options, version_main=get_chrome_version())
-    try:
-        driver.get(url)
-        WebDriverWait(driver, 90).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, wait_selector))
-        )
-        time.sleep(5)
-        cookies = {c["name"]: c["value"] for c in driver.get_cookies()}
-        ua = driver.execute_script("return navigator.userAgent")
-        log.info("F5 cookies captured for %s (%d cookies)", url, len(cookies))
-        return cookies, ua
-    finally:
+        driver = None
         try:
-            driver.quit()
-        except Exception:
-            pass
+            driver = uc.Chrome(options=options, version_main=get_chrome_version())
+            driver.get(url)
+            WebDriverWait(driver, 90).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, wait_selector))
+            )
+            time.sleep(5)
+            cookies = {c["name"]: c["value"] for c in driver.get_cookies()}
+            ua = driver.execute_script("return navigator.userAgent")
+            log.info("F5 cookies captured for %s (%d cookies)", url, len(cookies))
+            return cookies, ua
+        except Exception as exc:
+            last_exc = exc
+            log.warning("F5 cookie capture attempt %d/%d failed for %s: %s",
+                        i + 1, attempts, url, exc)
+        finally:
+            if driver is not None:
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
+            _cleanup_chrome()
+        time.sleep(3)
+
+    raise last_exc if last_exc else RuntimeError("get_f5_cookies: no attempts made")
 
 
 def bb_post(url: str, data: dict, cookies: dict, ua: str) -> str:
@@ -156,3 +195,25 @@ def bb_get(url: str, cookies: dict, ua: str) -> str:
         raise RuntimeError("F5 CAPTCHA returned — challenge may have rotated")
 
     return resp.text
+
+
+def fetch_with_retry(fetch_once, attempts: int = 3, delay: int = 4, label: str = "fetch"):
+    """
+    Call `fetch_once()` (a full capture-cookies -> request -> parse cycle),
+    retrying on any exception. Each retry re-runs the whole cycle, so a fresh
+    F5 challenge is solved — the only reliable way past a rotated CAPTCHA.
+
+    Returns whatever fetch_once returns. Returns [] if every attempt fails.
+    """
+    import time
+    last_exc = None
+    for i in range(attempts):
+        try:
+            return fetch_once()
+        except Exception as exc:
+            last_exc = exc
+            log.warning("%s attempt %d/%d failed: %s", label, i + 1, attempts, exc)
+            if i < attempts - 1:
+                time.sleep(delay)
+    log.error("%s: all %d attempts failed (last: %s)", label, attempts, last_exc)
+    return []
