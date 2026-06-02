@@ -50,17 +50,17 @@ export default function YieldsView({ d }: { d: YieldsData }) {
   ];
 
   return (
-    <div className="grid12">
-      <Panel title="Sovereign Yield Curve" sub="Bangladesh Bank · cut-off yields" span={8}
+    <>
+      <Panel title="Sovereign Yield Curve" sub="cut-off yields · snapshot vs 1W / 1M ago" span={8}
         right={<SegTabs tabs={["vs 1W", "vs 1M"]} value={mode} onChange={setMode} />}>
         <LineChart labels={d.tenors} series={series} height={360} showGrid={grid} />
       </Panel>
       <div className="stack4">
         <Panel title="Curve Metrics" span={4}><MetricList items={metrics} /></Panel>
       </div>
-      <Panel title="Tenor Detail" sub="Yields & weekly / monthly change" span={12} pad={false}>
+      <Panel title="Tenor Detail" sub="yields & weekly / monthly change (bps)" span={12} pad={false}>
         <DataTable cols={cols} rows={rows} />
       </Panel>
-    </div>
+    </>
   );
 }

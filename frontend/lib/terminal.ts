@@ -75,23 +75,25 @@ export function buildCurve(curve: YieldRow[], history: YieldRow[]): CurveBuild {
   const latestDate = sorted.reduce((mx, r) => (r.auction_date > mx ? r.auction_date : mx), sorted[0]?.auction_date || "");
 
   const target = (days: number) => { const d = new Date(latestDate); d.setDate(d.getDate() - days); return d.getTime(); };
-  const pick = (tenor: string, whenMs: number): number | null => {
-    const rows = history.filter((h) => h.tenor_label === tenor);
-    if (!rows.length) return null;
-    let best = rows[0], bd = Infinity;
-    for (const r of rows) {
-      const diff = Math.abs(new Date(r.auction_date).getTime() - whenMs);
-      if (diff < bd) { bd = diff; best = r; }
-    }
-    return best.cutoff_yield_pct;
+
+  // The curve as it stood on/before `whenMs`: the most-recent auction per tenor
+  // at or before the target date. Falls back to the earliest available auction
+  // (tenor too new), then to today's value (tenor has no history at all) so the
+  // comparison line ALWAYS renders rather than silently disappearing.
+  const pickAsOf = (tenor: string, whenMs: number, todayVal: number): number => {
+    const rows = history
+      .filter((h) => h.tenor_label === tenor)
+      .sort((a, b) => a.auction_date.localeCompare(b.auction_date));
+    if (!rows.length) return todayVal;
+    const onOrBefore = rows.filter((r) => new Date(r.auction_date).getTime() <= whenMs);
+    if (onOrBefore.length) return onOrBefore[onOrBefore.length - 1].cutoff_yield_pct;
+    return rows[0].cutoff_yield_pct;
   };
-  const wk = tenors.map((t) => pick(t, target(7)));
-  const mo = tenors.map((t) => pick(t, target(30)));
-  return {
-    tenors, today, latestDate,
-    weekAgo: wk.every((v) => v != null) ? (wk as number[]) : null,
-    monthAgo: mo.every((v) => v != null) ? (mo as number[]) : null,
-  };
+
+  const hasHistory = history.length > 0;
+  const weekAgo = hasHistory ? tenors.map((t, i) => pickAsOf(t, target(7), today[i])) : null;
+  const monthAgo = hasHistory ? tenors.map((t, i) => pickAsOf(t, target(30), today[i])) : null;
+  return { tenors, today, latestDate, weekAgo, monthAgo };
 }
 
 /** Per-tenor historical yield series (most recent N), for KPI sparklines. */

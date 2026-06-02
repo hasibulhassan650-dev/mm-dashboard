@@ -21,17 +21,12 @@ export default function PeriodSelector({
   }
 
   return (
-    <div className="flex items-center gap-1 bg-gray-900 border border-gray-800 rounded-lg p-1">
-      <span className="text-xs text-gray-500 px-1">Period:</span>
+    <div className="seg">
       {periods.map(p => (
         <button
           key={p.days}
           onClick={() => select(p.days)}
-          className={`px-2.5 py-1 rounded text-xs transition-colors ${
-            current === p.days
-              ? "bg-blue-600 text-white"
-              : "text-gray-400 hover:text-white hover:bg-gray-800"
-          }`}
+          className={"seg-b" + (current === p.days ? " on" : "")}
         >
           {p.label}
         </button>

@@ -2,6 +2,9 @@
 import * as React from "react";
 import { Panel, DataTable, LegendToggle, type Col } from "@/components/terminal/ui";
 import { StackedArea, type StackCat } from "@/components/terminal/charts";
+import OmoNetLiquidityChart from "@/components/OmoNetLiquidityChart";
+import DownloadButton from "@/components/DownloadButton";
+import type { OmoOutstandingRow } from "@/lib/api";
 
 export interface OmoOpRow { date: string; inst: string; tenor: string; accepted: number; rate: number | null; direction: string; maturity: string }
 
@@ -9,6 +12,9 @@ export interface OmoData {
   omoSeries: Record<string, number | string>[];
   omoCats: StackCat[];
   ops: OmoOpRow[];
+  outstanding: OmoOutstandingRow[];
+  stance: { label: string; tone: "tight" | "flush" } | null;
+  latestNet: number | null;
 }
 
 export default function OmoView({ d }: { d: OmoData }) {
@@ -26,7 +32,7 @@ export default function OmoView({ d }: { d: OmoData }) {
   ];
 
   return (
-    <div className="grid12">
+    <>
       <div className="kpi-strip four">
         {d.omoCats.map((c) => (
           <div className="kpi" key={c.key}>
@@ -36,13 +42,18 @@ export default function OmoView({ d }: { d: OmoData }) {
           </div>
         ))}
       </div>
-      <Panel title="OMO Outstanding" sub="60-day stacked liquidity position · ৳ thousand crore" span={12}
+      <Panel title="OMO Outstanding" sub="stacked liquidity position · ৳ thousand crore" span={12}
         right={<LegendToggle cats={d.omoCats} active={active} onToggle={(k) => setActive((s) => ({ ...s, [k]: !s[k] }))} />}>
-        <StackedArea data={d.omoSeries} cats={d.omoCats} active={active} height={340} />
+        <StackedArea data={d.omoSeries} cats={d.omoCats} active={active} height={320} />
       </Panel>
-      <Panel title="Recent Operations" sub="Auction-by-auction detail" span={12} pad={false}>
+      <Panel title="Net Liquidity Stance" sub="injection − absorption per day · >0 = BB adding liquidity (tight)" span={12}
+        right={d.stance ? <span className={"delta " + (d.stance.tone === "tight" ? "neg" : "pos")}>{d.stance.label}{d.latestNet != null ? ` · ${Math.round(d.latestNet).toLocaleString()} cr` : ""}</span> : null}>
+        <OmoNetLiquidityChart rows={d.outstanding} />
+      </Panel>
+      <Panel title="Recent Operations" sub="auction-by-auction detail" span={12} pad={false}
+        right={<DownloadButton data={d.ops} filename="omo_transactions" />}>
         <DataTable cols={cols} rows={d.ops} />
       </Panel>
-    </div>
+    </>
   );
 }

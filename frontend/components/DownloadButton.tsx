@@ -18,9 +18,14 @@ export default function DownloadButton({ data, filename, label = "Download Excel
   return (
     <button
       onClick={download}
-      className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium bg-teal-950 text-teal-400 border border-teal-800/60 hover:bg-teal-900/60 hover:text-teal-300 transition-colors"
+      style={{
+        display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 11px", borderRadius: 7,
+        fontSize: 11.5, fontWeight: 500, fontFamily: "var(--sans)",
+        background: "var(--accent-soft)", color: "var(--accent)",
+        border: "1px solid color-mix(in oklab, var(--accent) 35%, transparent)",
+      }}
     >
-      <svg className="w-3 h-3" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5">
         <path d="M6 1v7M3 5l3 3 3-3M1 9v1a1 1 0 001 1h8a1 1 0 001-1V9" strokeLinecap="round" strokeLinejoin="round"/>
       </svg>
       {label}

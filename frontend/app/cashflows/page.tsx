@@ -1,59 +1,65 @@
 import { api } from "@/lib/api";
-import { fmtDate, fmtDateShort } from "@/lib/format";
-import { sparseLabels } from "@/lib/terminal";
-import GenericView, { type GenericData } from "@/components/terminal/views/GenericView";
+import Link from "next/link";
+import { fmtDate } from "@/lib/format";
+import { Panel } from "@/components/terminal/ui";
+import CashFlowChart from "@/components/CashFlowChart";
+import DownloadButton from "@/components/DownloadButton";
+import Freshness from "@/components/Freshness";
 
 export const revalidate = 300;
 
-// values arrive in BDT million → display in crore (÷10)
-const cr = (mn: number) => mn / 10;
-
 export default async function CashFlowsPage() {
-  const flows = await api.flows(6).catch(() => []);
-  const sorted = [...flows].sort((a, b) => a.flow_date.localeCompare(b.flow_date));
-  const labels = sparseLabels(sorted.map((f) => fmtDateShort(f.flow_date)), 10);
+  const [flows, fresh] = await Promise.all([api.flows(6).catch(() => []), api.freshness()]);
+  const today = new Date().toISOString().slice(0, 10);
+  const todayRow = [...flows].reverse().find((r) => r.flow_date <= today) ?? flows[flows.length - 1];
+  const upcoming = flows.filter((r) => r.flow_date >= today).slice(0, 30);
+  const totalInflow = flows.reduce((s, r) => s + (r.total_inflow_bdt_mill ?? 0), 0);
+  const totalOutflow = flows.reduce((s, r) => s + (r.auction_outflow_confirmed_mill ?? r.auction_outflow_planned_mill ?? 0), 0);
+  const k = (mn: number) => (mn / 1000).toFixed(1);
 
-  const sumIn = sorted.reduce((s, f) => s + f.total_inflow_bdt_mill, 0);
-  const sumOut = sorted.reduce((s, f) => s + f.auction_outflow_planned_mill, 0);
-  const sumNet = sorted.reduce((s, f) => s + f.net_borrowing_bdt_mill, 0);
+  return (
+    <>
+      <div style={{ marginBottom: "var(--gap)" }}><Freshness updated={fresh.flows} /></div>
 
-  const d: GenericData = {
-    kpiFour: true,
-    kpis: [
-      { id: "in", label: "Total Inflow", value: "৳" + Math.round(cr(sumIn)).toLocaleString(), unit: "cr", sub: "coupons + maturities" },
-      { id: "out", label: "Total Outflow", value: "৳" + Math.round(cr(sumOut)).toLocaleString(), unit: "cr", sub: "auction settlements" },
-      { id: "net", label: "Net Borrowing", value: "৳" + Math.round(cr(sumNet)).toLocaleString(), unit: "cr", sub: "net of redemptions" },
-      { id: "n", label: "Flow Days", value: String(sorted.length), sub: "6-month window" },
-    ],
-    charts: [
-      {
-        title: "Government Cash Flows", sub: "inflow vs auction outflow · ৳ crore", height: 320, yUnit: "",
-        labels,
-        series: [
-          { name: "Inflow", data: sorted.map((f) => +cr(f.total_inflow_bdt_mill).toFixed(0)), color: "var(--pos)" },
-          { name: "Outflow", data: sorted.map((f) => +cr(f.auction_outflow_planned_mill).toFixed(0)), color: "var(--neg)", dashed: true },
-        ],
-      },
-    ],
-    tables: [{
-      title: "Daily Flows", sub: "coupons, maturities, auctions",
-      cols: [
-        { key: "date", label: "Date" },
-        { key: "coupon", label: "Coupon (cr)", align: "r", mono: true, fmt: "num" },
-        { key: "principal", label: "Maturity (cr)", align: "r", mono: true, fmt: "num" },
-        { key: "inflow", label: "Inflow (cr)", align: "r", mono: true, fmt: "num" },
-        { key: "outflow", label: "Outflow (cr)", align: "r", mono: true, fmt: "num" },
-        { key: "net", label: "Net (cr)", align: "r", mono: true, fmt: "signedBps" },
-      ],
-      rows: [...sorted].reverse().filter((f) => f.total_inflow_bdt_mill > 0 || f.auction_outflow_planned_mill > 0).slice(0, 50).map((f) => ({
-        date: fmtDate(f.flow_date),
-        coupon: Math.round(cr(f.coupon_inflow_bdt_mill)),
-        principal: Math.round(cr(f.principal_inflow_bdt_mill)),
-        inflow: Math.round(cr(f.total_inflow_bdt_mill)),
-        outflow: Math.round(cr(f.auction_outflow_planned_mill)),
-        net: Math.round(cr(f.net_borrowing_bdt_mill)),
-      })),
-    }],
-  };
-  return <GenericView d={d} />;
+      {todayRow && (
+        <div className="kpi-strip" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
+          <div className="kpi"><div className="kpi-top"><span className="kpi-label">Today Inflow</span></div><div className="kpi-val"><span className="kpi-num pos">{k(todayRow.total_inflow_bdt_mill)}k</span><span className="kpi-unit">mn</span></div><div className="kpi-sub">{fmtDate(todayRow.flow_date)}</div></div>
+          <div className="kpi"><div className="kpi-top"><span className="kpi-label">Today Outflow</span></div><div className="kpi-val"><span className="kpi-num neg">{k(todayRow.auction_outflow_confirmed_mill || todayRow.auction_outflow_planned_mill)}k</span><span className="kpi-unit">mn</span></div><div className="kpi-sub">auction settlements</div></div>
+          <div className="kpi"><div className="kpi-top"><span className="kpi-label">Net Borrowing</span></div><div className="kpi-val"><span className="kpi-num" style={{ color: todayRow.net_borrowing_bdt_mill > 0 ? "var(--warn)" : "var(--info)" }}>{k(todayRow.net_borrowing_bdt_mill)}k</span><span className="kpi-unit">mn</span></div><div className="kpi-sub">{todayRow.net_borrowing_bdt_mill > 0 ? "net borrower" : "net repayer"}</div></div>
+          <div className="kpi"><div className="kpi-top"><span className="kpi-label">6M Total Inflow</span></div><div className="kpi-val"><span className="kpi-num">{(totalInflow / 1000).toFixed(0)}k</span><span className="kpi-unit">mn</span></div><div className="kpi-sub">vs {(totalOutflow / 1000).toFixed(0)}k outflow</div></div>
+        </div>
+      )}
+
+      <div className="grid12">
+        <Panel title="Cash Flow Timeline" sub="6 months history + 4 months ahead" span={12}>
+          <CashFlowChart data={flows} />
+        </Panel>
+        <Panel title="Upcoming Events" sub="next 30 days · click a date to drill down" span={12} pad={false}
+          right={<DownloadButton data={flows} filename="cash_flows" />}>
+          <div className="table-wrap" style={{ maxHeight: 460, overflowY: "auto" }}>
+            <table className="dt">
+              <thead><tr><th>Date</th><th className="r">Maturity (mn)</th><th className="r">Coupon (mn)</th><th className="r">Inflow (mn)</th><th className="r">Auction Out (mn)</th><th className="r">Net (mn)</th><th>Status</th></tr></thead>
+              <tbody>
+                {upcoming.map((r, i) => {
+                  const outflow = r.auction_outflow_confirmed_mill || r.auction_outflow_planned_mill;
+                  const isToday = r.flow_date === today;
+                  return (
+                    <tr key={i} style={isToday ? { background: "var(--accent-soft)" } : undefined}>
+                      <td><Link href={`/drilldown?date=${r.flow_date}`} style={{ color: "var(--accent)" }}>{fmtDate(r.flow_date)}{isToday && " ◀ today"}</Link></td>
+                      <td className="r mono">{r.principal_inflow_bdt_mill.toLocaleString()}</td>
+                      <td className="r mono">{r.coupon_inflow_bdt_mill.toLocaleString()}</td>
+                      <td className="r mono">{r.total_inflow_bdt_mill.toLocaleString()}</td>
+                      <td className="r mono neg">{outflow.toLocaleString()}</td>
+                      <td className="r mono"><span className={r.net_borrowing_bdt_mill > 0 ? "neg" : "pos"}>{r.net_borrowing_bdt_mill > 0 ? "▲" : "▼"} {Math.abs(r.net_borrowing_bdt_mill).toLocaleString()}</span></td>
+                      <td>{r.data_complete ? "✓" : <span style={{ color: "var(--warn)" }}>partial</span>}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+      </div>
+    </>
+  );
 }

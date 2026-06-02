@@ -3,6 +3,7 @@ import { fmtDate } from "@/lib/format";
 import { OMO_CATS, pivotOmo, omoNetSeries, buildCurve, tenorSeries, fxRateSeries } from "@/lib/terminal";
 import OverviewView, { type OverviewData, type OmoAuctionRow, type SecAuctionRow } from "@/components/terminal/views/OverviewView";
 import type { Kpi } from "@/components/terminal/ui";
+import Freshness from "@/components/Freshness";
 
 export const revalidate = 300;
 
@@ -15,7 +16,7 @@ function delta(series: number[]): number | null {
 }
 
 export default async function Home() {
-  const [summary, curve, history, outstanding, txns, cm, fx, policy, macro] = await Promise.all([
+  const [summary, curve, history, outstanding, txns, cm, fx, policy, macro, fresh] = await Promise.all([
     api.omoSummary().catch(() => []),
     api.yieldCurve().catch(() => []),
     api.yields(6).catch(() => []),
@@ -25,6 +26,7 @@ export default async function Home() {
     api.fx(365).catch(() => []),
     api.policy(),
     api.macro(),
+    api.freshness(),
   ]);
 
   const omoSeries = pivotOmo(outstanding);
@@ -78,5 +80,10 @@ export default async function Home() {
     kpis, tenors: cb.tenors, today: cb.today, weekAgo: cb.weekAgo, monthAgo: cb.monthAgo,
     omoSeries, omoCats: OMO_CATS, corridor, omoAuctions, secAuctions,
   };
-  return <OverviewView d={data} />;
+  return (
+    <>
+      <div style={{ marginBottom: "var(--gap)" }}><Freshness updated={fresh.omo} /></div>
+      <OverviewView d={data} />
+    </>
+  );
 }
