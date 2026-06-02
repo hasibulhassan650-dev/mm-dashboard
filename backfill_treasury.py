@@ -29,16 +29,21 @@ PROGRESS = ROOT / "treasury_backfill_done.txt"
 CHUNK_MONTHS = 12   # months per Chrome session (≈6 page loads)
 
 
-def load_done() -> set:
-    if PROGRESS.exists():
-        return {ln.strip() for ln in PROGRESS.read_text().splitlines() if ln.strip()}
-    return set()
-
-
-def mark_done(keys):
-    with open(PROGRESS, "a", encoding="utf-8") as fh:
-        for k in keys:
-            fh.write(k + "\n")
+def done_months_from_db() -> set:
+    """Months that already have auctions in the DB (by auction_date) — the
+    source of truth for resumability (survives ephemeral cloud runs)."""
+    from sqlalchemy import text
+    s = get_session()
+    try:
+        rows = s.execute(text("SELECT DISTINCT auction_date FROM primary_yield_snapshots")).fetchall()
+        out = set()
+        for r in rows:
+            d = r[0]
+            if d:
+                out.add(f"{d.year}-{d.month:02d}")
+        return out
+    finally:
+        s.close()
 
 
 def fix_sequence():
@@ -110,9 +115,9 @@ def main():
         end = datetime.date.today()
 
     all_months = month_range(start, min(end, datetime.date.today()))
-    done = load_done()
+    done = done_months_from_db()
     pending = [(m, s) for (m, s) in all_months if f"{s.year}-{s.month:02d}" not in done]
-    log.info("Backfill %s → %s: %d months total, %d already done, %d pending",
+    log.info("Backfill %s → %s: %d months total, %d already in DB, %d pending",
              start, end, len(all_months), len(all_months) - len(pending), len(pending))
 
     total_saved = 0
@@ -122,7 +127,6 @@ def main():
         rows = fetch_primary_yields_months(chunk)
         saved = upsert(rows)
         total_saved += saved
-        mark_done([f"{s.year}-{s.month:02d}" for (_, s) in chunk])
         log.info("  chunk done: fetched %d rows, saved %d new (running total %d)", len(rows), saved, total_saved)
 
     # report DB coverage

@@ -1,0 +1,56 @@
+# .github/workflows/treasury_backfill.yml
+#
+# One-off (manual) backfill of BB primary-auction yields into the production DB.
+# Runs from GitHub's datacenter IP, which BB's F5/TSPD does NOT throttle the way
+# it throttles a single residential IP doing hundreds of submits — so the full
+# 2007→present history can be pulled here where it gets CAPTCHA-blocked locally.
+#
+# Resumable: skips months already in the DB. Re-dispatch (or narrow the year
+# range) to fill any gaps. Chrome runs headful under xvfb, relaunched per batch.
+
+name: Treasury Backfill
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_year:
+        description: "Start year (inclusive)"
+        required: false
+        default: "2007"
+      end_year:
+        description: "End year (inclusive)"
+        required: false
+        default: "2026"
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install xvfb (Chrome is pre-installed on the runner)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          google-chrome --version
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run treasury backfill (Chrome under virtual display)
+        run: |
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" \
+            python backfill_treasury.py "${{ inputs.start_year }}" "${{ inputs.end_year }}"

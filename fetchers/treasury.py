@@ -317,37 +317,46 @@ def fetch_primary_yields_months(months: List[tuple]) -> List[Dict]:
         time.sleep(5)
         return not _is_captcha(drv)
 
-    # TSPD allows 2 submits per fresh page load. Batch all months in groups of 2.
+    # F5/TSPD allows ~2 submits per FRESH browser session, then escalates to
+    # CAPTCHA. Reusing one browser across many page loads trips it — so relaunch
+    # Chrome (a fresh challenge) for every batch of 2 months. On CAPTCHA we skip
+    # the rest of that batch and move on; missed months are retried on re-run
+    # (resumability is DB-based in the caller).
+    try:
+        from fetchers.bb_session import _cleanup_chrome
+    except Exception:
+        def _cleanup_chrome():  # type: ignore
+            pass
+
     SUBMITS_PER_SESSION = 2
     batches = [months[i:i + SUBMITS_PER_SESSION]
                for i in range(0, len(months), SUBMITS_PER_SESSION)]
 
-    try:
-        driver = uc.Chrome(options=options, version_main=chrome_ver)
-
-        for batch_idx, batch in enumerate(batches):
-            log.info("Fresh page load (batch %d / %d)…", batch_idx + 1, len(batches))
+    for batch_idx, batch in enumerate(batches):
+        driver = None
+        try:
+            driver = uc.Chrome(options=options, version_main=chrome_ver)
+            log.info("Batch %d/%d (fresh Chrome): %s", batch_idx + 1, len(batches), [m for m, _ in batch])
             driver.get(BB_TREASURY_URL)
             if not _wait_for_real_page(driver):
-                log.warning("Batch %d: bot challenge not cleared — stopping", batch_idx + 1)
-                break
+                log.warning("  challenge not cleared — skipping batch")
+                continue
             time.sleep(1)
-
             for mstr, snap_date in batch:
-                log.info("  Submitting %s…", mstr)
                 if not _submit(driver, mstr):
-                    log.warning("  %s: CAPTCHA triggered — stopping batch", mstr)
+                    log.warning("  %s: CAPTCHA — abandoning rest of batch", mstr)
                     break
                 rows = _parse_page(driver.page_source, snap_date)
                 log.info("  %s => %d rows", mstr, len(rows))
                 all_rows.extend(rows)
-
-    except Exception as exc:
-        log.error("Treasury history fetch error: %s", exc)
-    finally:
-        if driver:
-            try: driver.quit()
-            except: pass
+        except Exception as exc:
+            log.error("  batch %d error: %s", batch_idx + 1, exc)
+        finally:
+            if driver:
+                try: driver.quit()
+                except Exception: pass
+            _cleanup_chrome()
+        time.sleep(2)
 
     # Deduplicate: keep first occurrence per (tenor_label, auction_date)
     seen: Dict[tuple, Dict] = {}
