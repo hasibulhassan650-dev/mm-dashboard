@@ -10,33 +10,64 @@ router = APIRouter()
 def get_yields(
     security_type: Optional[str] = None,
     tenor: Optional[str] = None,
-    months: int = Query(12, ge=1, le=60),
+    months: int = Query(12, ge=1, le=600),
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
 ):
-    """Primary market yield history."""
-    import datetime
-    since = datetime.date.today().replace(day=1)
-    # go back N months
-    for _ in range(months - 1):
-        since = (since - datetime.timedelta(days=1)).replace(day=1)
+    """
+    Primary market yield history.
 
+    By default returns the last `months` months. Pass `date_from` / `date_to`
+    (YYYY-MM-DD) for an explicit window — supports the full 2007→present range.
+    """
+    import datetime
     session = get_session()
     try:
+        params: dict = {}
+        clauses = []
+        if date_from or date_to:
+            if date_from:
+                clauses.append("auction_date >= :dfrom"); params["dfrom"] = date_from
+            if date_to:
+                clauses.append("auction_date <= :dto"); params["dto"] = date_to
+        else:
+            since = datetime.date.today().replace(day=1)
+            for _ in range(months - 1):
+                since = (since - datetime.timedelta(days=1)).replace(day=1)
+            clauses.append("auction_date >= :since"); params["since"] = str(since)
+
+        if security_type:
+            clauses.append("security_type = :stype"); params["stype"] = security_type.upper()
+        if tenor:
+            clauses.append("tenor_label = :tenor"); params["tenor"] = tenor.upper()
+
         q = """
             SELECT snapshot_date, auction_date, security_type, tenor_label,
                    tenor_years, cutoff_yield_pct, offered_bdt_crore, accepted_bdt_crore
             FROM primary_yield_snapshots
-            WHERE auction_date >= :since
         """
-        params: dict = {"since": str(since)}
-        if security_type:
-            q += " AND security_type = :stype"
-            params["stype"] = security_type.upper()
-        if tenor:
-            q += " AND tenor_label = :tenor"
-            params["tenor"] = tenor.upper()
+        if clauses:
+            q += " WHERE " + " AND ".join(clauses)
         q += " ORDER BY auction_date DESC, tenor_years"
         rows = session.execute(text(q), params).fetchall()
         return [dict(r._mapping) for r in rows]
+    finally:
+        session.close()
+
+
+@router.get("/range")
+def get_yield_range():
+    """Available auction-date span + row count (for the date-range picker bounds)."""
+    session = get_session()
+    try:
+        row = session.execute(text("""
+            SELECT MIN(auction_date) AS min_date, MAX(auction_date) AS max_date, COUNT(*) AS n
+            FROM primary_yield_snapshots
+        """)).fetchone()
+        m = row._mapping
+        return {"min": str(m["min_date"]) if m["min_date"] else None,
+                "max": str(m["max_date"]) if m["max_date"] else None,
+                "count": m["n"]}
     finally:
         session.close()
 

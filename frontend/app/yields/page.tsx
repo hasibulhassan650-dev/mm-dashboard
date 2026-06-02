@@ -4,6 +4,7 @@ import { bidToCover } from "@/lib/analytics";
 import { fmtDate } from "@/lib/format";
 import { Panel } from "@/components/terminal/ui";
 import YieldsView from "@/components/terminal/views/YieldsView";
+import AuctionExplorer from "@/components/terminal/AuctionExplorer";
 import YieldCurveChartFull from "@/components/YieldCurveChartFull";
 import YieldTrendChart from "@/components/YieldTrendChart";
 import CurveSlopeChart from "@/components/CurveSlopeChart";
@@ -15,12 +16,13 @@ import InfoTip from "@/components/InfoTip";
 export const revalidate = 300;
 
 export default async function YieldsPage() {
-  const [primary, secondary, history, slope, fresh] = await Promise.all([
+  const [primary, secondary, history, slope, fresh, range] = await Promise.all([
     api.yieldCurve().catch(() => []),
     api.yieldSecondary().catch(() => []),
     api.yields(12).catch(() => []),
     api.yieldSlope(24).catch(() => []),
     api.freshness(),
+    api.yieldDateRange(),
   ]);
   const cb = buildCurve(primary, history);
 
@@ -55,6 +57,10 @@ export default async function YieldsPage() {
 
       <div className="grid12">
         <YieldsView d={{ tenors: cb.tenors, today: cb.today, weekAgo: cb.weekAgo, monthAgo: cb.monthAgo }} />
+      </div>
+
+      <div className="grid12" style={{ marginTop: "var(--gap)" }}>
+        <AuctionExplorer bounds={range} />
       </div>
 
       <div className="grid12" style={{ marginTop: "var(--gap)" }}>

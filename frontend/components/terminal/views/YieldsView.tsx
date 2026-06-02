@@ -1,8 +1,9 @@
 "use client";
 import * as React from "react";
-import { Panel, DataTable, SegTabs, MetricList, type Col } from "@/components/terminal/ui";
+import { Panel, DataTable, SegTabs, MetricList, DrillModal, type Col, type DrillRow } from "@/components/terminal/ui";
 import { LineChart, type LineSeries } from "@/components/terminal/charts";
 import { useTheme } from "@/components/terminal/ThemeProvider";
+import { tenorDrill } from "@/components/terminal/views/OverviewView";
 
 export interface YieldsData {
   tenors: string[];
@@ -16,6 +17,7 @@ interface Row { tenor: string; today: number; w: number | null; m: number | null
 export default function YieldsView({ d }: { d: YieldsData }) {
   const { grid } = useTheme();
   const [mode, setMode] = React.useState("vs 1M");
+  const [drill, setDrill] = React.useState<{ title: string; sub?: string; rows: DrillRow[]; footer?: React.ReactNode } | null>(null);
 
   const series: LineSeries[] = [{ name: "Today", data: d.today, color: "var(--accent)" }];
   if (mode === "vs 1W" && d.weekAgo) series.push({ name: "1W ago", data: d.weekAgo, color: "var(--info)", dashed: true });
@@ -51,9 +53,10 @@ export default function YieldsView({ d }: { d: YieldsData }) {
 
   return (
     <>
-      <Panel title="Sovereign Yield Curve" sub="cut-off yields · snapshot vs 1W / 1M ago" span={8}
+      <Panel title="Sovereign Yield Curve" sub="cut-off yields · click a tenor for detail" span={8}
         right={<SegTabs tabs={["vs 1W", "vs 1M"]} value={mode} onChange={setMode} />}>
-        <LineChart labels={d.tenors} series={series} height={360} showGrid={grid} />
+        <LineChart labels={d.tenors} series={series} height={360} showGrid={grid}
+          onPointClick={(i) => setDrill(tenorDrill(d.tenors, d.today, d.weekAgo, d.monthAgo, i))} />
       </Panel>
       <div className="stack4">
         <Panel title="Curve Metrics" span={4}><MetricList items={metrics} /></Panel>
@@ -61,6 +64,7 @@ export default function YieldsView({ d }: { d: YieldsData }) {
       <Panel title="Tenor Detail" sub="yields & weekly / monthly change (bps)" span={12} pad={false}>
         <DataTable cols={cols} rows={rows} />
       </Panel>
+      {drill && <DrillModal title={drill.title} sub={drill.sub} rows={drill.rows} footer={drill.footer} onClose={() => setDrill(null)} />}
     </>
   );
 }

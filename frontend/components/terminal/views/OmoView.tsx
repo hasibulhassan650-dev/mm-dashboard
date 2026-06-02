@@ -1,7 +1,8 @@
 "use client";
 import * as React from "react";
-import { Panel, DataTable, LegendToggle, type Col } from "@/components/terminal/ui";
+import { Panel, DataTable, LegendToggle, DrillModal, type Col, type DrillRow } from "@/components/terminal/ui";
 import { StackedArea, type StackCat } from "@/components/terminal/charts";
+import { omoDayDrill } from "@/components/terminal/views/OverviewView";
 import OmoNetLiquidityChart from "@/components/OmoNetLiquidityChart";
 import DownloadButton from "@/components/DownloadButton";
 import type { OmoOutstandingRow } from "@/lib/api";
@@ -19,6 +20,7 @@ export interface OmoData {
 
 export default function OmoView({ d }: { d: OmoData }) {
   const [active, setActive] = React.useState(Object.fromEntries(d.omoCats.map((c) => [c.key, true])));
+  const [drill, setDrill] = React.useState<{ title: string; sub?: string; rows: DrillRow[] } | null>(null);
   const last = d.omoSeries[d.omoSeries.length - 1];
 
   const cols: Col<OmoOpRow>[] = [
@@ -42,9 +44,10 @@ export default function OmoView({ d }: { d: OmoData }) {
           </div>
         ))}
       </div>
-      <Panel title="OMO Outstanding" sub="stacked liquidity position · ৳ thousand crore" span={12}
+      <Panel title="OMO Outstanding" sub="৳ thousand crore · click a day for breakdown" span={12}
         right={<LegendToggle cats={d.omoCats} active={active} onToggle={(k) => setActive((s) => ({ ...s, [k]: !s[k] }))} />}>
-        <StackedArea data={d.omoSeries} cats={d.omoCats} active={active} height={320} />
+        <StackedArea data={d.omoSeries} cats={d.omoCats} active={active} height={320}
+          onPointClick={(i) => d.omoSeries[i] && setDrill(omoDayDrill(d.omoSeries[i], d.omoCats))} />
       </Panel>
       <Panel title="Net Liquidity Stance" sub="injection − absorption per day · >0 = BB adding liquidity (tight)" span={12}
         right={d.stance ? <span className={"delta " + (d.stance.tone === "tight" ? "neg" : "pos")}>{d.stance.label}{d.latestNet != null ? ` · ${Math.round(d.latestNet).toLocaleString()} cr` : ""}</span> : null}>
@@ -54,6 +57,7 @@ export default function OmoView({ d }: { d: OmoData }) {
         right={<DownloadButton data={d.ops} filename="omo_transactions" />}>
         <DataTable cols={cols} rows={d.ops} />
       </Panel>
+      {drill && <DrillModal title={drill.title} sub={drill.sub} rows={drill.rows} onClose={() => setDrill(null)} />}
     </>
   );
 }

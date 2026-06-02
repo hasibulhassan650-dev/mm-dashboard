@@ -82,7 +82,7 @@ export function Sparkline({ data, color = "var(--accent)", h = 36, fill = true }
 
 // ---------------- Multi-series line chart ----------------
 export interface LineSeries { name: string; data: number[]; color: string; dashed?: boolean }
-export function LineChart({ labels, series, height = 300, yUnit = "%", showGrid = true }: { labels: string[]; series: LineSeries[]; height?: number; yUnit?: string; showGrid?: boolean }) {
+export function LineChart({ labels, series, height = 300, yUnit = "%", showGrid = true, onPointClick }: { labels: string[]; series: LineSeries[]; height?: number; yUnit?: string; showGrid?: boolean; onPointClick?: (i: number) => void }) {
   const [ref, w] = useSize();
   const [hover, setHover] = React.useState<number | null>(null);
   const m = { t: 16, r: 16, b: 30, l: 46 };
@@ -96,16 +96,17 @@ export function LineChart({ labels, series, height = 300, yUnit = "%", showGrid 
   const xs = (i: number) => m.l + (labels.length === 1 ? iw / 2 : (i / (labels.length - 1)) * iw);
   const ys = (v: number) => m.t + ih - ((v - ymin) / (ymax - ymin || 1)) * ih;
 
-  function onMove(e: React.MouseEvent<SVGSVGElement>) {
+  function idxAt(e: React.MouseEvent<SVGSVGElement>) {
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     let idx = Math.round(((x - m.l) / iw) * (labels.length - 1));
-    idx = Math.max(0, Math.min(labels.length - 1, idx));
-    setHover(idx);
+    return Math.max(0, Math.min(labels.length - 1, idx));
   }
   return (
     <div ref={ref} style={{ width: "100%", height }}>
-      <svg width={w} height={height} style={{ display: "block" }} onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
+      <svg width={w} height={height} style={{ display: "block", cursor: onPointClick ? "pointer" : "default" }}
+        onMouseMove={(e) => setHover(idxAt(e))} onMouseLeave={() => setHover(null)}
+        onClick={onPointClick ? (e) => onPointClick(idxAt(e)) : undefined}>
         {showGrid && ticks.map((tk, i) => (
           <g key={i}>
             <line x1={m.l} x2={m.l + iw} y1={ys(tk)} y2={ys(tk)} stroke="var(--grid)" strokeWidth="1" strokeDasharray="2 4" />
@@ -154,7 +155,7 @@ export function LineChart({ labels, series, height = 300, yUnit = "%", showGrid 
 
 // ---------------- Stacked area chart ----------------
 export interface StackCat { key: string; label: string; color: string; desc?: string }
-export function StackedArea({ data, cats, height = 320, active }: { data: Record<string, number | string>[]; cats: StackCat[]; height?: number; active: Record<string, boolean> }) {
+export function StackedArea({ data, cats, height = 320, active, onPointClick }: { data: Record<string, number | string>[]; cats: StackCat[]; height?: number; active: Record<string, boolean>; onPointClick?: (i: number) => void }) {
   const [ref, w] = useSize();
   const [hover, setHover] = React.useState<number | null>(null);
   const m = { t: 14, r: 14, b: 28, l: 46 };
@@ -179,16 +180,17 @@ export function StackedArea({ data, cats, height = 320, active }: { data: Record
     base = top;
   }
 
-  function onMove(e: React.MouseEvent<SVGSVGElement>) {
+  function idxAt(e: React.MouseEvent<SVGSVGElement>) {
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     let idx = Math.round(((x - m.l) / iw) * (data.length - 1));
-    idx = Math.max(0, Math.min(data.length - 1, idx));
-    setHover(idx);
+    return Math.max(0, Math.min(data.length - 1, idx));
   }
   return (
     <div ref={ref} style={{ width: "100%", height }}>
-      <svg width={w} height={height} style={{ display: "block" }} onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
+      <svg width={w} height={height} style={{ display: "block", cursor: onPointClick ? "pointer" : "default" }}
+        onMouseMove={(e) => setHover(idxAt(e))} onMouseLeave={() => setHover(null)}
+        onClick={onPointClick ? (e) => onPointClick(idxAt(e)) : undefined}>
         {ticks.map((tk, i) => (
           <g key={i}>
             <line x1={m.l} x2={m.l + iw} y1={ys(tk)} y2={ys(tk)} stroke="var(--grid)" strokeWidth="1" strokeDasharray="2 4" />
@@ -231,7 +233,7 @@ export function StackedArea({ data, cats, height = 320, active }: { data: Record
 
 // ---------------- Combo: bars (volume) + line (rate) ----------------
 export interface ComboRow { label: string; vol: number; war: number; hi: number; lo: number }
-export function ComboChart({ data, height = 300 }: { data: ComboRow[]; height?: number }) {
+export function ComboChart({ data, height = 300, onPointClick }: { data: ComboRow[]; height?: number; onPointClick?: (i: number) => void }) {
   const [ref, w] = useSize();
   const [hover, setHover] = React.useState<number | null>(null);
   const m = { t: 16, r: 46, b: 28, l: 46 };
@@ -247,18 +249,19 @@ export function ComboChart({ data, height = 300 }: { data: ComboRow[]; height?: 
   const yr = (v: number) => m.t + ih - ((v - rmin) / (rmax - rmin || 1)) * ih;
   const rticks = niceTicks(rmin, rmax, 4);
 
-  function onMove(e: React.MouseEvent<SVGSVGElement>) {
+  function idxAt(e: React.MouseEvent<SVGSVGElement>) {
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     let idx = Math.floor(((x - m.l) / iw) * data.length);
-    idx = Math.max(0, Math.min(data.length - 1, idx));
-    setHover(idx);
+    return Math.max(0, Math.min(data.length - 1, idx));
   }
   const warPts: Pt[] = data.map((d, i) => [xs(i), yr(d.war)] as Pt);
   const step = Math.max(1, Math.round(data.length / 7));
   return (
     <div ref={ref} style={{ width: "100%", height }}>
-      <svg width={w} height={height} style={{ display: "block" }} onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
+      <svg width={w} height={height} style={{ display: "block", cursor: onPointClick ? "pointer" : "default" }}
+        onMouseMove={(e) => setHover(idxAt(e))} onMouseLeave={() => setHover(null)}
+        onClick={onPointClick ? (e) => onPointClick(idxAt(e)) : undefined}>
         {rticks.map((tk, i) => (
           <g key={i}>
             <line x1={m.l} x2={m.l + iw} y1={yr(tk)} y2={yr(tk)} stroke="var(--grid)" strokeWidth="1" strokeDasharray="2 4" />

@@ -1,6 +1,6 @@
 "use client";
 import * as React from "react";
-import { Panel, Delta } from "@/components/terminal/ui";
+import { Panel, Delta, DrillModal, type DrillRow } from "@/components/terminal/ui";
 import { ComboChart, type ComboRow } from "@/components/terminal/charts";
 
 export interface CallMoneyData {
@@ -14,6 +14,20 @@ export interface CallMoneyData {
 }
 
 export default function CallMoneyView({ d }: { d: CallMoneyData }) {
+  const [drill, setDrill] = React.useState<{ title: string; sub?: string; rows: DrillRow[] } | null>(null);
+  function dayDrill(i: number) {
+    const r = d.combo[i];
+    if (!r) return;
+    setDrill({
+      title: `Call Money · ${r.label}`, sub: "overnight interbank",
+      rows: [
+        { k: "Weighted-avg rate", v: <span className="mono">{r.war.toFixed(2)}%</span> },
+        { k: "Intraday high", v: <span className="mono neg">{r.hi.toFixed(2)}%</span> },
+        { k: "Intraday low", v: <span className="mono pos">{r.lo.toFixed(2)}%</span> },
+        { k: "Turnover", v: <span className="mono">৳{Math.round(r.vol).toLocaleString()} cr</span> },
+      ],
+    });
+  }
   return (
     <div className="grid12">
       <div className="kpi-strip four">
@@ -38,9 +52,10 @@ export default function CallMoneyView({ d }: { d: CallMoneyData }) {
           <div className="kpi-sub">mean over period</div>
         </div>
       </div>
-      <Panel title="Call Money — Rate & Volume" sub="Weighted average rate (line) · turnover (bars)" span={12}>
-        <ComboChart data={d.combo} height={340} />
+      <Panel title="Call Money — Rate & Volume" sub="WAR (line) · turnover (bars) · click a day for detail" span={12}>
+        <ComboChart data={d.combo} height={340} onPointClick={dayDrill} />
       </Panel>
+      {drill && <DrillModal title={drill.title} sub={drill.sub} rows={drill.rows} onClose={() => setDrill(null)} />}
     </div>
   );
 }

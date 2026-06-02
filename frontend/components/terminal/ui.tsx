@@ -168,6 +168,35 @@ export function CorridorViz({ c }: { c: CorridorData }) {
   );
 }
 
+// ---------------- Drill-down modal (click a chart point) ----------------
+export interface DrillRow { k: React.ReactNode; v: React.ReactNode }
+export function DrillModal({ title, sub, rows, footer, onClose }: { title: string; sub?: string; rows: DrillRow[]; footer?: React.ReactNode; onClose: () => void }) {
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 90, background: "rgba(0,0,0,.55)", display: "grid", placeItems: "center", padding: 20 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: 340, maxWidth: "100%", background: "var(--panel)", border: "1px solid var(--border)", borderRadius: "var(--radius)", boxShadow: "0 20px 60px rgba(0,0,0,.5)" }}>
+        <div className="panel-head">
+          <div className="panel-titles">
+            <h3 className="panel-title">{title}</h3>
+            {sub && <span className="panel-sub">{sub}</span>}
+          </div>
+          <button className="icon-btn" onClick={onClose} aria-label="Close" style={{ width: 28, height: 28 }}>✕</button>
+        </div>
+        <div className="panel-body">
+          <div className="metric-list">
+            {rows.map((r, i) => <div className="metric" key={i}><span>{r.k}</span><b>{r.v}</b></div>)}
+          </div>
+          {footer && <div style={{ marginTop: 12, fontSize: 11.5, color: "var(--fg-mute)" }}>{footer}</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ---------------- Stub / empty state ----------------
 export function Stub({ icon, title, children }: { icon: string; title: string; children?: React.ReactNode }) {
   return (

@@ -15,6 +15,13 @@ export const api = {
   yieldCurve:      () => get<YieldRow[]>("/api/yields/curve"),
   yieldSecondary:  () => get<SecondaryYieldRow[]>("/api/yields/secondary"),
   yields:          (months = 12) => get<YieldRow[]>("/api/yields", { months }),
+  // Explicit date window (YYYY-MM-DD) — supports the full 2007→present range.
+  yieldsRange:     (from: string, to: string, tenor?: string) =>
+                     get<YieldRow[]>("/api/yields", tenor ? { date_from: from, date_to: to, tenor } : { date_from: from, date_to: to }),
+  yieldDateRange:  async (): Promise<{ min: string | null; max: string | null; count: number }> => {
+                     try { return await get("/api/yields/range"); }
+                     catch { return { min: null, max: null, count: 0 }; }
+                   },
   // New endpoint — degrade to empty until the backend is deployed with /api/yields/slope.
   yieldSlope:      async (months = 24): Promise<CurveSlopeRow[]> => {
     try { return await get<CurveSlopeRow[]>("/api/yields/slope", { months }); }

@@ -254,7 +254,38 @@ def fetch_primary_yields_history(months_back: int = 6) -> List[Dict]:
         months.append((mstr, snap))
         d = (d - datetime.timedelta(days=1)).replace(day=1)  # go back one month
 
-    log.info("Treasury history: fetching %s", [m for m, _ in months])
+    return fetch_primary_yields_months(months)
+
+
+def month_range(start: datetime.date, end: datetime.date) -> List[tuple]:
+    """Build a [(form_string, snapshot_date)] list for every month start..end inclusive."""
+    months: List[tuple] = []
+    d = start.replace(day=1)
+    last = end.replace(day=1)
+    while d <= last:
+        months.append((d.strftime("%B, %Y"), d.replace(day=28)))
+        d = (d.replace(day=28) + datetime.timedelta(days=7)).replace(day=1)  # next month
+    return months
+
+
+def fetch_primary_yields_months(months: List[tuple]) -> List[Dict]:
+    """
+    Fetch primary-market yields for an explicit list of (form_string, snapshot_date)
+    months. Opens Chrome once, clears the F5 challenge, and submits the date_picker
+    form for every month (TSPD allows 2 submits per fresh page load → batches of 2).
+    Returns deduplicated rows keyed by (tenor_label, auction_date).
+    """
+    try:
+        import undetected_chromedriver as uc
+        from selenium.webdriver.common.by import By
+    except ImportError as e:
+        log.warning("undetected-chromedriver not available: %s", e)
+        return []
+
+    import time
+
+    log.info("Treasury fetch: %d month(s): %s%s", len(months),
+             [m for m, _ in months[:6]], " …" if len(months) > 6 else "")
 
     options = uc.ChromeOptions()
     options.add_argument("--window-position=-10000,-10000")
