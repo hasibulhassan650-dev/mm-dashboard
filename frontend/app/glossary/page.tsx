@@ -14,29 +14,24 @@ export default function GlossaryPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold text-white">Glossary</h1>
-        <p className="text-sm text-gray-400">
-          Money-market terminology used across this dashboard · Bangladesh Bank conventions
-        </p>
-      </div>
-
-      {ORDER.filter(c => byCat.has(c)).map(cat => (
-        <div key={cat} className="rounded-xl border border-gray-800 bg-gray-900 p-4">
-          <h2 className="text-sm font-medium text-teal-400 mb-3 uppercase tracking-wide">{cat}</h2>
-          <dl className="space-y-3">
-            {byCat.get(cat)!.map(e => (
-              <div key={e.term} className="grid md:grid-cols-[180px_1fr] gap-1 md:gap-4">
-                <dt className="text-sm font-semibold text-white">
+    <div className="grid12">
+      {ORDER.filter((c) => byCat.has(c)).map((cat) => (
+        <section key={cat} className="panel" style={{ gridColumn: "span 6" }}>
+          <header className="panel-head">
+            <div className="panel-titles"><h3 className="panel-title" style={{ color: "var(--accent)", textTransform: "uppercase", letterSpacing: ".5px", fontSize: 12 }}>{cat}</h3></div>
+          </header>
+          <div className="panel-body">
+            {byCat.get(cat)!.map((e) => (
+              <div key={e.term} style={{ padding: "10px 0", borderBottom: "1px solid var(--border-soft)" }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--fg)" }}>
                   {e.term}
-                  {e.full && <span className="block text-xs font-normal text-gray-500">{e.full}</span>}
-                </dt>
-                <dd className="text-sm text-gray-400 leading-relaxed">{e.def}</dd>
+                  {e.full && <span style={{ display: "block", fontSize: 11, fontWeight: 400, color: "var(--fg-mute)" }}>{e.full}</span>}
+                </div>
+                <div style={{ fontSize: 12.5, color: "var(--fg-dim)", marginTop: 3, lineHeight: 1.55 }}>{e.def}</div>
               </div>
             ))}
-          </dl>
-        </div>
+          </div>
+        </section>
       ))}
     </div>
   );

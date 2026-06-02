@@ -14,25 +14,20 @@ export default function Error({
   }, [error]);
 
   return (
-    <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
-      <div className="w-10 h-10 rounded-full border border-red-800 bg-red-950/40 flex items-center justify-center text-red-400 text-xl">
-        !
-      </div>
-      <div>
-        <h2 className="text-lg font-semibold text-white">Couldn&apos;t load this data</h2>
-        <p className="text-sm text-gray-400 mt-1 max-w-md">
-          The data service may be temporarily unavailable. This is usually transient — try again in a moment.
-        </p>
-      </div>
+    <div className="stub">
+      <div className="stub-ic" style={{ background: "color-mix(in oklab, var(--neg) 14%, transparent)", color: "var(--neg)", fontSize: 26, fontWeight: 700 }}>!</div>
+      <h2>Couldn&apos;t load this data</h2>
+      <p>The data service may be temporarily unavailable. This is usually transient — try again in a moment.</p>
       <button
         onClick={() => unstable_retry()}
-        className="px-4 py-1.5 rounded text-sm font-medium bg-teal-950 text-teal-400 border border-teal-800/60 hover:bg-teal-900/60 hover:text-teal-300 transition-colors"
+        style={{
+          padding: "7px 16px", borderRadius: 7, fontSize: 13, fontWeight: 500,
+          background: "var(--accent-soft)", color: "var(--accent)", border: "1px solid color-mix(in oklab, var(--accent) 40%, transparent)",
+        }}
       >
         Try again
       </button>
-      {error.digest && (
-        <p className="text-xs text-gray-600 font-mono">ref: {error.digest}</p>
-      )}
+      {error.digest && <p className="mono" style={{ fontSize: 11, color: "var(--fg-mute)", marginTop: 12 }}>ref: {error.digest}</p>}
     </div>
   );
 }

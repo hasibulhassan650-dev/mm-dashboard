@@ -2,6 +2,7 @@
 import { useMemo, useState } from "react";
 import { SecondaryYieldRow, Security } from "@/lib/api";
 import { fmtNum, fmtPct } from "@/lib/format";
+import { Panel } from "@/components/terminal/ui";
 
 interface Props { secondary: SecondaryYieldRow[]; securities: Security[] }
 
@@ -115,91 +116,75 @@ export default function PortfolioTool({ secondary, securities }: Props) {
   const up = shiftedValue(100), down = shiftedValue(-100);
 
   return (
-    <div className="space-y-6">
-      <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
-        <label className="text-sm font-medium text-gray-300 block mb-2">
-          Holdings — one per line: <span className="font-mono text-gray-400">ISIN faceValue(mn)</span>
-        </label>
+    <div className="grid12">
+      <Panel title="Holdings" sub="one per line: ISIN  faceValue(mn)" span={12}>
         <textarea
           value={text}
           onChange={e => setText(e.target.value)}
           rows={6}
           spellCheck={false}
           placeholder={"BD0123456789  500\nBD0987654321, 1200"}
-          className="w-full rounded-lg bg-gray-950 border border-gray-800 p-3 font-mono text-sm text-gray-200 placeholder-gray-600 focus:border-teal-700 focus:outline-none"
+          style={{
+            width: "100%", borderRadius: 8, background: "var(--bg-elev)", border: "1px solid var(--border)",
+            padding: 12, fontFamily: "var(--mono)", fontSize: 13, color: "var(--fg)", outline: "none", resize: "vertical",
+          }}
         />
-        <p className="text-xs text-gray-500 mt-2">
+        <p style={{ fontSize: 11.5, color: "var(--fg-mute)", margin: "10px 0 0", lineHeight: 1.6 }}>
           Valued against the latest GSOM secondary curve: exact ISIN where available, otherwise interpolated by remaining
           maturity. Prices assume annual coupons and par redemption — an approximation, not a settlement price.
         </p>
-      </div>
+      </Panel>
 
       {priced.length > 0 && (
         <>
-          {/* Summary */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div className="rounded-lg border border-gray-800 bg-gray-900 p-3">
-              <div className="text-xs text-gray-400 mb-1">Total Face</div>
-              <div className="text-xl font-mono text-gray-200">{fmtNum(totalFace)} <span className="text-xs text-gray-500">mn</span></div>
-            </div>
-            <div className="rounded-lg border border-gray-800 bg-gray-900 p-3">
-              <div className="text-xs text-gray-400 mb-1">Market Value (MTM)</div>
-              <div className="text-xl font-mono text-teal-400">{fmtNum(totalValue)} <span className="text-xs text-gray-500">mn</span></div>
-            </div>
-            <div className="rounded-lg border border-gray-800 bg-gray-900 p-3">
-              <div className="text-xs text-gray-400 mb-1">Wtd Avg Yield</div>
-              <div className="text-xl font-mono text-sky-400">{valuedRows.length ? fmtPct(wYield) : "—"}</div>
-            </div>
-            <div className="rounded-lg border border-gray-800 bg-gray-900 p-3">
-              <div className="text-xs text-gray-400 mb-1">±100bp Value Impact</div>
-              <div className="text-sm font-mono">
-                <span className="text-red-400">{fmtNum(up - totalValue, 1)}</span>
-                <span className="text-gray-600 mx-1">/</span>
-                <span className="text-green-400">+{fmtNum(down - totalValue, 1)}</span>
+          <div className="kpi-strip four">
+            <div className="kpi"><div className="kpi-top"><span className="kpi-label">Total Face</span></div><div className="kpi-val"><span className="kpi-num">{fmtNum(totalFace)}</span><span className="kpi-unit">mn</span></div></div>
+            <div className="kpi"><div className="kpi-top"><span className="kpi-label">Market Value (MTM)</span></div><div className="kpi-val"><span className="kpi-num" style={{ color: "var(--accent)" }}>{fmtNum(totalValue)}</span><span className="kpi-unit">mn</span></div></div>
+            <div className="kpi"><div className="kpi-top"><span className="kpi-label">Wtd Avg Yield</span></div><div className="kpi-val"><span className="kpi-num" style={{ color: "var(--info)" }}>{valuedRows.length ? fmtPct(wYield) : "—"}</span></div></div>
+            <div className="kpi">
+              <div className="kpi-top"><span className="kpi-label">±100bp Impact</span></div>
+              <div className="kpi-val" style={{ fontSize: 15 }}>
+                <span className="mono neg">{fmtNum(up - totalValue, 1)}</span>
+                <span style={{ color: "var(--fg-mute)", margin: "0 5px" }}>/</span>
+                <span className="mono pos">+{fmtNum(down - totalValue, 1)}</span>
               </div>
-              <div className="text-xs text-gray-500 mt-1">mn, on +/−100bp shift</div>
+              <div className="kpi-sub">mn · ±100bp parallel shift</div>
             </div>
           </div>
 
-          {/* Detail table */}
-          <div className="rounded-xl border border-gray-800 bg-gray-900 p-4 overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs text-gray-400 border-b border-gray-800">
-                  <th className="pb-2 pr-4">ISIN</th>
-                  <th className="pb-2 pr-4">Name</th>
-                  <th className="pb-2 pr-4">Type</th>
-                  <th className="pb-2 pr-4 text-right">Rem (yr)</th>
-                  <th className="pb-2 pr-4 text-right">Coupon</th>
-                  <th className="pb-2 pr-4 text-right">Mkt Yield</th>
-                  <th className="pb-2 pr-4 text-right">Price</th>
-                  <th className="pb-2 pr-4 text-right">Face (mn)</th>
-                  <th className="pb-2 pr-4 text-right">Value (mn)</th>
-                  <th className="pb-2 text-center">Source</th>
-                </tr>
-              </thead>
-              <tbody>
-                {priced.map((p, i) => (
-                  <tr key={i} className="border-b border-gray-800/50">
-                    <td className="py-1.5 pr-4 font-mono text-xs text-gray-300">{p.isin}</td>
-                    <td className="py-1.5 pr-4 text-gray-300 max-w-[180px] truncate">{p.name}</td>
-                    <td className="py-1.5 pr-4 text-gray-400 text-xs">{p.type}</td>
-                    <td className="py-1.5 pr-4 text-right font-mono text-gray-300">{p.years != null ? p.years.toFixed(2) : "—"}</td>
-                    <td className="py-1.5 pr-4 text-right font-mono text-gray-400">{p.couponPct != null ? fmtPct(p.couponPct) : "—"}</td>
-                    <td className="py-1.5 pr-4 text-right font-mono text-sky-400">{fmtPct(p.yieldPct, 4)}</td>
-                    <td className="py-1.5 pr-4 text-right font-mono text-gray-300">{p.price != null ? p.price.toFixed(3) : "—"}</td>
-                    <td className="py-1.5 pr-4 text-right font-mono text-gray-300">{fmtNum(p.faceMn)}</td>
-                    <td className="py-1.5 pr-4 text-right font-mono text-teal-400">{p.valueMn != null ? fmtNum(p.valueMn) : "—"}</td>
-                    <td className="py-1.5 text-center text-xs">
-                      {p.source === "exact"  && <span className="text-green-400">exact</span>}
-                      {p.source === "interp" && <span className="text-amber-400">interp</span>}
-                      {p.source === "none"   && <span className="text-red-400">no match</span>}
-                    </td>
+          <Panel title="Valuation Detail" sub="per-holding mark-to-market" span={12} pad={false}>
+            <div className="table-wrap">
+              <table className="dt">
+                <thead>
+                  <tr>
+                    <th>ISIN</th><th>Name</th><th>Type</th>
+                    <th className="r">Rem (yr)</th><th className="r">Coupon</th><th className="r">Mkt Yield</th>
+                    <th className="r">Price</th><th className="r">Face (mn)</th><th className="r">Value (mn)</th><th>Source</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {priced.map((p, i) => (
+                    <tr key={i}>
+                      <td className="mono">{p.isin}</td>
+                      <td style={{ maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</td>
+                      <td>{p.type}</td>
+                      <td className="r mono">{p.years != null ? p.years.toFixed(2) : "—"}</td>
+                      <td className="r mono">{p.couponPct != null ? fmtPct(p.couponPct) : "—"}</td>
+                      <td className="r mono" style={{ color: "var(--info)" }}>{fmtPct(p.yieldPct, 4)}</td>
+                      <td className="r mono">{p.price != null ? p.price.toFixed(3) : "—"}</td>
+                      <td className="r mono">{fmtNum(p.faceMn)}</td>
+                      <td className="r mono" style={{ color: "var(--accent)" }}>{p.valueMn != null ? fmtNum(p.valueMn) : "—"}</td>
+                      <td>
+                        {p.source === "exact" && <span className="pos">exact</span>}
+                        {p.source === "interp" && <span style={{ color: "var(--warn)" }}>interp</span>}
+                        {p.source === "none" && <span className="neg">no match</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Panel>
         </>
       )}
     </div>

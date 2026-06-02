@@ -1,57 +1,82 @@
 import { api } from "@/lib/api";
-import StatCard from "@/components/StatCard";
-import YieldCurveChart from "@/components/YieldCurveChart";
-import OmoOutstandingChart from "@/components/OmoOutstandingChart";
-import Freshness from "@/components/Freshness";
 import { fmtDate } from "@/lib/format";
+import { OMO_CATS, pivotOmo, omoNetSeries, buildCurve, tenorSeries, fxRateSeries } from "@/lib/terminal";
+import OverviewView, { type OverviewData, type OmoAuctionRow, type SecAuctionRow } from "@/components/terminal/views/OverviewView";
+import type { Kpi } from "@/components/terminal/ui";
 
 export const revalidate = 300;
 
-function fmt(n: number) {
-  if (n >= 1000) return (n / 1000).toFixed(1) + "k";
-  return n.toFixed(0);
+const INST_LABEL: Record<string, string> = {
+  CB_REPO: "Repo", AR: "Assured Repo", IBLF: "IBLF", SLF: "SLF", SDF: "SDF",
+};
+
+function delta(series: number[]): number | null {
+  return series.length >= 2 ? +(series[series.length - 1] - series[series.length - 2]).toFixed(2) : null;
 }
 
 export default async function Home() {
-  const [summary, curve, outstanding, fresh] = await Promise.all([
-    api.omoSummary(),
-    api.yieldCurve(),
-    api.omoOutstanding(60),
-    api.freshness(),
+  const [summary, curve, history, outstanding, txns, cm, fx, policy, macro] = await Promise.all([
+    api.omoSummary().catch(() => []),
+    api.yieldCurve().catch(() => []),
+    api.yields(6).catch(() => []),
+    api.omoOutstanding(60).catch(() => []),
+    api.omoTransactions(20).catch(() => []),
+    api.callmoney(45).catch(() => ({ daily_summary: [], latest_breakdown: [], latest_date: null })),
+    api.fx(365).catch(() => []),
+    api.policy(),
+    api.macro(),
   ]);
 
-  const totalInjection = summary
-    .filter(r => r.direction === "INJECTION")
-    .reduce((s, r) => s + r.outstanding_bdt_crore, 0);
+  const omoSeries = pivotOmo(outstanding);
+  const netSeries = omoNetSeries(omoSeries);
+  const cb = buildCurve(curve, history);
 
-  const tenYear = curve.find(r => r.tenor_label === "10Y");
-  const tbill91 = curve.find(r => r.tenor_label === "91D");
+  // ---- KPIs ----
+  const totalInjection = summary.filter((r) => r.direction === "INJECTION").reduce((s, r) => s + r.outstanding_bdt_crore, 0);
+  const warSeries = [...cm.daily_summary].sort((a, b) => a.trade_date.localeCompare(b.trade_date)).map((d) => d.overnight_wavg_rate).filter((v): v is number => v != null);
+  const tb91 = curve.find((r) => r.tenor_label === "91D");
+  const tb10y = curve.find((r) => r.tenor_label === "10Y");
+  const s91 = tenorSeries(history, "91D");
+  const s10y = tenorSeries(history, "10Y");
+  const fxS = fxRateSeries(fx);
+  const resSeries = macro.series.map((m) => m.gross_reserves_usd_bn).filter((v): v is number => v != null).slice(-24);
+  const lastFx = fxS.length ? fxS[fxS.length - 1] : null;
+  const lastRes = macro.latest?.gross_reserves_usd_bn ?? null;
 
-  return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold text-white">Overview</h1>
-        <p className="text-sm text-gray-400">Bangladesh money market · live data from Bangladesh Bank</p>
-        <div className="mt-1"><Freshness updated={fresh.omo} /></div>
-      </div>
+  const kpis: Kpi[] = [
+    { id: "omo", label: "OMO Net Injection", value: `৳${(totalInjection / 1000).toFixed(1)}k`, unit: "cr", sub: "outstanding today", dir: "up", series: netSeries.slice(-30), tone: "accent" },
+    { id: "war", label: "Call Money WAR", value: warSeries.length ? warSeries[warSeries.length - 1].toFixed(2) : "—", unit: "%", sub: "weighted avg rate", delta: delta(warSeries), dir: "up", series: warSeries.slice(-30) },
+    { id: "tb91", label: "91D T-Bill", value: tb91 ? tb91.cutoff_yield_pct.toFixed(2) : "—", unit: "%", sub: tb91 ? `cut-off · ${fmtDate(tb91.auction_date)}` : "", delta: delta(s91), dir: "up", series: s91 },
+    { id: "tb10y", label: "10Y T-Bond", value: tb10y ? tb10y.cutoff_yield_pct.toFixed(2) : "—", unit: "%", sub: tb10y ? `cut-off · ${fmtDate(tb10y.auction_date)}` : "", delta: delta(s10y), dir: "up", series: s10y },
+    { id: "fx", label: "USD / BDT", value: lastFx != null ? lastFx.toFixed(2) : "—", sub: "auction wtd-avg", delta: delta(fxS), dir: "down", series: fxS },
+    { id: "res", label: "FX Reserve", value: lastRes != null ? lastRes.toFixed(2) : "—", unit: "B$", sub: "gross · BB", delta: delta(resSeries), dir: "up", series: resSeries },
+  ];
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard label="OMO Net Injection" value={`৳${fmt(totalInjection)} cr`} sub="outstanding today" color="blue" />
-        <StatCard label="10Y T-Bond Yield" value={tenYear ? `${tenYear.cutoff_yield_pct.toFixed(2)}%` : "—"} sub={tenYear ? fmtDate(tenYear.auction_date) : ""} color="green" />
-        <StatCard label="91D T-Bill Yield" value={tbill91 ? `${tbill91.cutoff_yield_pct.toFixed(2)}%` : "—"} sub={tbill91 ? fmtDate(tbill91.auction_date) : ""} color="amber" />
-        <StatCard label="OMO Instruments" value={String(summary.length)} sub={`${summary.filter(r => r.direction === "INJECTION").length} injection active`} color="blue" />
-      </div>
+  // ---- corridor ----
+  const pc = policy.current;
+  const corridor = pc && pc.sdf != null && pc.repo != null && pc.slf != null
+    ? { sdf: pc.sdf, repo: pc.repo, slf: pc.slf, war: warSeries.length ? warSeries[warSeries.length - 1] : pc.repo }
+    : null;
 
-      <div className="grid md:grid-cols-2 gap-6">
-        <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
-          <h2 className="text-sm font-medium text-gray-300 mb-4">Yield Curve</h2>
-          <YieldCurveChart data={curve} />
-        </div>
-        <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
-          <h2 className="text-sm font-medium text-gray-300 mb-4">OMO Outstanding (60 days)</h2>
-          <OmoOutstandingChart data={outstanding} />
-        </div>
-      </div>
-    </div>
-  );
+  // ---- tables ----
+  const omoAuctions: OmoAuctionRow[] = txns.slice(0, 8).map((t) => ({
+    date: fmtDate(t.transaction_date), inst: INST_LABEL[t.instrument] || t.instrument,
+    tenor: t.tenor_label, accepted: Math.round(t.accepted_bdt_crore), rate: t.rate_pct, direction: t.direction,
+  }));
+  const secAuctions: SecAuctionRow[] = [...curve]
+    .sort((a, b) => a.tenor_years - b.tenor_years)
+    .filter((r) => (r.accepted_bdt_crore ?? 0) > 0)
+    .slice(0, 6)
+    .map((r) => ({
+      sec: `${r.tenor_label} ${r.security_type === "T_BILL" ? "T-Bill" : "T-Bond"}`,
+      accepted: Math.round(r.accepted_bdt_crore ?? 0),
+      cutoff: r.cutoff_yield_pct,
+      cover: r.offered_bdt_crore && r.accepted_bdt_crore ? +(r.offered_bdt_crore / r.accepted_bdt_crore).toFixed(2) : null,
+    }));
+
+  const data: OverviewData = {
+    kpis, tenors: cb.tenors, today: cb.today, weekAgo: cb.weekAgo, monthAgo: cb.monthAgo,
+    omoSeries, omoCats: OMO_CATS, corridor, omoAuctions, secAuctions,
+  };
+  return <OverviewView d={data} />;
 }
