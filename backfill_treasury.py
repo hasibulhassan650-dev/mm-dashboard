@@ -41,6 +41,25 @@ def mark_done(keys):
             fh.write(k + "\n")
 
 
+def fix_sequence():
+    """Re-sync the Postgres id sequence to MAX(id) (it can lag after bulk loads,
+    causing 'duplicate key (id)=1' on insert). No-op on SQLite."""
+    from sqlalchemy import text
+    s = get_session()
+    try:
+        if "postgresql" in str(s.bind.url):
+            s.execute(text(
+                "SELECT setval(pg_get_serial_sequence('primary_yield_snapshots','id'), "
+                "GREATEST((SELECT COALESCE(MAX(id),1) FROM primary_yield_snapshots),1))"
+            ))
+            s.commit()
+            log.info("id sequence re-synced to MAX(id)")
+    except Exception as e:
+        log.warning("sequence fix skipped: %s", e)
+    finally:
+        s.close()
+
+
 def upsert(rows) -> int:
     if not rows:
         return 0
@@ -69,6 +88,7 @@ def chunks(lst, n):
 
 def main():
     init_db()
+    fix_sequence()
     args = sys.argv[1:]
 
     if args and args[0] == "probe":
