@@ -96,7 +96,9 @@ def get_reserves_remittances():
             "net_reserves_bpm6_usd_bn": r.get("net_reserves_bpm6_usd_bn", s.get("net_reserves_bpm6_usd_bn")),
             # prefer real fetched remittance; fall back to any seed value
             "remittance_usd_mn": rem.get(mo, s.get("remittance_usd_mn")),
-            "note": s.get("note"),
+            # reserves + remittance are real (BB econdata, DB-backed) for every
+            # month we have; only months that fall back to seed keep the note.
+            "note": None if (mo in res or mo in rem) else s.get("note"),
         })
     return {"series": series, "latest": series[-1] if series else None}
 

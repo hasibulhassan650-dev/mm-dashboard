@@ -19,8 +19,11 @@ const THEME_INIT = `(function(){try{var t=JSON.parse(localStorage.getItem('bb_tw
 async function buildTicker(): Promise<TickItem[]> {
   const ticks: TickItem[] = [];
   try {
-    const [policy, curve, history, callmoney, macro] = await Promise.all([
-      api.policy(),
+    // NOTE: the policy corridor (repo/SDF/SLF) is intentionally NOT in the live
+    // ticker — it is seed/DRAFT data and its only "change" is a >1-year-old MPC
+    // move, which is misleading shown as a live delta. The ticker carries ONLY
+    // verified, real-time series with genuine latest-print deltas.
+    const [curve, history, callmoney, macro] = await Promise.all([
       api.yieldCurve().catch(() => []),
       api.yields(3).catch(() => []),
       api.callmoney(30).catch(() => ({ daily_summary: [], latest_breakdown: [], latest_date: null })),
@@ -30,14 +33,6 @@ async function buildTicker(): Promise<TickItem[]> {
     // change of the two most-recent distinct readings (rounded to 2dp)
     const diff = (a?: number | null, b?: number | null) =>
       a != null && b != null ? +(a - b).toFixed(2) : 0;
-
-    // policy: latest vs previous corridor snapshot
-    const ph = [...policy.history].sort((a, b) => String(a.effective_date).localeCompare(String(b.effective_date)));
-    const pc = ph[ph.length - 1], pp = ph[ph.length - 2];
-    const c = policy.current;
-    if (c?.repo != null) ticks.push({ sym: "REPO", val: c.repo.toFixed(2) + "%", d: diff(pc?.repo, pp?.repo) });
-    if (c?.sdf != null) ticks.push({ sym: "SDF", val: c.sdf.toFixed(2) + "%", d: diff(pc?.sdf, pp?.sdf) });
-    if (c?.slf != null) ticks.push({ sym: "SLF", val: c.slf.toFixed(2) + "%", d: diff(pc?.slf, pp?.slf) });
 
     const ds = [...callmoney.daily_summary].sort((a, b) => a.trade_date.localeCompare(b.trade_date));
     if (ds.length) {

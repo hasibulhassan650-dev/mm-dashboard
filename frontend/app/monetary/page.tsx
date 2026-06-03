@@ -17,6 +17,9 @@ export default async function MonetaryPage() {
 
   return (
     <>
+      <div style={{ marginBottom: "var(--gap)", padding: "10px 14px", borderRadius: "var(--radius-sm)", border: "1px solid color-mix(in oklab, var(--warn) 45%, transparent)", background: "color-mix(in oklab, var(--warn) 12%, transparent)", color: "var(--warn)", fontSize: 12.5 }}>
+        ⚠ <b>Illustrative figures.</b> CPI, monetary aggregates, bank rates and CRR/SLR on this page are placeholder values pending wiring to official BBS / Bangladesh Bank releases — do not treat as published data.
+      </div>
       <div className="kpi-strip" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
         <div className="kpi"><div className="kpi-top"><span className="kpi-label">CPI p2p<InfoTip term="CPI (point-to-point)" /></span></div><div className="kpi-val"><span className="kpi-num" style={{ color: "var(--warn)" }}>{latest?.cpi_p2p != null ? latest.cpi_p2p.toFixed(2) : "—"}</span><span className="kpi-unit">%</span></div><div className="kpi-sub">12-mo avg {fmtPct(latest?.cpi_12mo_avg)}</div></div>
         <div className="kpi"><div className="kpi-top"><span className="kpi-label">Pvt Credit Growth<InfoTip term="Private-sector credit" /></span></div><div className="kpi-val"><span className="kpi-num" style={{ color: "var(--info)" }}>{latest?.private_credit_growth != null ? latest.private_credit_growth.toFixed(2) : "—"}</span><span className="kpi-unit">%</span></div><div className="kpi-sub">M2 {fmtPct(latest?.m2_growth)}</div></div>

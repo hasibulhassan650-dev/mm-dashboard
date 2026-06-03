@@ -60,6 +60,11 @@ export default async function CallMoneyPage({ searchParams }: { searchParams: Pr
       </div>
 
       {cur && (
+        <div style={{ fontSize: 11.5, color: "var(--warn)", margin: "0 2px 8px" }}>
+          ⚠ Policy corridor — illustrative / pending verification against BB MPC circulars (assumed eff. {fmtDate(cur.effective_date)}).
+        </div>
+      )}
+      {cur && (
         <div className="kpi-strip" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
           <div className="kpi"><div className="kpi-top"><span className="kpi-label">SLF — Ceiling<InfoTip term="SLF" /></span></div><div className="kpi-val"><span className="kpi-num neg">{fmtPct(cur.slf)}</span></div><div className="kpi-sub">standing lending</div></div>
           <div className="kpi"><div className="kpi-top"><span className="kpi-label">Repo — Policy</span></div><div className="kpi-val"><span className="kpi-num" style={{ color: "var(--accent)" }}>{fmtPct(cur.repo)}</span></div><div className="kpi-sub">policy anchor</div></div>
