@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { Icon } from "./Icon";
 import { NAV, navByPath } from "./nav";
 import { useTheme, ACCENTS, type Density } from "./ThemeProvider";
+import ExportAll from "./ExportAll";
 
 export interface TickItem { sym: string; val: string; d: number }
 
@@ -76,6 +77,7 @@ function Topbar({ title, onMenu }: { title: string; onMenu: () => void }) {
           <span className="status-txt">Live</span>
           <span className="status-time" suppressHydrationWarning>{fmtClock(clock)}</span>
         </div>
+        <ExportAll />
         <button className="icon-btn" onClick={toggleTheme} title="Toggle theme" aria-label="Toggle theme">
           <Icon name={theme === "dark" ? "sun" : "moon"} size={17} />
         </button>
