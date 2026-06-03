@@ -38,6 +38,10 @@ export const api = {
     try { return await get<Freshness>("/api/meta/freshness"); }
     catch { return EMPTY_FRESHNESS; }
   },
+  status:          async (): Promise<MetaStatus> => {
+    try { return await get<MetaStatus>("/api/meta/status"); }
+    catch { return { datasets: {}, last_run: null, last_run_errors: [], cadence: "" }; }
+  },
   // New endpoint — degrade to empty corridor until the backend is deployed.
   policy:          async (): Promise<PolicyCorridor> => {
     try { return await get<PolicyCorridor>("/api/policy"); }
@@ -89,6 +93,19 @@ export interface PolicyRateSnapshot {
 export interface PolicyCorridor {
   current: PolicyRateSnapshot | null;
   history: PolicyRateSnapshot[];
+}
+
+export interface DatasetStatus {
+  label: string;
+  ingested: string | null;
+  latest_data: string | null;
+  rows: number;
+}
+export interface MetaStatus {
+  datasets: Record<string, DatasetStatus>;
+  last_run: string | null;
+  last_run_errors: string[];
+  cadence: string;
 }
 
 export type FreshnessKey =

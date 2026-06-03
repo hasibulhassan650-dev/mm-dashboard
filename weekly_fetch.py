@@ -256,6 +256,24 @@ def main():
             log.warning("  - %s", e)
     else:
         log.info("Weekly fetch complete — no errors — %ds elapsed", elapsed)
+
+    # Record the run so the dashboard can show "last refreshed at X" honestly,
+    # even when a run found no new rows.
+    try:
+        import json as _json
+        from db import PipelineRun
+        session = get_session()
+        session.add(PipelineRun(
+            run_utc=datetime.datetime.utcnow(),
+            kind="refresh",
+            new_rows=None,
+            errors=_json.dumps(errors) if errors else None,
+            elapsed_sec=elapsed,
+        ))
+        session.commit()
+        session.close()
+    except Exception as exc:
+        log.warning("Could not record pipeline run: %s", exc)
     log.info("=" * 60)
 
 

@@ -266,6 +266,18 @@ class DailyNetFlow(Base):
     computed_utc                   = Column(DateTime)
 
 
+class PipelineRun(Base):
+    """One row per data-refresh run — lets the UI show when we last fetched
+    (even when a run found 0 new rows), not just when data last changed."""
+    __tablename__ = "pipeline_runs"
+    id           = Column(Integer, primary_key=True, autoincrement=True)
+    run_utc      = Column(DateTime, nullable=False)
+    kind         = Column(String(20))      # "refresh" | "reconcile"
+    new_rows     = Column(Text)            # JSON: per-step new-row counts
+    errors       = Column(Text)            # JSON: list of error strings
+    elapsed_sec  = Column(Integer)
+
+
 # ── Engine & Session ──────────────────────────────────────────────────────────
 
 def get_engine():

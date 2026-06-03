@@ -18,7 +18,12 @@ name: Full Data Refresh
 
 on:
   schedule:
-    - cron: "0 16 * * 0-4"     # 16:00 UTC = 22:00 Bangladesh, Sun–Thu (BD working days)
+    # 3×/day, EVERY day (UTC) = 10:00, 17:00, 00:00 Bangladesh time. Catches
+    # morning, afternoon and end-of-day BB publications; idempotent upserts make
+    # extra runs harmless. Weekends simply find no new data.
+    - cron: "0 4 * * *"
+    - cron: "0 11 * * *"
+    - cron: "0 18 * * *"
   workflow_dispatch:            # manual "Run workflow" button
 
 # Avoid overlapping runs if one is slow

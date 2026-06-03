@@ -6,23 +6,9 @@ import { Icon } from "./Icon";
 import { NAV, navByPath } from "./nav";
 import { useTheme, ACCENTS, type Density } from "./ThemeProvider";
 import ExportAll from "./ExportAll";
+import UpdateStatus from "./UpdateStatus";
 
 export interface TickItem { sym: string; val: string; d: number }
-
-// ---------------- Live clock (mount-only to avoid hydration mismatch) ----------------
-function useClock() {
-  const [now, setNow] = React.useState<Date | null>(null);
-  React.useEffect(() => {
-    setNow(new Date());
-    const id = setInterval(() => setNow(new Date()), 30_000);
-    return () => clearInterval(id);
-  }, []);
-  return now;
-}
-function fmtClock(d: Date | null) {
-  if (!d) return "";
-  return d.toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
-}
 
 // ---------------- Sidebar ----------------
 function Sidebar({ active, collapsed, onToggle, onNav }: { active: string; collapsed: boolean; onToggle: () => void; onNav: () => void }) {
@@ -57,7 +43,6 @@ function Sidebar({ active, collapsed, onToggle, onNav }: { active: string; colla
 // ---------------- Topbar ----------------
 function Topbar({ title, onMenu }: { title: string; onMenu: () => void }) {
   const { theme, toggleTheme } = useTheme();
-  const clock = useClock();
   return (
     <div className="topbar">
       <button className="icon-btn only-mobile" onClick={onMenu} aria-label="Menu"><Icon name="menu" size={18} /></button>
@@ -72,11 +57,7 @@ function Topbar({ title, onMenu }: { title: string; onMenu: () => void }) {
         <kbd>/</kbd>
       </div>
       <div className="topbar-right">
-        <div className="status">
-          <span className="status-dot" />
-          <span className="status-txt">Live</span>
-          <span className="status-time" suppressHydrationWarning>{fmtClock(clock)}</span>
-        </div>
+        <UpdateStatus />
         <ExportAll />
         <button className="icon-btn" onClick={toggleTheme} title="Toggle theme" aria-label="Toggle theme">
           <Icon name={theme === "dark" ? "sun" : "moon"} size={17} />
