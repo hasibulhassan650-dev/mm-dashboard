@@ -271,92 +271,63 @@ def month_range(start: datetime.date, end: datetime.date) -> List[tuple]:
 def fetch_primary_yields_months(months: List[tuple]) -> List[Dict]:
     """
     Fetch primary-market yields for an explicit list of (form_string, snapshot_date)
-    months. Opens Chrome once, clears the F5 challenge, and submits the date_picker
-    form for every month (TSPD allows 2 submits per fresh page load → batches of 2).
-    Returns deduplicated rows keyed by (tenor_label, auction_date).
+    months via the curl_cffi F5 bypass.
+
+    Strategy (same proven pattern as the refrate/remittance fetchers): clear the F5
+    JS challenge ONCE with Chrome to capture session cookies, then POST the
+    date_picker form for many months using curl_cffi with Chrome's TLS fingerprint.
+    Cookies are re-captured every RECAPTURE_EVERY posts (or whenever a response is
+    blocked). This avoids relaunching Chrome per month — which is slow and flaky in
+    CI and was failing the F5 challenge ~15% of the time on long runs.
+
+    RECAPTURE_EVERY is tunable via env TREASURY_POSTS_PER_CAPTURE.
     """
-    try:
-        import undetected_chromedriver as uc
-        from selenium.webdriver.common.by import By
-    except ImportError as e:
-        log.warning("undetected-chromedriver not available: %s", e)
-        return []
-
+    import os
     import time
+    from fetchers.bb_session import get_f5_cookies, bb_post
 
-    log.info("Treasury fetch: %d month(s): %s%s", len(months),
-             [m for m, _ in months[:6]], " …" if len(months) > 6 else "")
+    RECAPTURE_EVERY = int(os.environ.get("TREASURY_POSTS_PER_CAPTURE", "6"))
+    log.info("Treasury fetch (curl_cffi): %d month(s), recapture every %d", len(months), RECAPTURE_EVERY)
 
-    options = uc.ChromeOptions()
-    options.add_argument("--window-position=-10000,-10000")
-    options.add_argument("--window-size=1920,1080")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-
-    chrome_ver = _chrome_major_version()
-    driver = None
     all_rows: List[Dict] = []
+    state = {"cookies": None, "ua": None, "posts": 0}
 
-    def _wait_for_real_page(drv, timeout=60) -> bool:
-        for _ in range(timeout // 3):
-            time.sleep(3)
-            if drv.find_elements(By.NAME, "date_picker"):
-                return True
-        return False
-
-    def _is_captcha(drv) -> bool:
-        src = drv.page_source
-        return "support ID" in src or "human visitor" in src
-
-    def _submit(drv, mstr: str) -> bool:
-        field = drv.find_element(By.NAME, "date_picker")
-        drv.execute_script("arguments[0].value = arguments[1]", field, mstr)
-        drv.execute_script(
-            "document.querySelector(\"form[action*='treasury'] button\").click()"
-        )
-        time.sleep(5)
-        return not _is_captcha(drv)
-
-    # F5/TSPD allows ~2 submits per FRESH browser session, then escalates to
-    # CAPTCHA. Reusing one browser across many page loads trips it — so relaunch
-    # Chrome (a fresh challenge) for every batch of 2 months. On CAPTCHA we skip
-    # the rest of that batch and move on; missed months are retried on re-run
-    # (resumability is DB-based in the caller).
-    try:
-        from fetchers.bb_session import _cleanup_chrome
-    except Exception:
-        def _cleanup_chrome():  # type: ignore
-            pass
-
-    SUBMITS_PER_SESSION = 2
-    batches = [months[i:i + SUBMITS_PER_SESSION]
-               for i in range(0, len(months), SUBMITS_PER_SESSION)]
-
-    for batch_idx, batch in enumerate(batches):
-        driver = None
+    def capture() -> bool:
         try:
-            driver = uc.Chrome(options=options, version_main=chrome_ver)
-            log.info("Batch %d/%d (fresh Chrome): %s", batch_idx + 1, len(batches), [m for m, _ in batch])
-            driver.get(BB_TREASURY_URL)
-            if not _wait_for_real_page(driver):
-                log.warning("  challenge not cleared — skipping batch")
-                continue
-            time.sleep(1)
-            for mstr, snap_date in batch:
-                if not _submit(driver, mstr):
-                    log.warning("  %s: CAPTCHA — abandoning rest of batch", mstr)
-                    break
-                rows = _parse_page(driver.page_source, snap_date)
-                log.info("  %s => %d rows", mstr, len(rows))
-                all_rows.extend(rows)
+            state["cookies"], state["ua"] = get_f5_cookies(
+                BB_TREASURY_URL, wait_selector="input[name='date_picker']")
+            state["posts"] = 0
+            return True
         except Exception as exc:
-            log.error("  batch %d error: %s", batch_idx + 1, exc)
-        finally:
-            if driver:
-                try: driver.quit()
-                except Exception: pass
-            _cleanup_chrome()
-        time.sleep(2)
+            log.error("  F5 cookie capture failed: %s", exc)
+            state["cookies"] = None
+            return False
+
+    def post(mstr: str):
+        return bb_post(BB_TREASURY_URL, {"date_picker": mstr}, state["cookies"], state["ua"])
+
+    for mstr, snap_date in months:
+        if state["cookies"] is None or state["posts"] >= RECAPTURE_EVERY:
+            if not capture():
+                time.sleep(3)
+                if not capture():
+                    continue
+        try:
+            html = post(mstr)
+            state["posts"] += 1
+        except Exception as exc:
+            log.warning("  %s: POST blocked (%s) — recapturing", mstr, exc)
+            state["cookies"] = None
+            if not capture():
+                continue
+            try:
+                html = post(mstr); state["posts"] += 1
+            except Exception as exc2:
+                log.warning("  %s: still blocked (%s) — skipping", mstr, exc2)
+                continue
+        rows = _parse_page(html, snap_date)
+        log.info("  %s => %d rows", mstr, len(rows))
+        all_rows.extend(rows)
 
     # Deduplicate: keep first occurrence per (tenor_label, auction_date)
     seen: Dict[tuple, Dict] = {}
@@ -364,9 +335,8 @@ def fetch_primary_yields_months(months: List[tuple]) -> List[Dict]:
         key = (r["tenor_label"], str(r["auction_date"]))
         if key not in seen:
             seen[key] = r
-
     result = sorted(seen.values(), key=lambda r: (r["tenor_label"], str(r["auction_date"])))
-    log.info("Treasury history complete: %d unique yield points", len(result))
+    log.info("Treasury fetch complete: %d unique yield points", len(result))
     return result
 
 
