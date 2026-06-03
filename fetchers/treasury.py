@@ -171,8 +171,12 @@ def _parse_page(html: str, snapshot_date: datetime.date) -> List[Dict]:
             # (which have no standard yield column).
             std_val    = _clean_float(cells[col_std])    if col_std and col_std < len(cells) else None
             cutoff_val = _clean_float(cells[col_cutoff]) if col_cutoff < len(cells) else None
-            cutoff = std_val if std_val is not None else cutoff_val
-            if cutoff is None:
+            # The Standard/Devolvement Yield column is blank for T-bills (often
+            # rendered as "0"); treat a non-positive std as missing and fall back
+            # to the cut-off yield. A 0% sovereign yield is never real, so skip
+            # any row that still has no positive yield (prevents bogus 0% rows).
+            cutoff = std_val if (std_val is not None and std_val > 0) else cutoff_val
+            if cutoff is None or cutoff <= 0:
                 continue
 
             results.append({

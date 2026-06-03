@@ -104,8 +104,8 @@ export function LineChart({ labels, series, height = 300, yUnit = "%", showGrid 
   }
   return (
     <div ref={ref} style={{ width: "100%", height }}>
-      <svg width={w} height={height} style={{ display: "block", cursor: onPointClick ? "pointer" : "default" }}
-        onMouseMove={(e) => setHover(idxAt(e))} onMouseLeave={() => setHover(null)}
+      <svg width={w} height={height} style={{ display: "block", cursor: onPointClick ? "pointer" : "default", userSelect: "none", touchAction: "none" }}
+        onMouseMove={(e) => { const i = idxAt(e); setHover((h) => (h === i ? h : i)); }} onMouseLeave={() => setHover(null)}
         onClick={onPointClick ? (e) => onPointClick(idxAt(e)) : undefined}>
         {showGrid && ticks.map((tk, i) => (
           <g key={i}>
@@ -188,8 +188,8 @@ export function StackedArea({ data, cats, height = 320, active, onPointClick }: 
   }
   return (
     <div ref={ref} style={{ width: "100%", height }}>
-      <svg width={w} height={height} style={{ display: "block", cursor: onPointClick ? "pointer" : "default" }}
-        onMouseMove={(e) => setHover(idxAt(e))} onMouseLeave={() => setHover(null)}
+      <svg width={w} height={height} style={{ display: "block", cursor: onPointClick ? "pointer" : "default", userSelect: "none", touchAction: "none" }}
+        onMouseMove={(e) => { const i = idxAt(e); setHover((h) => (h === i ? h : i)); }} onMouseLeave={() => setHover(null)}
         onClick={onPointClick ? (e) => onPointClick(idxAt(e)) : undefined}>
         {ticks.map((tk, i) => (
           <g key={i}>
@@ -259,8 +259,8 @@ export function ComboChart({ data, height = 300, onPointClick }: { data: ComboRo
   const step = Math.max(1, Math.round(data.length / 7));
   return (
     <div ref={ref} style={{ width: "100%", height }}>
-      <svg width={w} height={height} style={{ display: "block", cursor: onPointClick ? "pointer" : "default" }}
-        onMouseMove={(e) => setHover(idxAt(e))} onMouseLeave={() => setHover(null)}
+      <svg width={w} height={height} style={{ display: "block", cursor: onPointClick ? "pointer" : "default", userSelect: "none", touchAction: "none" }}
+        onMouseMove={(e) => { const i = idxAt(e); setHover((h) => (h === i ? h : i)); }} onMouseLeave={() => setHover(null)}
         onClick={onPointClick ? (e) => onPointClick(idxAt(e)) : undefined}>
         {rticks.map((tk, i) => (
           <g key={i}>

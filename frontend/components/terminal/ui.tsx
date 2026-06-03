@@ -177,8 +177,8 @@ export function DrillModal({ title, sub, rows, footer, onClose }: { title: strin
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 90, background: "rgba(0,0,0,.55)", display: "grid", placeItems: "center", padding: 20 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: 340, maxWidth: "100%", background: "var(--panel)", border: "1px solid var(--border)", borderRadius: "var(--radius)", boxShadow: "0 20px 60px rgba(0,0,0,.5)" }}>
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 90, background: "rgba(0,0,0,.55)", display: "grid", placeItems: "center", padding: 20, animation: "overlayIn .12s ease" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: 340, maxWidth: "100%", background: "var(--panel)", border: "1px solid var(--border)", borderRadius: "var(--radius)", boxShadow: "0 20px 60px rgba(0,0,0,.5)", animation: "drillIn .16s cubic-bezier(.2,.7,.3,1)" }}>
         <div className="panel-head">
           <div className="panel-titles">
             <h3 className="panel-title">{title}</h3>
