@@ -53,7 +53,7 @@ def main():
     log.info("Weekly fetch started  %s", start.strftime("%Y-%m-%d %H:%M"))
     log.info("=" * 60)
 
-    from db import init_db
+    from db import init_db, fix_all_sequences
     from seeds_loader import load_holiday_file
     from calendar_utils import load_holidays
     from db import get_session, HolidayCalendar
@@ -61,6 +61,7 @@ def main():
 
     # ── Init ──────────────────────────────────────────────────────────────────
     init_db()
+    fix_all_sequences()   # bulletproof: a stale id-sequence can never block a write
 
     seed = ROOT / "data" / "seeds" / "holidays_2025-26.yaml"
     if seed.exists():

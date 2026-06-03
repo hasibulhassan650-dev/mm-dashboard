@@ -23,9 +23,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger("reconcile")
 
 from sqlalchemy import text
-from db import get_session, init_db, PipelineRun
+from db import get_session, init_db, PipelineRun, fix_all_sequences
 from fetchers.treasury import fetch_primary_yields_months, month_range
-from backfill_treasury import fix_sequence
 
 COVID_LO = datetime.date(2020, 9, 1)
 COVID_HI = datetime.date(2021, 10, 31)
@@ -55,7 +54,7 @@ def windows():
     return uniq
 
 def main():
-    init_db(); fix_sequence()
+    init_db(); fix_all_sequences()
     args = sys.argv[1:]
     if len(args) == 2:
         months = month_range(datetime.date(int(args[0]), 1, 1), datetime.date(int(args[1]), 12, 28))

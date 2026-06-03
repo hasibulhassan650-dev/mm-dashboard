@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 from sqlalchemy import (
     create_engine, Column, String, Date, DateTime, Integer,
-    Float, Boolean, Text, UniqueConstraint, event
+    Float, Boolean, Text, UniqueConstraint, event, text
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.engine import Engine
@@ -293,6 +293,33 @@ def get_session():
     engine = get_engine()
     Session = sessionmaker(bind=engine)
     return Session()
+
+def fix_all_sequences():
+    """Re-sync every autoincrement `id` sequence to MAX(id). PostgreSQL only.
+
+    Bulk loads / restores / manual inserts can leave a table's id sequence
+    BEHIND MAX(id); the next autoincrement insert then collides on the primary
+    key ('duplicate key (id)=N') and the whole fetch step fails — silently
+    blocking updates (this is what stalled OMO). Running this before every
+    refresh makes writes bulletproof: a stale sequence can never block a fetch.
+    """
+    engine = get_engine()
+    if not str(engine.url).startswith("postgresql"):
+        return
+    id_tables = [t.name for t in Base.metadata.sorted_tables
+                 if t.c.get("id") is not None and t.c["id"].primary_key]
+    for tname in id_tables:
+        try:
+            with engine.connect() as conn:
+                conn.execute(text(
+                    f"SELECT setval(pg_get_serial_sequence('{tname}','id'), "
+                    f"GREATEST((SELECT COALESCE(MAX(id),1) FROM {tname}),1))"
+                ))
+                conn.commit()
+        except Exception as exc:
+            log.warning("sequence fix skipped for %s: %s", tname, exc)
+    log.info("id sequences re-synced (%d tables)", len(id_tables))
+
 
 def init_db():
     engine = get_engine()
