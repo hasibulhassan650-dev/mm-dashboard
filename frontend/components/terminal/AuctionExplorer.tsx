@@ -16,10 +16,8 @@ function isoAddYears(base: string, years: number): string {
 export default function AuctionExplorer({ bounds }: { bounds: { min: string | null; max: string | null; count: number } }) {
   const max = bounds.max ?? new Date().toISOString().slice(0, 10);
   const min = bounds.min ?? "2007-01-01";
-  const [from, setFrom] = React.useState(() => {
-    const twoYr = isoAddYears(max, -2);
-    return twoYr < min ? min : twoYr;
-  });
+  // Default to the FULL available history so 2007→present shows on load.
+  const [from, setFrom] = React.useState(min);
   const [to, setTo] = React.useState(max);
   const [tenor, setTenor] = React.useState("All");
   const [rows, setRows] = React.useState<YieldRow[]>([]);
