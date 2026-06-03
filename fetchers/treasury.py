@@ -286,7 +286,8 @@ def fetch_primary_yields_months(months: List[tuple]) -> List[Dict]:
     import time
     from fetchers.bb_session import get_f5_cookies, bb_post
 
-    RECAPTURE_EVERY = int(os.environ.get("TREASURY_POSTS_PER_CAPTURE", "6"))
+    # 12 verified safe (a full year of months per F5 cookie capture, zero blocks)
+    RECAPTURE_EVERY = int(os.environ.get("TREASURY_POSTS_PER_CAPTURE", "12"))
     log.info("Treasury fetch (curl_cffi): %d month(s), recapture every %d", len(months), RECAPTURE_EVERY)
 
     all_rows: List[Dict] = []
