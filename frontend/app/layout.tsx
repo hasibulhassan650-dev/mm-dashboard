@@ -19,34 +19,57 @@ const THEME_INIT = `(function(){try{var t=JSON.parse(localStorage.getItem('bb_tw
 async function buildTicker(): Promise<TickItem[]> {
   const ticks: TickItem[] = [];
   try {
-    const [policy, curve, callmoney, macro] = await Promise.all([
+    const [policy, curve, history, callmoney, macro] = await Promise.all([
       api.policy(),
       api.yieldCurve().catch(() => []),
+      api.yields(3).catch(() => []),
       api.callmoney(30).catch(() => ({ daily_summary: [], latest_breakdown: [], latest_date: null })),
       api.macro(),
     ]);
 
+    // change of the two most-recent distinct readings (rounded to 2dp)
+    const diff = (a?: number | null, b?: number | null) =>
+      a != null && b != null ? +(a - b).toFixed(2) : 0;
+
+    // policy: latest vs previous corridor snapshot
+    const ph = [...policy.history].sort((a, b) => String(a.effective_date).localeCompare(String(b.effective_date)));
+    const pc = ph[ph.length - 1], pp = ph[ph.length - 2];
     const c = policy.current;
-    if (c?.repo != null) ticks.push({ sym: "REPO", val: c.repo.toFixed(2) + "%", d: 0 });
-    if (c?.sdf != null) ticks.push({ sym: "SDF", val: c.sdf.toFixed(2) + "%", d: 0 });
-    if (c?.slf != null) ticks.push({ sym: "SLF", val: c.slf.toFixed(2) + "%", d: 0 });
+    if (c?.repo != null) ticks.push({ sym: "REPO", val: c.repo.toFixed(2) + "%", d: diff(pc?.repo, pp?.repo) });
+    if (c?.sdf != null) ticks.push({ sym: "SDF", val: c.sdf.toFixed(2) + "%", d: diff(pc?.sdf, pp?.sdf) });
+    if (c?.slf != null) ticks.push({ sym: "SLF", val: c.slf.toFixed(2) + "%", d: diff(pc?.slf, pp?.slf) });
 
     const ds = [...callmoney.daily_summary].sort((a, b) => a.trade_date.localeCompare(b.trade_date));
     if (ds.length) {
       const last = ds[ds.length - 1], prev = ds[ds.length - 2];
-      if (last.overnight_wavg_rate != null) {
-        const d = prev?.overnight_wavg_rate != null ? +(last.overnight_wavg_rate - prev.overnight_wavg_rate).toFixed(2) : 0;
-        ticks.push({ sym: "CALL WAR", val: last.overnight_wavg_rate.toFixed(2) + "%", d });
-      }
+      if (last.overnight_wavg_rate != null)
+        ticks.push({ sym: "CALL WAR", val: last.overnight_wavg_rate.toFixed(2) + "%", d: diff(last.overnight_wavg_rate, prev?.overnight_wavg_rate) });
     }
 
+    // per-tenor yield: latest cut-off vs previous auction for that tenor
+    const tenorDelta = (t: string) => {
+      const rs = history.filter((r) => r.tenor_label === t).sort((a, b) => a.auction_date.localeCompare(b.auction_date));
+      return rs.length >= 2 ? diff(rs[rs.length - 1].cutoff_yield_pct, rs[rs.length - 2].cutoff_yield_pct) : 0;
+    };
     for (const t of ["91D", "182D", "364D", "2Y", "5Y", "10Y", "20Y"]) {
       const row = curve.find((r) => r.tenor_label === t);
-      if (row) ticks.push({ sym: t + " TB", val: row.cutoff_yield_pct.toFixed(2) + "%", d: 0 });
+      if (row) ticks.push({ sym: t + " TB", val: row.cutoff_yield_pct.toFixed(2) + "%", d: tenorDelta(t) });
     }
 
-    if (macro.latest?.gross_reserves_usd_bn != null) ticks.push({ sym: "FX RES", val: "$" + macro.latest.gross_reserves_usd_bn.toFixed(2) + "B", d: 0 });
-    if (macro.latest?.remittance_usd_mn != null) ticks.push({ sym: "REMIT", val: "$" + (macro.latest.remittance_usd_mn / 1000).toFixed(2) + "B", d: 0 });
+    // reserves & remittance: latest month vs previous month
+    const ms = [...macro.series].sort((a, b) => a.month.localeCompare(b.month));
+    const lastTwo = (k: "gross_reserves_usd_bn" | "remittance_usd_mn") => {
+      const v = ms.filter((m) => m[k] != null);
+      return v.length >= 2 ? [v[v.length - 1][k] as number, v[v.length - 2][k] as number] as const : null;
+    };
+    if (macro.latest?.gross_reserves_usd_bn != null) {
+      const tt = lastTwo("gross_reserves_usd_bn");
+      ticks.push({ sym: "FX RES", val: "$" + macro.latest.gross_reserves_usd_bn.toFixed(2) + "B", d: tt ? diff(tt[0], tt[1]) : 0 });
+    }
+    if (macro.latest?.remittance_usd_mn != null) {
+      const tt = lastTwo("remittance_usd_mn");
+      ticks.push({ sym: "REMIT", val: "$" + (macro.latest.remittance_usd_mn / 1000).toFixed(2) + "B", d: tt ? +((tt[0] - tt[1]) / 1000).toFixed(2) : 0 });
+    }
   } catch { /* ticker degrades to whatever was collected */ }
   return ticks;
 }
