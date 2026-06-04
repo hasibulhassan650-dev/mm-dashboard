@@ -306,7 +306,18 @@ def _parse_via_text(full_text: str, txn_date: datetime.date, pdf_url: str) -> Li
         if tenor_days is None:
             m = _match_instrument(line)
             if m:
-                current_instrument, current_direction = m
+                new_instr, new_dir = m
+                # Look-back fix for the merged-cell layout: a STANDALONE instrument
+                # name also belongs to the data row that preceded it. If the last
+                # row was a carry-forward suspect under a DIFFERENT instrument
+                # (e.g. IBLF's first row inheriting CB_REPO), reassign it.
+                if (suspect_idx is not None and new_instr != current_instrument
+                        and suspect_idx < len(transactions)):
+                    transactions[suspect_idx]["instrument"] = new_instr
+                    transactions[suspect_idx]["direction"]  = new_dir
+                    log.debug("Look-back fix (standalone name): row %d %s -> %s",
+                              suspect_idx, current_instrument, new_instr)
+                current_instrument, current_direction = new_instr, new_dir
                 if pending is not None:
                     nums = pending["nums"]
                     if len(nums) >= 4:
