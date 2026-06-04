@@ -115,12 +115,21 @@ def main():
     if stats["flagged"]:
         log.warning("%d mismatch(es) flagged for review — re-run a narrower range to investigate.", stats["flagged"])
 
+    # data-integrity monitor
+    try:
+        from validate import integrity_check
+        quality = integrity_check()
+        if not quality.get("ok"):
+            log.warning("DATA INTEGRITY: %d issue(s): %s", quality.get("issue_count"), quality.get("issues"))
+    except Exception as exc:
+        quality = {"ok": None, "error": str(exc)}
+
     # record the run
     try:
         s = get_session()
         s.add(PipelineRun(run_utc=datetime.datetime.utcnow(), kind="reconcile",
                           new_rows=json.dumps(stats), errors=json.dumps(flagged_samples) if flagged_samples else None,
-                          elapsed_sec=elapsed))
+                          elapsed_sec=elapsed, quality=json.dumps(quality)))
         s.commit(); s.close()
     except Exception as exc:
         log.warning("could not record reconcile run: %s", exc)

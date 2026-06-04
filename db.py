@@ -276,6 +276,7 @@ class PipelineRun(Base):
     new_rows     = Column(Text)            # JSON: per-step new-row counts
     errors       = Column(Text)            # JSON: list of error strings
     elapsed_sec  = Column(Integer)
+    quality      = Column(Text)            # JSON: integrity_check() report
 
 
 # ── Engine & Session ──────────────────────────────────────────────────────────
@@ -324,14 +325,18 @@ def fix_all_sequences():
 def init_db():
     engine = get_engine()
     Base.metadata.create_all(engine)
-    # Add maturity_bdt_crore column if it doesn't exist yet (migration for existing DBs)
-    with engine.connect() as conn:
+    # Lightweight migrations for existing DBs. Each runs in its OWN connection so a
+    # failed/no-op ALTER never aborts the transaction for the next one (Postgres
+    # aborts the whole tx on the first error otherwise).
+    migrations = [
+        "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS maturity_bdt_crore REAL",
+        "ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS quality TEXT",
+    ]
+    for ddl in migrations:
         try:
-            conn.execute(__import__("sqlalchemy").text(
-                "ALTER TABLE omo_transactions ADD COLUMN maturity_bdt_crore REAL"
-            ))
-            conn.commit()
-            log.info("Migrated omo_transactions: added maturity_bdt_crore column")
+            with engine.connect() as conn:
+                conn.execute(text(ddl))
+                conn.commit()
         except Exception:
-            pass  # column already exists
+            pass  # column already exists / SQLite (no IF NOT EXISTS) — harmless
     log.info("Database initialised at %s", DB_PATH)

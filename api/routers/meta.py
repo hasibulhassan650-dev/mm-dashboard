@@ -57,22 +57,30 @@ def get_status():
 
         last_run = None
         last_errors = []
+        data_health = None
+        import json
         try:
             row = session.execute(text(
-                "SELECT run_utc, errors FROM pipeline_runs ORDER BY run_utc DESC LIMIT 1"
+                "SELECT run_utc, errors, quality FROM pipeline_runs ORDER BY run_utc DESC LIMIT 1"
             )).fetchone()
             if row:
                 last_run = row[0].isoformat() if row[0] is not None else None
                 if row[1]:
-                    import json
-                    try:
-                        last_errors = json.loads(row[1])
-                    except Exception:
-                        last_errors = []
+                    try: last_errors = json.loads(row[1])
+                    except Exception: last_errors = []
+                if row[2]:
+                    try: data_health = json.loads(row[2])
+                    except Exception: data_health = None
         except Exception:
-            pass  # pipeline_runs may not exist yet
+            # quality column or pipeline_runs may not exist yet
+            try:
+                row = session.execute(text("SELECT run_utc FROM pipeline_runs ORDER BY run_utc DESC LIMIT 1")).fetchone()
+                if row:
+                    last_run = row[0].isoformat() if row[0] is not None else None
+            except Exception:
+                pass
 
         return {"datasets": datasets, "last_run": last_run, "last_run_errors": last_errors,
-                "cadence": "Auto-refreshed 3×/day"}
+                "data_health": data_health, "cadence": "Auto-refreshed 3×/day"}
     finally:
         session.close()

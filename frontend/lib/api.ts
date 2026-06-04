@@ -101,10 +101,17 @@ export interface DatasetStatus {
   latest_data: string | null;
   rows: number;
 }
+export interface DataHealth {
+  ok: boolean | null;
+  issue_count?: number;
+  issues?: string[];
+  by_table?: Record<string, number>;
+}
 export interface MetaStatus {
   datasets: Record<string, DatasetStatus>;
   last_run: string | null;
   last_run_errors: string[];
+  data_health?: DataHealth | null;
   cadence: string;
 }
 

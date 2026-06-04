@@ -1,0 +1,108 @@
+"""
+validate.py — data-integrity monitor.
+
+Plausibility rules that catch the *classes* of bug we've hit (0% yields, OMO
+instrument mislabels, write failures) the moment they recur — without
+false-flagging genuine data (IBLF's real ~4% rate, the 2020-21 COVID yield lows).
+
+`integrity_check()` scans the stored data and returns a structured report:
+  { "ok": bool, "issue_count": int, "issues": [ "<table> <date> <detail>", ... ],
+    "by_table": { table: count } }
+
+Run after every refresh/reconcile; surfaced at /api/meta/quality so the
+dashboard shows data health and you never have to spot a mislabel by eye again.
+"""
+import datetime
+from sqlalchemy import text
+from db import get_session
+
+# genuine BD ultra-low yield window (COVID liquidity glut) — sub-1% is REAL here
+_COVID_LO = datetime.date(2020, 9, 1)
+_COVID_HI = datetime.date(2021, 10, 31)
+
+_OMO_INSTRUMENTS = {"CB_REPO", "SLF", "IBLF", "AR", "SDF"}
+_YIELD_TENORS = {"14D", "28D", "91D", "182D", "364D", "2Y", "3Y", "3Y_FRTB",
+                 "5Y", "10Y", "15Y", "20Y", "25Y"}
+
+
+def integrity_check(limit_per_rule: int = 8) -> dict:
+    s = get_session()
+    issues: list[str] = []
+    by_table: dict[str, int] = {}
+
+    def add(table: str, msg: str):
+        by_table[table] = by_table.get(table, 0) + 1
+        if sum(1 for i in issues if i.startswith(table)) < limit_per_rule:
+            issues.append(f"{table}: {msg}")
+
+    def q(sql, **p):
+        return s.execute(text(sql), p).fetchall()
+
+    try:
+        # ---- treasury yields ----
+        for r in q("SELECT auction_date, tenor_label, cutoff_yield_pct FROM primary_yield_snapshots "
+                   "WHERE cutoff_yield_pct <= 0 OR cutoff_yield_pct > 30"):
+            add("yields", f"{r[0]} {r[1]} implausible cut-off {r[2]}%")
+        for r in q("SELECT auction_date, tenor_label, cutoff_yield_pct FROM primary_yield_snapshots "
+                   "WHERE cutoff_yield_pct > 0 AND cutoff_yield_pct < 1.0 "
+                   "AND (auction_date < :lo OR auction_date > :hi)", lo=_COVID_LO, hi=_COVID_HI):
+            add("yields", f"{r[0]} {r[1]} sub-1% ({r[2]}%) outside COVID window — likely parse error")
+        for r in q("SELECT DISTINCT tenor_label FROM primary_yield_snapshots"):
+            if r[0] not in _YIELD_TENORS:
+                add("yields", f"unknown tenor label '{r[0]}'")
+
+        # ---- OMO (the instrument-mislabel guard) ----
+        for r in q("SELECT transaction_date, instrument, tenor_days, rate_pct FROM omo_transactions "
+                   "WHERE instrument = 'CB_REPO' AND rate_pct IS NOT NULL AND (rate_pct < 8 OR rate_pct > 12)"):
+            add("omo", f"{r[0]} CB_REPO rate {r[3]}% — outside policy band (likely IBLF/AR mislabel)")
+        for r in q("SELECT transaction_date, tenor_days FROM omo_transactions "
+                   "WHERE instrument = 'SDF' AND tenor_days <> 1"):
+            add("omo", f"{r[0]} SDF tenor {r[1]}D — SDF is overnight-only")
+        for r in q("SELECT DISTINCT instrument FROM omo_transactions"):
+            if r[0] not in _OMO_INSTRUMENTS:
+                add("omo", f"unknown instrument '{r[0]}'")
+        for r in q("SELECT transaction_date, instrument, rate_pct FROM omo_transactions "
+                   "WHERE rate_pct IS NOT NULL AND (rate_pct < 0 OR rate_pct > 30)"):
+            add("omo", f"{r[0]} {r[1]} rate {r[2]}% out of range")
+        for r in q("SELECT transaction_date, instrument FROM omo_transactions WHERE accepted_bdt_crore < 0"):
+            add("omo", f"{r[0]} {r[1]} negative accepted amount")
+
+        # ---- call money / ref rates ----
+        for r in q("SELECT trade_date, average_rate_pct FROM call_money_rates "
+                   "WHERE average_rate_pct IS NOT NULL AND (average_rate_pct <= 0 OR average_rate_pct > 50)"):
+            add("callmoney", f"{r[0]} avg rate {r[1]}% out of range")
+        for r in q("SELECT trade_date, highest_rate_pct, lowest_rate_pct FROM call_money_rates "
+                   "WHERE highest_rate_pct IS NOT NULL AND lowest_rate_pct IS NOT NULL AND highest_rate_pct < lowest_rate_pct"):
+            add("callmoney", f"{r[0]} high {r[1]} < low {r[2]}")
+        for r in q("SELECT trade_date, rate_type, product, rate_pct FROM ref_rates "
+                   "WHERE rate_pct IS NOT NULL AND (rate_pct <= 0 OR rate_pct > 50)"):
+            add("refrate", f"{r[0]} {r[1]} {r[2]} rate {r[3]}% out of range")
+
+        # ---- FX ----
+        for r in q("SELECT auction_date, weighted_avg_rate FROM fx_auction_results "
+                   "WHERE weighted_avg_rate IS NOT NULL AND (weighted_avg_rate < 80 OR weighted_avg_rate > 200)"):
+            add("fx", f"{r[0]} USD/BDT {r[1]} implausible")
+
+        # ---- reserves / remittance ----
+        for r in q("SELECT month, gross_reserves_usd_mn, net_reserves_bpm6_usd_mn FROM reserves_monthly "
+                   "WHERE gross_reserves_usd_mn IS NOT NULL AND (gross_reserves_usd_mn < 0 OR gross_reserves_usd_mn > 60000 "
+                   "OR (net_reserves_bpm6_usd_mn IS NOT NULL AND net_reserves_bpm6_usd_mn > gross_reserves_usd_mn))"):
+            add("reserves", f"{r[0]} gross {r[1]} / net {r[2]} implausible")
+        for r in q("SELECT month, remittance_usd_mn FROM remittance_monthly "
+                   "WHERE remittance_usd_mn IS NOT NULL AND (remittance_usd_mn < 0 OR remittance_usd_mn > 10000)"):
+            add("remittance", f"{r[0]} remittance {r[1]} mn implausible")
+    finally:
+        s.close()
+
+    return {
+        "ok": len(by_table) == 0,
+        "issue_count": sum(by_table.values()),
+        "issues": issues,
+        "by_table": by_table,
+    }
+
+
+if __name__ == "__main__":
+    import json
+    rep = integrity_check()
+    print(json.dumps(rep, indent=2, default=str))

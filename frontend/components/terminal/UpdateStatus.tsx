@@ -55,6 +55,22 @@ export default function UpdateStatus() {
               <b style={{ color: healthy ? "var(--pos)" : "var(--warn)" }}>Last refresh {s?.last_run ? timeAgo(s.last_run) : "unknown"}</b>.
             </p>
 
+            {s?.data_health && (
+              s.data_health.ok ? (
+                <div style={{ fontSize: 11.5, color: "var(--pos)", marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ width: 14, height: 14, borderRadius: "50%", background: "color-mix(in oklab, var(--pos) 20%, transparent)", display: "grid", placeItems: "center", fontSize: 9 }}>✓</span>
+                  Data integrity: all checks pass
+                </div>
+              ) : (
+                <div style={{ fontSize: 11.5, color: "var(--warn)", marginBottom: 10 }}>
+                  ⚠ Data integrity: <b>{s.data_health.issue_count} issue(s) flagged</b>
+                  <ul style={{ margin: "5px 0 0", paddingLeft: 16, color: "var(--fg-dim)" }}>
+                    {s.data_health.issues?.slice(0, 5).map((iss, i) => <li key={i} style={{ fontSize: 10.5 }}>{iss}</li>)}
+                  </ul>
+                </div>
+              )
+            )}
+
             {s && s.last_run_errors.length > 0 && (
               <div style={{ fontSize: 11, color: "var(--neg)", marginBottom: 10 }}>
                 ⚠ Last run had {s.last_run_errors.length} error(s): {s.last_run_errors.join("; ").slice(0, 120)}

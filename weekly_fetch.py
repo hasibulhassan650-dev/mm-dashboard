@@ -258,6 +258,20 @@ def main():
     else:
         log.info("Weekly fetch complete — no errors — %ds elapsed", elapsed)
 
+    # Data-integrity monitor: scan the stored data for rule violations (0% yields,
+    # OMO mislabels, etc.) so bad data is caught automatically, not by eye.
+    try:
+        from validate import integrity_check
+        quality = integrity_check()
+        if not quality.get("ok"):
+            log.warning("DATA INTEGRITY: %d issue(s) found: %s",
+                        quality.get("issue_count"), quality.get("issues"))
+        else:
+            log.info("Data integrity: clean (0 issues)")
+    except Exception as exc:
+        quality = {"ok": None, "error": str(exc)}
+        log.warning("integrity_check failed: %s", exc)
+
     # Record the run so the dashboard can show "last refreshed at X" honestly,
     # even when a run found no new rows.
     try:
@@ -270,6 +284,7 @@ def main():
             new_rows=None,
             errors=_json.dumps(errors) if errors else None,
             elapsed_sec=elapsed,
+            quality=_json.dumps(quality),
         ))
         session.commit()
         session.close()
