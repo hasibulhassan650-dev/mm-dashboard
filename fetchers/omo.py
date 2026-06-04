@@ -270,9 +270,16 @@ def _parse_via_table(rows: List[List], txn_date: datetime.date, pdf_url: str) ->
 
 def _parse_via_text(full_text: str, txn_date: datetime.date, pdf_url: str) -> List[Dict]:
     """
-    Text-based fallback parser.
-    Column layout: Offered | Accepted | Rate (1-2 nums if range) | Maturity | Net
-    maturity = nums[-2], net = nums[-1] — reliable regardless of rate format.
+    Robust block-based parser.
+
+    BB lists each instrument as a contiguous block of tenor rows whose tenors
+    ASCEND (e.g. AR: 7D, 14D, 28D, 180D). The merged instrument-name cell can
+    render anywhere inside its block (top, middle, or inline on a data row), so
+    'carry forward the last name' mislabels rows. Instead we delimit blocks by a
+    TENOR RESET (a tenor <= the previous row's tenor starts a new instrument) and
+    assign each block the instrument name found ANYWHERE within it. Column values
+    are positional and reliable: Offered | Accepted | Rate[range] | Maturity | Net
+    → accepted = nums[1], maturity = nums[-2], rate = first value in nums[2:-2].
     """
     def _extract_nums(line: str) -> List[float]:
         s = re.sub(r'\d+\s*[-\s]*(days?|day)\b', '', line, flags=re.I)
@@ -280,21 +287,10 @@ def _parse_via_text(full_text: str, txn_date: datetime.date, pdf_url: str) -> Li
         return [v for v in (_clean_num(t) for t in re.findall(r'-?[\d,]+\.?\d*', s))
                 if v is not None]
 
-    transactions: List[Dict] = []
-    current_instrument: Optional[str] = None
-    current_direction:  Optional[str] = None
-    pending: Optional[Dict] = None
-    # Index of the last row added via carry-forward that duplicated an existing
-    # instrument+tenor — a signal that it was misclassified and may need reassigning
-    # when the real instrument name later appears inline.
-    suspect_idx: Optional[int] = None
-
-    def _is_duplicate(instr: str, tdays: int) -> bool:
-        """True if (instr, tenor_days) already appears in transactions (excluding last entry)."""
-        return any(
-            t["instrument"] == instr and t["tenor_days"] == tdays
-            for t in transactions[:-1]
-        )
+    # ── Pass 1: segment rows into instrument blocks ──────────────────────────
+    blocks: List[Dict] = []
+    cur: Dict = {"name": None, "dir": None, "rows": []}
+    last_tenor: Optional[int] = None
 
     for raw_line in full_text.split("\n"):
         line = raw_line.strip()
@@ -302,90 +298,54 @@ def _parse_via_text(full_text: str, txn_date: datetime.date, pdf_url: str) -> Li
             continue
 
         tenor_days = _parse_tenor(line)
+        instr_match = _match_instrument(line)
 
         if tenor_days is None:
-            m = _match_instrument(line)
-            if m:
-                new_instr, new_dir = m
-                # Look-back fix for the merged-cell layout: a STANDALONE instrument
-                # name also belongs to the data row that preceded it. If the last
-                # row was a carry-forward suspect under a DIFFERENT instrument
-                # (e.g. IBLF's first row inheriting CB_REPO), reassign it.
-                if (suspect_idx is not None and new_instr != current_instrument
-                        and suspect_idx < len(transactions)):
-                    transactions[suspect_idx]["instrument"] = new_instr
-                    transactions[suspect_idx]["direction"]  = new_dir
-                    log.debug("Look-back fix (standalone name): row %d %s -> %s",
-                              suspect_idx, current_instrument, new_instr)
-                current_instrument, current_direction = new_instr, new_dir
-                if pending is not None:
-                    nums = pending["nums"]
-                    if len(nums) >= 4:
-                        accepted = nums[1]
-                        maturity = abs(nums[-2])
-                        rate = next((n for n in nums[2:-2] if 0 < abs(n) < 30), None)
-                        txn = _build_txn(current_instrument, current_direction,
-                                         pending["tenor_days"], abs(accepted), maturity,
-                                         rate, txn_date, pdf_url)
-                        if txn:
-                            transactions.append(txn)
-                    pending = None
-                suspect_idx = None
+            # standalone instrument name — belongs to the block we're building
+            if instr_match:
+                cur["name"], cur["dir"] = instr_match
             continue
 
         nums = _extract_nums(line)
-        instr_match = _match_instrument(line)
-        if instr_match:
-            new_instr, new_dir = instr_match
-            # Look-back fix: if the last carry-forward row created a duplicate
-            # instrument+tenor and now a different instrument appears inline,
-            # the carry-forward row was misclassified — reassign it.
-            if (suspect_idx is not None and
-                    new_instr != current_instrument and
-                    suspect_idx < len(transactions)):
-                transactions[suspect_idx]["instrument"] = new_instr
-                transactions[suspect_idx]["direction"]  = new_dir
-                log.debug("Look-back fix: reassigned row %d from %s to %s",
-                          suspect_idx, current_instrument, new_instr)
-            current_instrument, current_direction = new_instr, new_dir
-            pending = None
-            suspect_idx = None
+        if len(nums) < 4:
+            continue   # tenor split onto its own line (no data) — skip
 
-        if not current_instrument:
-            pending = {"tenor_days": tenor_days, "nums": nums}
-            suspect_idx = None
-            continue
+        # tenor reset → previous instrument block is complete
+        if last_tenor is not None and tenor_days <= last_tenor:
+            if cur["rows"] or cur["name"]:
+                blocks.append(cur)
+            cur = {"name": None, "dir": None, "rows": []}
 
-        pending = None
-        if len(nums) >= 4:
-            accepted = nums[1]
-            maturity = abs(nums[-2])
-            rate = next((n for n in nums[2:-2] if 0 < abs(n) < 30), None)
-            txn = _build_txn(current_instrument, current_direction, tenor_days,
-                             abs(accepted), maturity, rate, txn_date, pdf_url)
+        if instr_match:                       # name inline on this data row
+            cur["name"], cur["dir"] = instr_match
+
+        accepted = nums[1]
+        maturity = abs(nums[-2])
+        rate = next((n for n in nums[2:-2] if 0 < abs(n) < 30), None)
+        cur["rows"].append({"tenor_days": tenor_days, "accepted": accepted,
+                            "maturity": maturity, "rate": rate})
+        last_tenor = tenor_days
+
+    if cur["rows"] or cur["name"]:
+        blocks.append(cur)
+
+    # ── Pass 2: emit transactions; instrument = the block's own name ─────────
+    transactions: List[Dict] = []
+    for b in blocks:
+        name, direction = b["name"], b["dir"]
+        if not name:
+            continue   # unnamed block — skip rather than risk a wrong label
+        for r in b["rows"]:
+            txn = _build_txn(name, direction, r["tenor_days"], abs(r["accepted"]),
+                             r["maturity"], r["rate"], txn_date, pdf_url)
             if txn:
                 transactions.append(txn)
-                # Mark as suspect (eligible for look-back reassignment) if ANY of:
-                # (a) carry-forward creates a duplicate instrument+tenor
-                # (b) SDF got tenor > 1D — SDF is strictly overnight-only
-                # (c) CB_REPO got rate < 8% — CB_REPO standard rate is 10%
-                if instr_match is None and (
-                    _is_duplicate(current_instrument, tenor_days)
-                    or (current_instrument == 'SDF' and tenor_days > 1)
-                    or (current_instrument == 'CB_REPO' and rate is not None and rate < 8.0)
-                ):
-                    suspect_idx = len(transactions) - 1
-                else:
-                    suspect_idx = None
 
-    # ── Post-processing: fix impossible instrument/tenor combinations ─────────
-    # SDF is physically only ever 1-Day (overnight deposit at BB).
-    # Any SDF row with tenor > 1D is a parser misclassification — always AR.
+    # SDF is physically overnight-only; any SDF >1D is a misread → treat as AR.
     for txn in transactions:
-        if txn['instrument'] == 'SDF' and txn['tenor_days'] > 1:
-            log.debug("Post-fix: SDF %dD → AR (SDF is 1D-only)", txn['tenor_days'])
-            txn['instrument'] = 'AR'
-            txn['direction']  = 'INJECTION'
+        if txn["instrument"] == "SDF" and txn["tenor_days"] > 1:
+            txn["instrument"] = "AR"
+            txn["direction"] = "INJECTION"
 
     return transactions
 
