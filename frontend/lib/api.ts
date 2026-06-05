@@ -135,7 +135,8 @@ export interface OmoOutstandingRow {
 }
 export interface OmoTxnRow {
   transaction_date: string; maturity_date: string; instrument: string;
-  tenor_label: string; accepted_bdt_crore: number; rate_pct: number | null; direction: string;
+  tenor_label: string; accepted_bdt_crore: number; rate_pct: number | null;
+  rate_range: string | null; direction: string;
 }
 export interface SecondaryYieldRow {
   isin: string; settlement_date: string; market_yield_pct: number;

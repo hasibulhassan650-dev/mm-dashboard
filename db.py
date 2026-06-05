@@ -167,7 +167,8 @@ class OMOTransaction(Base):
     tenor_days          = Column(Integer)
     accepted_bdt_crore  = Column(Float)             # 0 for maturity-only rows
     maturity_bdt_crore  = Column(Float)             # what matured today for this instrument/tenor (from PDF)
-    rate_pct            = Column(Float)
+    rate_pct            = Column(Float)             # lower bound when a range
+    rate_range          = Column(String(30))        # full range as published, e.g. "4.00-5.25"; NULL when a single rate
     direction           = Column(String(20))        # INJECTION or ABSORPTION
     source_pdf          = Column(String(300))
     ingested_utc        = Column(DateTime)
@@ -330,6 +331,7 @@ def init_db():
     # aborts the whole tx on the first error otherwise).
     migrations = [
         "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS maturity_bdt_crore REAL",
+        "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS rate_range VARCHAR(30)",
         "ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS quality TEXT",
     ]
     for ddl in migrations:

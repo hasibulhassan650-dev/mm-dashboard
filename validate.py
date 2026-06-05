@@ -67,6 +67,20 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
         for r in q("SELECT transaction_date, instrument FROM omo_transactions WHERE accepted_bdt_crore < 0"):
             add("omo", f"{r[0]} {r[1]} negative accepted amount")
 
+        # ---- coupon amounts (the face×rate/freq guard) ----
+        # Every standard periodic coupon must equal outstanding × rate/100 ÷
+        # payments-per-year (2 half-yearly, 4 quarterly). Genuine short FIRST
+        # coupons (ACT365_SHORT_FIRST) are legitimately pro-rated and excluded.
+        # Catches any regression back to day-count amounts (the 4608 vs 4621 bug).
+        for r in q("SELECT isin, scheduled_date, amount_bdt_mill, coupon_rate_used_pct, "
+                   "outstanding_used_bdt_mill, calc_method FROM coupon_events "
+                   "WHERE calc_method LIKE 'APPROX_%' AND outstanding_used_bdt_mill > 0 "
+                   "AND coupon_rate_used_pct > 0"):
+            div = 2 if str(r[5]).endswith("HFLY") else 4
+            expected = r[4] * (r[3] / 100) / div
+            if abs((r[2] or 0) - expected) > max(0.5, expected * 0.001):
+                add("coupons", f"{r[0]} {r[1]} amount {r[2]:.2f} != face×rate/{div} ({expected:.2f})")
+
         # ---- call money / ref rates ----
         for r in q("SELECT trade_date, average_rate_pct FROM call_money_rates "
                    "WHERE average_rate_pct IS NOT NULL AND (average_rate_pct <= 0 OR average_rate_pct > 50)"):

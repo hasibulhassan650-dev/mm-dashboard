@@ -322,9 +322,12 @@ def run_omo_fetch(days_back: int = 28, max_files: int = 20) -> dict:
                 accepted_bdt_crore = r["accepted_bdt_crore"],
             ).first()
             if existing:
-                # Update maturity_bdt_crore if not yet populated from PDF
+                # Backfill fields not yet populated from an earlier parse
                 if existing.maturity_bdt_crore is None and r.get("maturity_bdt_crore"):
                     existing.maturity_bdt_crore = r["maturity_bdt_crore"]
+                    saved += 1
+                if existing.rate_range is None and r.get("rate_range"):
+                    existing.rate_range = r["rate_range"]
                     saved += 1
             else:
                 session.add(OMOTransaction(
@@ -336,6 +339,7 @@ def run_omo_fetch(days_back: int = 28, max_files: int = 20) -> dict:
                     accepted_bdt_crore = r["accepted_bdt_crore"],
                     maturity_bdt_crore = r.get("maturity_bdt_crore"),
                     rate_pct           = r.get("rate_pct"),
+                    rate_range         = r.get("rate_range"),
                     direction          = r["direction"],
                     source_pdf         = r.get("source_pdf"),
                     ingested_utc       = now,
@@ -484,13 +488,16 @@ def run_pipeline(
         # ── 8. Re-query ALL events from DB for the range ──────────────────────
         # Use DB as the source of truth, not the in-memory lists.
         # This ensures any events from previous runs are included too.
+        # Filter by SCHEDULED date — coupons/maturities are shown (and counted in
+        # daily_net_flow) on their real due date, never dragged to the rolled
+        # working-day payment_date. Keep payment_date in the dict for reference.
         db_coupons = session.query(CouponEvent).filter(
-            CouponEvent.payment_date >= date_from,
-            CouponEvent.payment_date <= date_to,
+            CouponEvent.scheduled_date >= date_from,
+            CouponEvent.scheduled_date <= date_to,
         ).all()
         db_maturities = session.query(MaturityEvent).filter(
-            MaturityEvent.payment_date >= date_from,
-            MaturityEvent.payment_date <= date_to,
+            MaturityEvent.scheduled_date >= date_from,
+            MaturityEvent.scheduled_date <= date_to,
         ).all()
         db_auctions = session.query(AuctionEvent).filter(
             AuctionEvent.settlement_date >= date_from,
@@ -499,6 +506,7 @@ def run_pipeline(
 
         # Convert ORM objects to dicts for aggregation engine
         coupon_dicts = [{
+            "scheduled_date":      c.scheduled_date,
             "payment_date":        c.payment_date,
             "amount_bdt_mill":     c.amount_bdt_mill or 0.0,
             "isin":                c.isin,
@@ -506,6 +514,7 @@ def run_pipeline(
         } for c in db_coupons]
 
         maturity_dicts = [{
+            "scheduled_date":      m.scheduled_date,
             "payment_date":        m.payment_date,
             "principal_bdt_mill":  m.principal_bdt_mill or 0.0,
             "isin":                m.isin,

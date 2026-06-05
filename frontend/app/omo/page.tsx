@@ -27,6 +27,7 @@ export default async function OmoPage() {
       tenor: t.tenor_label,
       accepted: Math.round(t.accepted_bdt_crore),
       rate: t.rate_pct,
+      rateRange: t.rate_range,
       maturity: fmtDate(t.maturity_date),
       direction: t.direction,
     }));

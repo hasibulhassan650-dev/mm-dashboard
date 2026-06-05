@@ -19,7 +19,7 @@ def get_transactions(
         q = """
             SELECT transaction_date, maturity_date, instrument, tenor_label,
                    tenor_days, accepted_bdt_crore, maturity_bdt_crore,
-                   rate_pct, direction, source_pdf
+                   rate_pct, rate_range, direction, source_pdf
             FROM omo_transactions
             WHERE transaction_date >= :since
         """

@@ -95,6 +95,28 @@ def _clean_num(s: str) -> Optional[float]:
         return None
 
 
+def _resolve_rate(vals: List[float]) -> tuple:
+    """
+    Resolve the Rate(%) column into (rate_pct, rate_range).
+
+    BB publishes a single rate ("10.00") or a RANGE ("4.00-5.25"). When the
+    range is parsed numerically the upper bound carries the hyphen and so reads
+    as negative — e.g. the rate column yields [4.00, -5.25]. We keep the full
+    range as a string (so the dashboard can show the WHOLE range) and use the
+    lower bound as the numeric rate_pct for charts/integrity.
+
+    Returns (rate_pct, rate_range) where rate_range is None for a single rate.
+    """
+    if (len(vals) >= 2 and vals[0] is not None and vals[1] is not None
+            and vals[0] > 0 and vals[1] < 0
+            and abs(vals[0]) < 30 and abs(vals[1]) < 30):
+        low, high = vals[0], abs(vals[1])
+        lo, hi = (low, high) if low <= high else (high, low)
+        return lo, f"{lo:.2f}-{hi:.2f}"
+    rate = next((n for n in vals if n is not None and 0 < abs(n) < 30), None)
+    return rate, None
+
+
 def _should_skip(line: str) -> bool:
     ll = line.lower()
     return any(kw in ll for kw in _SKIP_LINES)
@@ -186,7 +208,8 @@ def parse_omo_pdf(pdf_bytes: bytes, hint_date: Optional[datetime.date], pdf_url:
 
 def _build_txn(instr: str, direction: str, tenor_days: int,
                accepted: float, maturity: float, rate: Optional[float],
-               txn_date: datetime.date, pdf_url: str) -> Optional[Dict]:
+               txn_date: datetime.date, pdf_url: str,
+               rate_range: Optional[str] = None) -> Optional[Dict]:
     """Build a transaction dict. Only stores rows where a new acceptance happened."""
     if abs(accepted) < 0.01:
         return None
@@ -201,6 +224,7 @@ def _build_txn(instr: str, direction: str, tenor_days: int,
         "accepted_bdt_crore": abs(accepted),
         "maturity_bdt_crore": maturity,
         "rate_pct":           rate,
+        "rate_range":         rate_range,
         "direction":          direction,
         "source_pdf":         pdf_url,
     }
@@ -253,15 +277,19 @@ def _parse_via_table(rows: List[List], txn_date: datetime.date, pdf_url: str) ->
         if accepted is None:
             continue
 
-        # Rate may be a range "4.00-5.25" — take the first number
-        rate = next(
-            (v for v in (_clean_num(t) for t in re.split(r'[-–]', rate_raw)) if v and 0 < v < 30),
-            None
-        )
+        # Rate may be a range "4.00-5.25" — keep the WHOLE range, use low as numeric
+        parts = [v for v in (_clean_num(t) for t in re.split(r'[-–]', rate_raw))
+                 if v is not None and 0 < v < 30]
+        if len(parts) >= 2:
+            lo, hi = sorted(parts[:2])
+            rate, rate_range = lo, f"{lo:.2f}-{hi:.2f}"
+        else:
+            rate, rate_range = (parts[0] if parts else None), None
         mat_abs = abs(maturity) if maturity is not None else 0.0
 
         txn = _build_txn(current_instrument, current_direction, tenor_days,
-                         abs(accepted), mat_abs, rate, txn_date, pdf_url)
+                         abs(accepted), mat_abs, rate, txn_date, pdf_url,
+                         rate_range=rate_range)
         if txn:
             transactions.append(txn)
 
@@ -321,9 +349,9 @@ def _parse_via_text(full_text: str, txn_date: datetime.date, pdf_url: str) -> Li
 
         accepted = nums[1]
         maturity = abs(nums[-2])
-        rate = next((n for n in nums[2:-2] if 0 < abs(n) < 30), None)
+        rate, rate_range = _resolve_rate(nums[2:-2])
         cur["rows"].append({"tenor_days": tenor_days, "accepted": accepted,
-                            "maturity": maturity, "rate": rate})
+                            "maturity": maturity, "rate": rate, "rate_range": rate_range})
         last_tenor = tenor_days
 
     if cur["rows"] or cur["name"]:
@@ -337,7 +365,8 @@ def _parse_via_text(full_text: str, txn_date: datetime.date, pdf_url: str) -> Li
             continue   # unnamed block — skip rather than risk a wrong label
         for r in b["rows"]:
             txn = _build_txn(name, direction, r["tenor_days"], abs(r["accepted"]),
-                             r["maturity"], r["rate"], txn_date, pdf_url)
+                             r["maturity"], r["rate"], txn_date, pdf_url,
+                             rate_range=r.get("rate_range"))
             if txn:
                 transactions.append(txn)
 

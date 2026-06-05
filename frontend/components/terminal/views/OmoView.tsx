@@ -7,7 +7,7 @@ import OmoNetLiquidityChart from "@/components/OmoNetLiquidityChart";
 import DownloadButton from "@/components/DownloadButton";
 import type { OmoOutstandingRow } from "@/lib/api";
 
-export interface OmoOpRow { date: string; inst: string; tenor: string; accepted: number; rate: number | null; direction: string; maturity: string }
+export interface OmoOpRow { date: string; inst: string; tenor: string; accepted: number; rate: number | null; rateRange?: string | null; direction: string; maturity: string }
 
 export interface OmoData {
   omoSeries: Record<string, number | string>[];
@@ -28,7 +28,7 @@ export default function OmoView({ d }: { d: OmoData }) {
     { key: "inst", label: "Instrument", render: (r) => <span className="pill-inst">{r.inst}</span> },
     { key: "tenor", label: "Tenor", mono: true },
     { key: "accepted", label: "Accepted (cr)", align: "r", mono: true, render: (r) => r.accepted.toLocaleString() },
-    { key: "rate", label: "Rate", align: "r", mono: true, render: (r) => (r.rate != null ? r.rate.toFixed(2) + "%" : "—") },
+    { key: "rate", label: "Rate", align: "r", mono: true, render: (r) => (r.rateRange ? r.rateRange.replace("-", "–") + "%" : r.rate != null ? r.rate.toFixed(2) + "%" : "—") },
     { key: "maturity", label: "Maturity" },
     { key: "direction", label: "Flow", align: "r", render: (r) => <span className={r.direction === "INJECTION" ? "pos" : "neg"}>{r.direction === "INJECTION" ? "Inject" : "Absorb"}</span> },
   ];

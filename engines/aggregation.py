@@ -30,12 +30,14 @@ def build_daily_flows(
     Only working days with at least one event appear unless a full
     date range is passed (then zero rows are generated for empty days).
     """
-    # Collect all unique payment dates
+    # Collect all unique event dates. Coupons/maturities are shown on their
+    # SCHEDULED date (the real due date) — NOT dragged to the next working day
+    # when the due date is a holiday/weekend. Auctions use their settlement date.
     dates = set()
     for e in coupon_events:
-        dates.add(e["payment_date"])
+        dates.add(e["scheduled_date"])
     for e in maturity_events:
-        dates.add(e["payment_date"])
+        dates.add(e["scheduled_date"])
     for e in auction_events:
         dates.add(e["settlement_date"])
 
@@ -55,8 +57,8 @@ def build_daily_flows(
 
     for flow_date in sorted(dates):
         # ── Inflow ────────────────────────────────────────────────────────────
-        coupons_today = [e for e in coupon_events  if e["payment_date"]   == flow_date]
-        mats_today    = [e for e in maturity_events if e["payment_date"]  == flow_date]
+        coupons_today = [e for e in coupon_events  if e["scheduled_date"] == flow_date]
+        mats_today    = [e for e in maturity_events if e["scheduled_date"] == flow_date]
 
         coupon_inflow    = sum(e["amount_bdt_mill"]     for e in coupons_today)
         principal_inflow = sum(e["principal_bdt_mill"]  for e in mats_today)

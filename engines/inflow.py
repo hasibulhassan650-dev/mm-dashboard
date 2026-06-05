@@ -102,33 +102,45 @@ def generate_coupon_schedule(security: Dict) -> List[Dict]:
     outstanding = security.get("outstanding_bdt_mill")
     snap_date   = security.get("settlement_date")
 
-    # Validate essentials
+    # Validate essentials. We anchor on the bond's true ISSUE + MATURITY terms
+    # (never the rolled GSOM next_coupon_date), so next_coupon_date is no longer
+    # required — it can be missing or already pushed to a working day.
     missing = [k for k, v in [
-        ("next_coupon_date", next_cd), ("issue_date", issue_date),
-        ("maturity_date", mat_date),   ("coupon_rate_pct", rate_pct),
-        ("outstanding_bdt_mill", outstanding)
+        ("issue_date", issue_date),    ("maturity_date", mat_date),
+        ("coupon_rate_pct", rate_pct), ("outstanding_bdt_mill", outstanding)
     ] if v is None]
     if missing:
         log.warning("ISIN %s: missing %s — cannot generate coupon schedule", isin, missing)
         return []
 
     period_m = _period_months(freq)
-    events   = []
 
-    # ── Build forward schedule from next_coupon_date to maturity ─────────────
-    d = next_cd
-    while d <= mat_date:
-        events.append((d, False))   # (scheduled_date, is_derived)
-        d = d + relativedelta(months=period_m)
+    # ── Canonical coupon dates ────────────────────────────────────────────────
+    # Coupons fall on the ISSUE-date anniversary, every `period_m` months, from
+    # the first coupon after issue up to and including maturity. Each date is
+    # computed as issue + n×period from the FIXED issue anchor (never
+    # cumulatively) so the day-of-month can never drift, and never inherits a
+    # rolled next_coupon_date. BB publishes next_coupon_date ALREADY pushed to
+    # the next working day; anchoring on it would corrupt the schedule's
+    # day-of-month for the bond's entire life. e.g. BD0928461054 issued
+    # 14-Jun-2023 → every coupon lands on the 14th; 14-Jun-2026 is a Sunday
+    # (a Bangladesh working day, weekend is Fri–Sat) so it is genuinely the
+    # 14th and is NOT dragged.
+    sched_dates = []
+    n = 1
+    while True:
+        d = issue_date + relativedelta(months=period_m * n)
+        if d > mat_date:
+            break
+        sched_dates.append(d)
+        n += 1
+    # The final coupon is paid alongside principal on the maturity date —
+    # guarantee it is present even if issue+n×period lands a day off maturity.
+    if not sched_dates or sched_dates[-1] != mat_date:
+        sched_dates = [d for d in sched_dates if d < mat_date]
+        sched_dates.append(mat_date)
 
-    # ── Build backward schedule from next_coupon_date-1period to issue ────────
-    d = next_cd - relativedelta(months=period_m)
-    while d >= issue_date:
-        events.append((d, True))
-        d = d - relativedelta(months=period_m)
-
-    # ── Sort ascending ────────────────────────────────────────────────────────
-    events.sort(key=lambda x: x[0])
+    events = [(d, False) for d in sched_dates]
 
     # ── Detect short first coupon ─────────────────────────────────────────────
     first_date = events[0][0] if events else None
@@ -141,38 +153,36 @@ def generate_coupon_schedule(security: Dict) -> List[Dict]:
     # ── Generate event records ────────────────────────────────────────────────
     result = []
     for i, (sched, is_derived) in enumerate(events):
-        # Coupon is derived if it doesn't match next or last from source
-        from_source = (sched == next_cd) or (sched == last_cd)
+        # Coupon is "from source" if it lines up (within a few days, since GSOM
+        # dates are rolled) with the reported next/last coupon date.
+        from_source = (
+            (next_cd is not None and abs((sched - next_cd).days) <= 4) or
+            (last_cd is not None and abs((sched - last_cd).days) <= 4)
+        )
         is_derived_flag = not from_source
 
-        # Period days: compare to previous coupon date for ACT365
-        if i > 0:
-            prev_date    = events[i-1][0]
-            period_days  = (sched - prev_date).days
-            amount       = _coupon_amount_act365(outstanding, rate_pct, period_days)
-            method       = _calc_method(freq, use_act365=True)
-            formula      = (
+        period_days = (sched - events[i-1][0]).days if i > 0 else None
+
+        if i == 0 and short_first:
+            # Genuine short FIRST coupon (bond issued mid-period) is truly
+            # partial — pro-rate by actual days since issue.
+            period_days = (sched - issue_date).days
+            amount      = _coupon_amount_act365(outstanding, rate_pct, period_days)
+            method      = _calc_method(freq, use_act365=True)
+            formula     = (
                 f"{outstanding:,.2f} × ({rate_pct}/100) × ({period_days}/365)"
-                f" = {amount:,.2f} [ACT365]"
+                f" = {amount:,.4f} [ACT365_SHORT_FIRST]"
             )
         else:
-            # First coupon: use APPROX unless it's a short coupon
-            if short_first and i == 0:
-                period_days  = (sched - issue_date).days
-                amount       = _coupon_amount_act365(outstanding, rate_pct, period_days)
-                method       = _calc_method(freq, use_act365=True)
-                formula      = (
-                    f"{outstanding:,.2f} × ({rate_pct}/100) × ({period_days}/365)"
-                    f" = {amount:,.2f} [ACT365_SHORT_FIRST]"
-                )
-            else:
-                period_days  = None
-                amount       = _coupon_amount_approx(outstanding, rate_pct, freq)
-                method       = _calc_method(freq, use_act365=False)
-                formula      = (
-                    f"{outstanding:,.2f} × ({rate_pct}/100) / {_divisor(freq)}"
-                    f" = {amount:,.2f} [{method}]"
-                )
+            # Every standard periodic coupon = face × rate ÷ payments-per-year
+            # (2 for half-yearly, 4 for quarterly). Market convention; not
+            # day-count-adjusted. e.g. BD0928221052 → face×rate/2 = 4621.38.
+            amount  = _coupon_amount_approx(outstanding, rate_pct, freq)
+            method  = _calc_method(freq, use_act365=False)
+            formula = (
+                f"{outstanding:,.2f} × ({rate_pct}/100) / {_divisor(freq)}"
+                f" = {amount:,.4f} [{method}]"
+            )
 
         payment_date, roll_days, roll_reason = roll_date(sched)
 
