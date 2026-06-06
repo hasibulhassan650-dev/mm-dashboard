@@ -1,8 +1,33 @@
+import datetime
 from fastapi import APIRouter
 from sqlalchemy import text
 from db import get_session
 
 router = APIRouter()
+
+# Datasets BB publishes every working day → "current" means we hold the last
+# working day's data. Event datasets (auctions / OMO operations) only exist on
+# the days BB actually transacts, so "current" means the job has *checked*
+# recently — there may simply be nothing newer to fetch.
+_DAILY_SERIES = {"callmoney", "fx", "refrate", "secondary", "flows"}
+_EVENT_SERIES = {"yields", "omo"}            # auctions / OMO ops — not daily
+# (securities is master data → treated like an event series: fresh if checked)
+
+
+def _last_working_day(today: datetime.date) -> datetime.date:
+    """Most recent Bangladesh working day strictly before `today`.
+    BD weekend = Friday (4) and Saturday (5)."""
+    d = today - datetime.timedelta(days=1)
+    while d.weekday() in (4, 5):
+        d -= datetime.timedelta(days=1)
+    return d
+
+
+def _hours_since(ts) -> float:
+    if ts is None:
+        return float("inf")
+    return (datetime.datetime.utcnow() - ts).total_seconds() / 3600.0
+
 
 # dataset key -> (table, ingest-timestamp column, data-date column | None, label)
 _SOURCES = {
@@ -40,22 +65,9 @@ def get_status():
     """
     session = get_session()
     try:
-        datasets = {}
-        for key, (table, col, datecol, label) in _SOURCES.items():
-            ing = session.execute(text(f"SELECT MAX({col}) FROM {table}")).scalar()  # noqa: S608
-            n = session.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar()  # noqa: S608
-            latest = None
-            if datecol:
-                d = session.execute(text(f"SELECT MAX({datecol}) FROM {table}")).scalar()  # noqa: S608
-                latest = str(d) if d is not None else None
-            datasets[key] = {
-                "label": label,
-                "ingested": ing.isoformat() if ing is not None else None,
-                "latest_data": latest,
-                "rows": n,
-            }
-
+        # ── When did the refresh job last RUN (regardless of whether data changed)? ──
         last_run = None
+        last_run_dt = None
         last_errors = []
         data_health = None
         import json
@@ -64,6 +76,7 @@ def get_status():
                 "SELECT run_utc, errors, quality FROM pipeline_runs ORDER BY run_utc DESC LIMIT 1"
             )).fetchone()
             if row:
+                last_run_dt = row[0]
                 last_run = row[0].isoformat() if row[0] is not None else None
                 if row[1]:
                     try: last_errors = json.loads(row[1])
@@ -76,11 +89,47 @@ def get_status():
             try:
                 row = session.execute(text("SELECT run_utc FROM pipeline_runs ORDER BY run_utc DESC LIMIT 1")).fetchone()
                 if row:
+                    last_run_dt = row[0]
                     last_run = row[0].isoformat() if row[0] is not None else None
             except Exception:
                 pass
 
+        today = datetime.date.today()
+        lwd = _last_working_day(today)
+        checked_recently = _hours_since(last_run_dt) < 14   # ≥1 of the 3 daily runs landed
+
+        # ── Per-dataset freshness, cadence-aware ──────────────────────────────
+        datasets = {}
+        for key, (table, col, datecol, label) in _SOURCES.items():
+            ing = session.execute(text(f"SELECT MAX({col}) FROM {table}")).scalar()  # noqa: S608
+            n = session.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar()  # noqa: S608
+            latest = None
+            latest_d = None
+            if datecol:
+                latest_d = session.execute(text(f"SELECT MAX({datecol}) FROM {table}")).scalar()  # noqa: S608
+                latest = str(latest_d) if latest_d is not None else None
+
+            # "current" = up to date for what BB has actually published.
+            if key in _DAILY_SERIES:
+                # daily series: current iff we hold at least the last working day
+                current = latest_d is not None and latest_d >= lwd
+            else:
+                # event/master series: nothing is "due" daily — current iff the
+                # job checked recently (so anything published would be captured)
+                current = checked_recently
+
+            datasets[key] = {
+                "label": label,
+                "ingested": ing.isoformat() if ing is not None else None,
+                "latest_data": latest,
+                "rows": n,
+                "current": bool(current),
+                "kind": "daily" if key in _DAILY_SERIES else "event",
+            }
+
         return {"datasets": datasets, "last_run": last_run, "last_run_errors": last_errors,
-                "data_health": data_health, "cadence": "Auto-refreshed 3×/day"}
+                "data_health": data_health, "cadence": "Auto-refreshed 3×/day",
+                "checked_recently": checked_recently,
+                "as_of": str(today), "last_working_day": str(lwd)}
     finally:
         session.close()

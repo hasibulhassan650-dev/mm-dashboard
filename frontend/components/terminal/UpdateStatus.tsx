@@ -50,9 +50,23 @@ export default function UpdateStatus() {
               <h3 className="panel-title">Data Updates</h3>
               <span style={{ fontSize: 11, color: "var(--fg-mute)" }}>{s?.cadence || "Auto-refreshed"}</span>
             </div>
-            <p style={{ fontSize: 11.5, color: "var(--fg-dim)", margin: "0 0 12px" }}>
-              Not live — data is fetched from Bangladesh Bank on a schedule.{" "}
-              <b style={{ color: healthy ? "var(--pos)" : "var(--warn)" }}>Last refresh {s?.last_run ? timeAgo(s.last_run) : "unknown"}</b>.
+            {/* WHEN THE REFRESH ACTUALLY RAN — the headline, separate from data dates */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+              background: "var(--bg-elev)", border: "1px solid var(--border)", borderRadius: 9,
+              padding: "9px 11px", margin: "0 0 8px" }}>
+              <span style={{ display: "flex", flexDirection: "column" }}>
+                <span style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: ".5px", color: "var(--fg-mute)" }}>Last refresh run</span>
+                <b className="mono" style={{ fontSize: 13, color: healthy ? "var(--pos)" : "var(--warn)" }} suppressHydrationWarning>
+                  {s?.last_run ? timeAgo(s.last_run) : "unknown"}
+                </b>
+              </span>
+              <span className="mono" suppressHydrationWarning style={{ fontSize: 10.5, color: "var(--fg-mute)", textAlign: "right" }}>
+                {s?.last_run ? new Date(s.last_run).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : ""}
+              </span>
+            </div>
+            <p style={{ fontSize: 11, color: "var(--fg-dim)", margin: "0 0 12px" }}>
+              Not live — fetched from Bangladesh Bank on a schedule ({s?.cadence?.toLowerCase() || "auto-refreshed"}).
+              Weekends &amp; non-auction days simply have no new data to publish.
             </p>
 
             {s?.data_health && (
@@ -80,24 +94,37 @@ export default function UpdateStatus() {
             <div className="metric-list">
               {keys.map((k) => {
                 const d = s!.datasets[k];
-                const old = hoursSince(d.ingested) > 30; // flag if no write in >~30h
+                // Prefer the backend's cadence-aware flag; degrade gracefully
+                // (pre-deploy) to a simple recency heuristic.
+                const current = d.current ?? (hoursSince(d.ingested) <= 30);
+                const tone = current ? "var(--pos)" : "var(--warn)";
                 return (
                   <div className="metric" key={k} style={{ padding: "8px 0", alignItems: "flex-start" }}>
                     <span style={{ display: "flex", flexDirection: "column" }}>
-                      <span style={{ color: "var(--fg)" }}>{d.label}</span>
-                      <span style={{ fontSize: 10.5, color: "var(--fg-mute)" }}>{d.rows.toLocaleString()} rows</span>
+                      <span style={{ color: "var(--fg)", display: "flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ width: 7, height: 7, borderRadius: "50%", background: tone, flexShrink: 0 }} />
+                        {d.label}
+                      </span>
+                      <span style={{ fontSize: 10.5, color: "var(--fg-mute)", marginLeft: 13 }}>{d.rows.toLocaleString()} rows</span>
                     </span>
                     <span style={{ textAlign: "right" }}>
-                      {d.latest_data && <b className="mono" style={{ fontSize: 12 }}>thru {fmtDate(d.latest_data)}</b>}
-                      <span style={{ display: "block", fontSize: 10.5, color: old ? "var(--warn)" : "var(--fg-mute)" }}>
-                        updated {d.ingested ? timeAgo(d.ingested) : "—"}
-                      </span>
+                      <b className="mono" style={{ fontSize: 11.5, color: tone }}>{current ? "Current" : "Behind"}</b>
+                      {d.latest_data && (
+                        <span className="mono" style={{ display: "block", fontSize: 11, color: "var(--fg-dim)" }}>
+                          latest {fmtDate(d.latest_data)}
+                        </span>
+                      )}
                     </span>
                   </div>
                 );
               })}
               {!s && <div style={{ color: "var(--fg-mute)", fontSize: 12, padding: "8px 0" }}>Loading…</div>}
             </div>
+            <p style={{ fontSize: 10, color: "var(--fg-mute)", margin: "10px 0 0", lineHeight: 1.5 }}>
+              <span style={{ color: "var(--pos)" }}>● Current</span> = holds the latest data Bangladesh Bank has published
+              (daily series ≥ last working day; auctions/OMO checked each run).
+              <span style={{ color: "var(--warn)" }}> ● Behind</span> = genuinely lagging — worth a look.
+            </p>
           </div>
         </>
       )}

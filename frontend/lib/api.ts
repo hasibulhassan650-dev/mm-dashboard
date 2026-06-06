@@ -100,6 +100,8 @@ export interface DatasetStatus {
   ingested: string | null;
   latest_data: string | null;
   rows: number;
+  current?: boolean;        // cadence-aware: up to date for what BB has published
+  kind?: "daily" | "event"; // daily series vs auction/operation series
 }
 export interface DataHealth {
   ok: boolean | null;
@@ -113,6 +115,9 @@ export interface MetaStatus {
   last_run_errors: string[];
   data_health?: DataHealth | null;
   cadence: string;
+  checked_recently?: boolean;
+  as_of?: string;
+  last_working_day?: string;
 }
 
 export type FreshnessKey =
