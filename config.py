@@ -45,9 +45,9 @@ else:
     DB_URL = f"sqlite:///{DB_PATH}"
 
 # Source URLs
-GSOM_TBOND_URL    = "https://gsom.bb.org.bd/mtm.php"
-GSOM_FRTB_URL     = "https://gsom.bb.org.bd/mtm-frtb.php"
-GSOM_TBILL_URL    = "https://gsom.bb.org.bd/mtm-bill.php"
+GSOM_TBOND_URL    = "https://gsom.bb.org.bd/index.php/tbond"
+GSOM_FRTB_URL     = "https://gsom.bb.org.bd/index.php/frtb"
+GSOM_TBILL_URL    = "https://gsom.bb.org.bd/index.php/tbill"
 GSOM_FRTB_DL_URL  = "https://gsom.bb.org.bd/api/dl_frtb_mtm_data.php"
 GSOM_TBOND_DL_URL = "https://gsom.bb.org.bd/api/dl_tbond_mtm_data.php"
 GSOM_TBILL_DL_URL = "https://gsom.bb.org.bd/api/dl_tbill_mtm_data.php"

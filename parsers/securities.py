@@ -74,7 +74,7 @@ def _parse_header(soup: BeautifulSoup) -> Dict:
 
     for text in candidates:
         if header["settlement_date"] is None:
-            m = re.search(r"Settlement\s+Date[:\s]+(\d{2}-[A-Z]{3}-\d{4})", text, re.I)
+            m = re.search(r"Settlement\s+Date[:\s]+(\d{2}-[A-Z]{3}-\d{2,4})", text, re.I)
             if m:
                 header["settlement_date"] = parse_gsom_date(m.group(1))
         if header["yield_date"] is None:
