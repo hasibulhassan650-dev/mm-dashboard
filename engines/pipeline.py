@@ -93,25 +93,52 @@ def _upsert_maturity(session, event: dict):
 
 
 def _upsert_coupon(session, event: dict):
-    """Insert coupon event or update amount if outstanding changed."""
+    """Insert coupon event, or update it.
+
+    FUTURE coupons are fully re-projected from today's outstanding and rate.
+    PAST coupons are frozen: an FRTB's historical payments were fixed at their
+    own period's reset rate, and a re-opened bond's past coupons used the
+    then-outstanding — regenerating either with today's values rewrites
+    history (this is how BD0927141038 drifted: amount was rewritten with the
+    new 11.67% while coupon_rate_used_pct kept the old 11.72%).
+    Self-heal: if a past row is internally inconsistent (that partial-update
+    artifact), restore the amount from its own recorded rate and outstanding.
+    """
     from sqlalchemy import select
     stmt = select(CouponEvent).where(
         CouponEvent.isin           == event["isin"],
         CouponEvent.scheduled_date == event["scheduled_date"],
     )
     existing = session.execute(stmt).scalar_one_or_none()
-    if existing:
-        existing.amount_bdt_mill           = event["amount_bdt_mill"]
-        existing.payment_date              = event["payment_date"]
-        existing.outstanding_used_bdt_mill = event["outstanding_used_bdt_mill"]
-        existing.formula_string            = event["formula_string"]
-        existing.calc_method               = event["calc_method"]
-        existing.data_quality              = event["data_quality"]
-    else:
+    if existing is None:
         session.add(CouponEvent(**{
             k: v for k, v in event.items()
             if k in CouponEvent.__table__.columns.keys()
         }))
+        return
+
+    existing.payment_date = event["payment_date"]
+    if event["scheduled_date"] >= datetime.date.today():
+        existing.amount_bdt_mill           = event["amount_bdt_mill"]
+        existing.coupon_rate_used_pct      = event["coupon_rate_used_pct"]
+        existing.outstanding_used_bdt_mill = event["outstanding_used_bdt_mill"]
+        existing.formula_string            = event["formula_string"]
+        existing.calc_method               = event["calc_method"]
+        existing.data_quality              = event["data_quality"]
+    elif (str(existing.calc_method or "").startswith("APPROX_")
+          and existing.outstanding_used_bdt_mill and existing.coupon_rate_used_pct):
+        div = 2 if str(existing.calc_method).endswith("HFLY") else 4
+        expected = existing.outstanding_used_bdt_mill * (existing.coupon_rate_used_pct / 100) / div
+        if abs((existing.amount_bdt_mill or 0) - expected) > max(0.5, expected * 0.001):
+            log.info("Coupon self-heal %s %s: amount %.4f -> %.4f (from recorded rate %.4f%%)",
+                     event["isin"], event["scheduled_date"],
+                     existing.amount_bdt_mill or 0, expected, existing.coupon_rate_used_pct)
+            existing.amount_bdt_mill = round(expected, 4)
+            existing.formula_string  = (
+                f"{existing.outstanding_used_bdt_mill:,.2f} × "
+                f"({existing.coupon_rate_used_pct}/100) / {div}"
+                f" = {expected:,.4f} [{existing.calc_method}] (restored from recorded rate)"
+            )
 
 
 def _upsert_auction(session, event: dict):
