@@ -13,7 +13,7 @@ import datetime
 import pytest
 from calendar_utils import (
     load_holidays, is_working_day, is_weekend,
-    next_working_day, roll_date, auction_settlement_date,
+    get_next_working_day, roll_date, auction_settlement_date,
     parse_gsom_date, working_day_range,
 )
 
@@ -69,28 +69,28 @@ class TestIsWorkingDay:
 class TestNextWorkingDay:
     def test_already_working_inclusive(self):
         sun = datetime.date(2026, 4, 5)
-        assert next_working_day(sun, inclusive=True) == sun
+        assert get_next_working_day(sun)["result_date"] == sun
 
     def test_already_working_exclusive(self):
         sun = datetime.date(2026, 4, 5)
         # exclusive=False → start from Monday Apr 6
-        result = next_working_day(sun, inclusive=False)
+        result = get_next_working_day(sun + datetime.timedelta(days=1))["result_date"]
         assert result == datetime.date(2026, 4, 6)
 
     def test_friday_rolls_to_sunday(self):
         fri = datetime.date(2026, 4, 10)
-        result = next_working_day(fri, inclusive=True)
+        result = get_next_working_day(fri)["result_date"]
         assert result == datetime.date(2026, 4, 12)   # Sunday
 
     def test_saturday_rolls_to_sunday(self):
         sat = datetime.date(2026, 4, 11)
-        result = next_working_day(sat, inclusive=True)
+        result = get_next_working_day(sat)["result_date"]
         assert result == datetime.date(2026, 4, 12)
 
     def test_holiday_monday_rolls_to_tuesday(self):
         mon = datetime.date(2026, 3, 26)   # Independence Day
         load_holidays({mon})
-        result = next_working_day(mon, inclusive=True)
+        result = get_next_working_day(mon)["result_date"]
         assert result == datetime.date(2026, 3, 29)   # skips fri/sat too
         # Mon holiday → next: Tue Mar 27 ✓
         assert result == datetime.date(2026, 3, 29) or result == datetime.date(2026, 3, 27)
@@ -103,7 +103,7 @@ class TestNextWorkingDay:
         load_holidays(eid)
         # Thu Mar 26 is working. Fri 27 = weekend, Sat 28 = weekend,
         # Sun 29 = working ← first working day
-        result = next_working_day(datetime.date(2026, 3, 27), inclusive=True)
+        result = get_next_working_day(datetime.date(2026, 3, 27))["result_date"]
         assert result == datetime.date(2026, 3, 29)
 
     def test_eid_cluster_from_thursday(self):
@@ -113,7 +113,7 @@ class TestNextWorkingDay:
                datetime.date(2026, 4, 1)}
         load_holidays(eid)
         adate = datetime.date(2026, 3, 26)   # Thu
-        settled, roll_days, reason = auction_settlement_date(adate)
+        settled, roll_days, reason, _ = auction_settlement_date(adate)
         # next after Thu: Fri(weekend), Sat(weekend), Sun 29 Mar (working, no holiday)
         assert settled == datetime.date(2026, 3, 29)
 
@@ -124,8 +124,8 @@ class TestNextWorkingDay:
             for i in range(15)
         }
         load_holidays(big_block)
-        with pytest.raises(ValueError, match="exceeded"):
-            next_working_day(datetime.date(2026, 4, 6), inclusive=True)
+        with pytest.raises(ValueError, match="no valid working day"):
+            get_next_working_day(datetime.date(2026, 4, 6))
 
 
 # ── auction_settlement_date ───────────────────────────────────────────────────
@@ -133,28 +133,28 @@ class TestNextWorkingDay:
 class TestAuctionSettlement:
     def test_sunday_auction_settles_monday(self):
         sun = datetime.date(2026, 4, 5)
-        settled, roll_days, reason = auction_settlement_date(sun)
+        settled, roll_days, reason, _ = auction_settlement_date(sun)
         assert settled == datetime.date(2026, 4, 6)
         assert roll_days == 0   # no extra roll, Mon is working
-        assert reason == ""
+        assert reason == "No adjustment needed"
 
     def test_wednesday_auction_settles_thursday(self):
         wed = datetime.date(2026, 4, 8)
-        settled, roll_days, _ = auction_settlement_date(wed)
+        settled, roll_days, _, _ = auction_settlement_date(wed)
         assert settled == datetime.date(2026, 4, 9)
 
     def test_thursday_auction_skips_weekend_to_sunday(self):
         thu = datetime.date(2026, 4, 9)
-        settled, roll_days, reason = auction_settlement_date(thu)
+        settled, roll_days, reason, _ = auction_settlement_date(thu)
         assert settled == datetime.date(2026, 4, 12)  # Sunday
         assert roll_days == 2                          # Fri+Sat skipped
-        assert "WEEKEND" in reason
+        assert "FRIDAY" in reason
 
     def test_thursday_auction_holiday_monday_goes_to_tuesday(self):
         thu = datetime.date(2026, 3, 26)
         load_holidays({datetime.date(2026, 3, 27)})   # Fri is already weekend
         # After Thu → Fri(weekend) → Sat(weekend) → Sun Mar 29 (working) ✓
-        settled, _, _ = auction_settlement_date(thu)
+        settled, _, _, _ = auction_settlement_date(thu)
         assert settled == datetime.date(2026, 3, 29)
 
 
@@ -173,7 +173,7 @@ class TestRollDate:
         payment, roll, reason = roll_date(d)
         assert payment == datetime.date(2026, 4, 12)
         assert roll == 2
-        assert "WEEKEND" in reason
+        assert "FRIDAY" in reason
 
     def test_holiday_rolls_forward(self):
         d = datetime.date(2026, 5, 1)   # Labour Day (Friday → irrelevant, use Mon)
@@ -252,7 +252,7 @@ class TestEidIntegration:
                datetime.date(2026, 4, 7),
                datetime.date(2026, 4, 8)}
         load_holidays(eid)
-        settled, roll_days, reason = auction_settlement_date(datetime.date(2026, 4, 5))
+        settled, roll_days, reason, _ = auction_settlement_date(datetime.date(2026, 4, 5))
         assert settled == datetime.date(2026, 4, 9)
         assert roll_days == 3
         assert "HOLIDAY" in reason

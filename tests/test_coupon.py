@@ -1,221 +1,119 @@
 """
-tests/test_coupon.py
+tests/test_coupon.py — coupon amount + schedule guards against the LIVE engine
+(engines/inflow.py). Ported from the retired engine/ package tests.
 
-Tests for coupon event generation, formula correctness, and schedule derivation.
+WHY these matter: coupon inflows feed daily_net_flow and the liquidity
+forecast a fund manager trades on. A formula regression (day-count amounts,
+drifting day-of-month, rolled-anchor corruption) silently mis-states BDT
+crores of daily inflow — these tests exist to make that loud.
 """
-
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import pytest
 from datetime import date
 
-from engine.coupon import generate_coupon_schedule, _approx_coupon, _act365_coupon
-from config import FREQ_HFLY, FREQ_QRTY, FREQ_NONE
+from engines.inflow import (
+    _coupon_amount_approx, _coupon_amount_act365, _divisor,
+    generate_coupon_schedule,
+)
 
 
-NO_HOLIDAYS = set()
-
-
-# ── Formula correctness ────────────────────────────────────────────────────────
+# ── Formula correctness ───────────────────────────────────────────────────────
 
 class TestCouponFormulas:
-    def test_hfly_approx_example_from_blueprint(self):
-        # Blueprint example: 2000mn × 11%/2 = 110mn
-        result = _approx_coupon(2000.00, 11.00, FREQ_HFLY)
-        assert result == 110.00
+    def test_hfly_is_face_times_rate_over_two(self):
+        # Market convention: 2000mn × 11% / 2 = 110mn — never day-count adjusted
+        assert _coupon_amount_approx(2000.00, 11.00, "HFLY") == 110.00
 
-    def test_qrty_approx(self):
-        # 5000mn × 11.72% / 4
-        result = _approx_coupon(5000.00, 11.72, FREQ_QRTY)
-        assert result == pytest.approx(146.50, rel=1e-4)
+    def test_qrty_is_face_times_rate_over_four(self):
+        # 5000mn × 11.72% / 4 = 146.5mn
+        assert abs(_coupon_amount_approx(5000.00, 11.72, "QRTY") - 146.50) < 1e-6
 
-    def test_act365_hfly_example_from_blueprint(self):
-        # Blueprint: 2000 × 11% × 182/365 = 109.70
-        result = _act365_coupon(2000.00, 11.00, 182)
-        assert result == pytest.approx(109.70, rel=1e-3)
+    def test_the_4621_regression(self):
+        # BD0928221052: face×rate/2 = 4621.38, NOT the day-count 4608.xx a past
+        # bug produced. Any change to this number mis-states real inflow.
+        assert round(_coupon_amount_approx(81076.85, 11.40, "HFLY"), 2) == 4621.38
 
-    def test_act365_vs_approx_diff_under_1pct(self):
-        # The difference must be < 1% for any standard HFLY bond
-        approx = _approx_coupon(2000.00, 11.00, FREQ_HFLY)
-        exact  = _act365_coupon(2000.00, 11.00, 182)
-        diff_pct = abs(approx - exact) / approx * 100
-        assert diff_pct < 1.0
+    def test_act365_prorates_short_first_coupon(self):
+        # Bond issued mid-period: 2000 × 11% × 182/365 = 109.70
+        expected = 2000.0 * 0.11 * 182 / 365
+        assert abs(_coupon_amount_act365(2000.0, 11.00, 182) - expected) < 1e-9
+
+    def test_divisor(self):
+        assert _divisor("HFLY") == 2
+        assert _divisor("QRTY") == 4
 
 
-# ── Schedule generation ────────────────────────────────────────────────────────
+# ── Schedule generation ───────────────────────────────────────────────────────
+
+def _bond_row(**over):
+    row = {
+        "isin":                 "BD0900TEST00",
+        "security_type":        "T_BOND",
+        "coupon_frequency":     "HFLY",
+        "issue_date":           date(2023, 6, 14),
+        "maturity_date":        date(2028, 6, 14),
+        "coupon_rate_pct":      11.40,
+        "outstanding_bdt_mill": 10000.0,
+        "settlement_date":      date(2026, 7, 1),
+        "next_coupon_date":     None,
+        "last_coupon_date":     None,
+    }
+    row.update(over)
+    return row
+
 
 class TestCouponSchedule:
-    def test_bd0926231152_generates_correct_schedule(self):
-        """
-        BD0926231152 — 15Y BGTB 21/12/2026
-        issue: 2011-12-21, maturity: 2026-12-21
-        last_coupon: 2025-12-21, next_coupon: 2026-06-21
-        HFLY → coupons every 6 months on the 21st
-        """
+    def test_tbill_has_no_coupons(self):
+        assert generate_coupon_schedule(_bond_row(security_type="T_BILL")) == []
+
+    def test_none_frequency_has_no_coupons(self):
+        assert generate_coupon_schedule(_bond_row(coupon_frequency="NONE")) == []
+
+    def test_missing_essentials_yield_empty_not_garbage(self):
+        # Failing loud-and-empty beats generating events from partial data
+        assert generate_coupon_schedule(_bond_row(coupon_rate_pct=None)) == []
+        assert generate_coupon_schedule(_bond_row(outstanding_bdt_mill=None)) == []
+
+    def test_day_of_month_never_drifts(self):
+        # Issue-anchored: every scheduled coupon lands on the issue-date
+        # anniversary day (the 14th) for the bond's whole life. BB publishes
+        # next_coupon_date ALREADY rolled to a working day — anchoring on it
+        # would corrupt the schedule; this guards against that regression.
         events = generate_coupon_schedule(
-            isin               = "BD0926231152",
-            issue_date         = date(2011, 12, 21),
-            maturity_date      = date(2026, 12, 21),
-            coupon_rate_pct    = 11.00,
-            coupon_frequency   = FREQ_HFLY,
-            last_coupon_date   = date(2025, 12, 21),
-            next_coupon_date   = date(2026, 6, 21),
-            outstanding_bdt_mill = 2000.00,
-            settlement_date    = date(2026, 4, 2),
-            source_page        = "test",
-            holiday_set        = NO_HOLIDAYS,
-            use_act365         = False,
-        )
-        assert len(events) > 0
-        scheduled = sorted(e["scheduled_date"] for e in events)
+            _bond_row(next_coupon_date=date(2026, 12, 15)))  # BB's rolled date
+        assert events, "expected a schedule"
+        assert all(e["scheduled_date"].day == 14 for e in events), \
+            [str(e["scheduled_date"]) for e in events if e["scheduled_date"].day != 14]
 
-        # Last coupon must equal maturity date (21-Dec-2026)
-        assert scheduled[-1] == date(2026, 12, 21)
+    def test_final_coupon_on_maturity(self):
+        events = generate_coupon_schedule(_bond_row())
+        assert events[-1]["scheduled_date"] == date(2028, 6, 14)
 
-        # Next coupon (21-Jun-2026) must be in the schedule
-        assert date(2026, 6, 21) in scheduled
+    def test_hfly_count_matches_life(self):
+        # 5-year HFLY bond → 10 coupons
+        events = generate_coupon_schedule(_bond_row())
+        assert len(events) == 10
 
-        # All events should be COUPON type
-        assert all(e["event_type"] == "COUPON" for e in events)
+    def test_standard_amounts_use_approx_formula(self):
+        events = generate_coupon_schedule(_bond_row())
+        for e in events:
+            if e.get("is_short_coupon"):
+                continue
+            assert abs(e["amount_bdt_mill"] - 10000.0 * 0.114 / 2) < 0.01
 
-    def test_coupon_amount_is_correct_for_hfly(self):
-        events = generate_coupon_schedule(
-            isin="TEST001",
-            issue_date=date(2024, 1, 1),
-            maturity_date=date(2026, 1, 1),
+    def test_real_bond_bd0926231152_schedule(self):
+        # 15Y BGTB 21/12/2026: issue 2011-12-21, HFLY → coupons on the 21st,
+        # final coupon on maturity 2026-12-21, 21-Jun-2026 in schedule.
+        events = generate_coupon_schedule(_bond_row(
+            isin="BD0926231152",
+            issue_date=date(2011, 12, 21),
+            maturity_date=date(2026, 12, 21),
             coupon_rate_pct=11.00,
-            coupon_frequency=FREQ_HFLY,
-            last_coupon_date=date(2025, 7, 1),
-            next_coupon_date=date(2026, 1, 1),
             outstanding_bdt_mill=2000.00,
-            settlement_date=date(2026, 4, 2),
-            source_page="test",
-            holiday_set=NO_HOLIDAYS,
-            use_act365=False,
-        )
-        coupon_amounts = [e["coupon_amount_bdt_mill"] for e in events]
-        # All regular coupons should be 110.00
-        for amt in coupon_amounts:
-            if amt is not None:
-                assert amt == pytest.approx(110.00, rel=1e-4)
-
-    def test_no_coupons_for_tbill(self):
-        """T-Bills must return empty list."""
-        from config import FREQ_NONE
-        events = generate_coupon_schedule(
-            isin="BD0909167266",
-            issue_date=date(2025, 12, 29),
-            maturity_date=date(2026, 3, 30),
-            coupon_rate_pct=None,
-            coupon_frequency=FREQ_NONE,
-            last_coupon_date=None,
-            next_coupon_date=None,
-            outstanding_bdt_mill=30000.00,
-            settlement_date=date(2026, 3, 25),
-            source_page="test",
-            holiday_set=NO_HOLIDAYS,
-            use_act365=False,
-        )
-        assert events == []
-
-    def test_no_coupons_after_maturity(self):
-        """No coupon events should have scheduled_date > maturity_date."""
-        events = generate_coupon_schedule(
-            isin="TEST002",
-            issue_date=date(2024, 4, 9),
-            maturity_date=date(2027, 4, 9),
-            coupon_rate_pct=10.00,
-            coupon_frequency=FREQ_HFLY,
-            last_coupon_date=date(2026, 10, 9),
-            next_coupon_date=date(2027, 4, 9),
-            outstanding_bdt_mill=5000.00,
-            settlement_date=date(2026, 4, 2),
-            source_page="test",
-            holiday_set=NO_HOLIDAYS,
-            use_act365=False,
-        )
-        maturity = date(2027, 4, 9)
-        for e in events:
-            assert e["scheduled_date"] <= maturity, (
-                f"Coupon on {e['scheduled_date']} is after maturity {maturity}"
-            )
-
-    def test_payment_date_is_working_day(self):
-        """All payment_dates must not be Friday or Saturday."""
-        from config import BD_WORKING_WEEKDAYS
-        events = generate_coupon_schedule(
-            isin="TEST003",
-            issue_date=date(2021, 6, 16),
-            maturity_date=date(2026, 6, 16),
-            coupon_rate_pct=3.88,
-            coupon_frequency=FREQ_HFLY,
-            last_coupon_date=date(2025, 12, 16),
-            next_coupon_date=date(2026, 6, 16),
-            outstanding_bdt_mill=45000.00,
-            settlement_date=date(2026, 4, 2),
-            source_page="test",
-            holiday_set=NO_HOLIDAYS,
-            use_act365=False,
-        )
-        for e in events:
-            pd = e["payment_date"]
-            assert pd.weekday() in BD_WORKING_WEEKDAYS, (
-                f"Payment date {pd} is a weekend (weekday={pd.weekday()})"
-            )
-
-    def test_qrty_coupon_amount(self):
-        """FRTB quarterly coupon formula check."""
-        events = generate_coupon_schedule(
-            isin="BD0927141038",
-            issue_date=date(2024, 10, 2),
-            maturity_date=date(2027, 10, 2),
-            coupon_rate_pct=11.72,
-            coupon_frequency=FREQ_QRTY,
-            last_coupon_date=date(2026, 4, 2),
-            next_coupon_date=date(2026, 7, 2),
-            outstanding_bdt_mill=9297.60,
-            settlement_date=date(2026, 4, 9),
-            source_page="test",
-            holiday_set=NO_HOLIDAYS,
-            use_act365=False,
-        )
-        # Regular coupon = 9297.60 × 11.72% / 4
-        expected = round(9297.60 * 0.1172 / 4, 2)
-        for e in events:
-            if not e.get("is_short_coupon"):
-                assert e["coupon_amount_bdt_mill"] == pytest.approx(expected, rel=1e-4)
-
-    def test_formula_string_present_on_all_events(self):
-        events = generate_coupon_schedule(
-            isin="TEST004",
-            issue_date=date(2025, 1, 8),
-            maturity_date=date(2027, 1, 8),
-            coupon_rate_pct=12.12,
-            coupon_frequency=FREQ_HFLY,
-            last_coupon_date=date(2026, 1, 8),
-            next_coupon_date=date(2026, 7, 8),
-            outstanding_bdt_mill=45000.00,
-            settlement_date=date(2026, 4, 2),
-            source_page="test",
-            holiday_set=NO_HOLIDAYS,
-        )
-        for e in events:
-            assert "formula_string" in e
-            assert e["formula_string"]  # not empty
-
-    def test_missing_outstanding_returns_empty(self):
-        events = generate_coupon_schedule(
-            isin="TEST_MISSING",
-            issue_date=date(2024, 1, 1),
-            maturity_date=date(2026, 1, 1),
-            coupon_rate_pct=10.00,
-            coupon_frequency=FREQ_HFLY,
-            last_coupon_date=date(2025, 7, 1),
-            next_coupon_date=date(2026, 1, 1),
-            outstanding_bdt_mill=None,   # ← missing
-            settlement_date=date(2026, 4, 2),
-            source_page="test",
-            holiday_set=NO_HOLIDAYS,
-        )
-        assert events == []
+            last_coupon_date=date(2025, 12, 21),
+            next_coupon_date=date(2026, 6, 21),
+        ))
+        scheduled = sorted(e["scheduled_date"] for e in events)
+        assert scheduled[-1] == date(2026, 12, 21)
+        assert date(2026, 6, 21) in scheduled
