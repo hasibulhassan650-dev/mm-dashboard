@@ -28,9 +28,15 @@ _TYPE_MAP = {
     "treasury bill": "T_BILL",
 }
 _FREQ_MAP = {
-    "hfly": "HFLY",
-    "qrty": "QRTY",
+    "hfly":        "HFLY",
+    "qrty":        "QRTY",
+    "qtly":        "QRTY",   # new GSOM site (July 2026) prints QTLY for quarterly
+    "half yearly": "HFLY",
+    "quarterly":   "QRTY",
 }
+# Fallback must fit the securities.coupon_frequency varchar(6) column —
+# a 7-char "UNKNOWN" aborted the whole store transaction on Postgres.
+_FREQ_FALLBACK = "UNKNWN"
 
 
 def _clean_num(s: str) -> Optional[float]:
@@ -141,7 +147,7 @@ def parse_tbond_or_frtb(html: str, source_url: str, security_type: str) -> List[
             "maturity_date_raw":      cells[5].strip(),
             "maturity_date":          parse_gsom_date(cells[5]),
             "coupon_rate_pct":        _clean_num(cells[6]),
-            "coupon_frequency":       _FREQ_MAP.get(cells[7].strip().lower(), "UNKNOWN"),
+            "coupon_frequency":       _FREQ_MAP.get(cells[7].strip().lower(), _FREQ_FALLBACK),
             "last_coupon_date_raw":   cells[8].strip(),
             "last_coupon_date":       parse_gsom_date(cells[8]),
             "next_coupon_date_raw":   cells[9].strip(),
