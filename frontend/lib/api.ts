@@ -186,6 +186,7 @@ export interface LiquidityForecastDay {
 }
 export interface LiquidityForecast {
   as_of: string; days: LiquidityForecastDay[]; unit: string;
+  auction_horizon?: string | null;
 }
 
 export interface CallMoneyDailySummary {

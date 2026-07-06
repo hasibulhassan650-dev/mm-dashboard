@@ -281,6 +281,29 @@ def _parse_tables_from_html(html: str) -> List[Dict]:
     return rows
 
 
+def _fetch_with_chrome_f5() -> Optional[str]:
+    """
+    Clear BB's F5 challenge with the shared undetected-chromedriver helper,
+    then GET the calendar with curl_cffi — the same proven pattern the
+    treasury/refrate fetchers use in CI (Playwright is not installed there,
+    so before this existed the CI silently fell back to the CSV seed, which
+    went stale at the FY2025-26 → FY2026-27 rollover).
+    """
+    try:
+        from fetchers.bb_session import get_f5_cookies, bb_get
+        cookies, ua = get_f5_cookies(_AUC_URL, wait_selector="table")
+        html = bb_get(_AUC_URL, cookies, ua)
+        if html and ("TSPD" in html or "bobcmn" in html):
+            log.warning("Chrome/F5: got bot challenge page — skipping")
+            return None
+        if html:
+            log.info("Chrome/F5: fetched auction calendar (%d bytes)", len(html))
+        return html
+    except Exception as exc:
+        log.error("Chrome/F5 auction calendar fetch failed: %s", exc)
+        return None
+
+
 def _fetch_with_playwright() -> Optional[str]:
     try:
         from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
@@ -321,20 +344,22 @@ def fetch_live_auction_rows(
     Falls back to CSV seed if live fetch fails.
     Merges both sources — live overrides CSV for same keys.
     """
-    # ── Try live fetch ────────────────────────────────────────────────────────
-    html = _fetch_with_playwright()
+    # ── Try live fetch: Chrome/F5 first (works in CI), then Playwright ──────
     live_rows = []
     source_method = "CSV_ONLY"
-
-    if html:
+    for method, fetcher in (("CHROME_F5", _fetch_with_chrome_f5),
+                            ("PLAYWRIGHT", _fetch_with_playwright)):
+        html = fetcher()
+        if not html:
+            continue
         try:
             live_rows = _parse_tables_from_html(html)
             if live_rows:
-                source_method = "PLAYWRIGHT"
-            else:
-                log.warning("Playwright got HTML but parsed 0 rows — falling back to CSV")
+                source_method = method
+                break
+            log.warning("%s got HTML but parsed 0 rows", method)
         except Exception as exc:
-            log.error("Live HTML parse error: %s", exc)
+            log.error("Live HTML parse error (%s): %s", method, exc)
 
     # ── Always load CSV as base ───────────────────────────────────────────────
     csv_rows = parse_auction_csv(date_from, date_to)
@@ -363,10 +388,17 @@ def fetch_live_auction_rows(
                  len(all_rows), len(live_rows), len(csv_rows), new_count, updated)
     else:
         all_rows = csv_rows
-        log.warning(
-            "Using CSV seed only (%d rows). "
-            "Install Playwright for live: pip install playwright && python -m playwright install chromium",
-            len(csv_rows)
+        log.warning("Using CSV seed only (%d rows) — live calendar fetch failed", len(csv_rows))
+
+    # ── Staleness alarm: fail LOUD, never silently serve an outdated calendar ──
+    today_s = str(datetime.date.today())
+    max_d = max((str(r["auction_date"])[:10] for r in all_rows), default=None)
+    if max_d is None or max_d < today_s:
+        log.error(
+            "AUCTION CALENDAR STALE [source=%s]: newest known auction is %s (today %s). "
+            "Forward auction outflows are MISSING, not zero — planned-outflow figures "
+            "downstream are unreliable until BB's current-FY calendar is fetched.",
+            source_method, max_d, today_s
         )
 
     # ── Date filter ───────────────────────────────────────────────────────────

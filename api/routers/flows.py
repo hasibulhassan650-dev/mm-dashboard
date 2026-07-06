@@ -64,6 +64,13 @@ def get_forecast(days: int = Query(21, ge=7, le=60)):
             ORDER BY flow_date
         """), {"today": str(today), "end": str(end)}).fetchall()
 
+        # Honesty guard: auction outflows beyond the last known auction event
+        # are UNKNOWN (calendar not ingested), not zero. Expose the horizon so
+        # the UI can say so instead of implying a flush month.
+        auction_horizon = session.execute(text(
+            "SELECT MAX(settlement_date) FROM auction_events"
+        )).scalar()
+
         omo_by_day: dict = {}
         for r in omo:
             omo_by_day.setdefault(str(r.maturity_date), []).append({
@@ -100,7 +107,8 @@ def get_forecast(days: int = Query(21, ge=7, le=60)):
             })
             d += datetime.timedelta(days=1)
 
-        return {"as_of": str(today), "days": out, "unit": "BDT crore"}
+        return {"as_of": str(today), "days": out, "unit": "BDT crore",
+                "auction_horizon": str(auction_horizon) if auction_horizon else None}
     finally:
         session.close()
 

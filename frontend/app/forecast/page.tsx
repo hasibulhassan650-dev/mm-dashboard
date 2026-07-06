@@ -34,9 +34,27 @@ export default async function ForecastPage() {
     ? { label: "DRAINING — upward pressure on call rates", color: "var(--warn)" }
     : { label: "FLUSH — downward pressure on call rates", color: "var(--info)" };
 
+  // Auction visibility: beyond the last ingested auction event, auction
+  // outflows are UNKNOWN — say so, never show them as zero.
+  const windowEnd = days.at(-1)?.date ?? null;
+  const horizon = forecast.auction_horizon ?? null;
+  const auctionsBlind = windowEnd != null && (horizon == null || horizon < windowEnd);
+
   return (
     <>
       <div style={{ marginBottom: "var(--gap)" }}><Freshness updated={fresh.flows} /></div>
+
+      {auctionsBlind && (
+        <div style={{
+          border: "1px solid var(--warn)", borderRadius: "var(--radius-sm)",
+          padding: "8px 12px", marginBottom: "var(--gap)", fontSize: 12.5,
+          color: "var(--warn)", background: "color-mix(in oklab, var(--warn) 10%, transparent)",
+        }}>
+          ⚠ AUCTION DATA INCOMPLETE — last known auction settlement is {horizon ? fmtDate(horizon) : "none on record"}.
+          Days after that show NO auction outflow because the calendar isn&apos;t ingested yet, not because none is scheduled.
+          Net figures on those days overstate liquidity. BB auctions T-bills nearly every week.
+        </div>
+      )}
 
       <div className="kpi-strip" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
         <div className="kpi">
