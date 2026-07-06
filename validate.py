@@ -97,6 +97,51 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
                    "WHERE weighted_avg_rate IS NOT NULL AND (weighted_avg_rate < 80 OR weighted_avg_rate > 200)"):
             add("fx", f"{r[0]} USD/BDT {r[1]} implausible")
 
+        # ---- freshness expectations (catch silent-stale failures) ----
+        # A fetch that "succeeds" but stores nothing new must FAIL here, not
+        # pass unnoticed (July 2026: FY-rollover left the auction calendar
+        # seed stale → "no auctions next month" presented as fact).
+        today = datetime.date.today()
+
+        def _max_date(sql) -> datetime.date | None:
+            v = s.execute(text(sql)).scalar()
+            if isinstance(v, str):
+                v = datetime.date.fromisoformat(v[:10])
+            return v
+
+        FRESHNESS_RULES = [
+            # (dataset, sql for max date, min acceptable, description)
+            ("auctions_forward", "SELECT MAX(settlement_date) FROM auction_events",
+             today + datetime.timedelta(days=7),
+             "no planned auction ≥7 days ahead — BB auctions T-bills weekly; calendar likely stale"),
+            ("secondary", "SELECT MAX(settlement_date) FROM mtm_snapshots",
+             today - datetime.timedelta(days=4),
+             "secondary MTM stale >4 days (weekend+holiday buffer)"),
+            ("callmoney", "SELECT MAX(trade_date) FROM call_money_rates",
+             today - datetime.timedelta(days=4),
+             "call money stale >4 days"),
+            ("refrate", "SELECT MAX(trade_date) FROM ref_rates",
+             today - datetime.timedelta(days=4),
+             "reference rates stale >4 days"),
+            ("omo", "SELECT MAX(transaction_date) FROM omo_transactions",
+             today - datetime.timedelta(days=10),
+             "no OMO transaction in 10 days — publication gap this long is implausible"),
+            ("yields", "SELECT MAX(auction_date) FROM primary_yield_snapshots",
+             today - datetime.timedelta(days=14),
+             "no primary auction result in 14 days"),
+            ("flows_forward", "SELECT MAX(flow_date) FROM daily_net_flow",
+             today + datetime.timedelta(days=30),
+             "forward flow window <30 days — coupon/maturity projection broke"),
+        ]
+        for name, sql, min_ok, desc in FRESHNESS_RULES:
+            try:
+                mx = _max_date(sql)
+            except Exception as exc:
+                add("freshness", f"{name}: check failed ({exc})")
+                continue
+            if mx is None or mx < min_ok:
+                add("freshness", f"{name}: latest={mx} (need ≥{min_ok}) — {desc}")
+
         # ---- reserves / remittance ----
         for r in q("SELECT month, gross_reserves_usd_mn, net_reserves_bpm6_usd_mn FROM reserves_monthly "
                    "WHERE gross_reserves_usd_mn IS NOT NULL AND (gross_reserves_usd_mn < 0 OR gross_reserves_usd_mn > 60000 "
