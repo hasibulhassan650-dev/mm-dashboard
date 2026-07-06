@@ -9,8 +9,8 @@ router = APIRouter()
 # working day's data. Event datasets (auctions / OMO operations) only exist on
 # the days BB actually transacts, so "current" means the job has *checked*
 # recently — there may simply be nothing newer to fetch.
-_DAILY_SERIES = {"callmoney", "fx", "refrate", "secondary", "flows"}
-_EVENT_SERIES = {"yields", "omo"}            # auctions / OMO ops — not daily
+_DAILY_SERIES = {"callmoney", "refrate", "secondary", "flows"}
+_EVENT_SERIES = {"yields", "omo", "fx"}      # auctions / OMO / FX interventions — not daily
 # (securities is master data → treated like an event series: fresh if checked)
 
 

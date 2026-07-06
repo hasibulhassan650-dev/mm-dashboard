@@ -65,8 +65,18 @@ def main():
     stats = {"checked": 0, "inserted": 0, "corrected": 0, "revised": 0, "flagged": 0, "skipped_implausible": 0}
     flagged_samples = []
 
+    # Wall-clock budget: the CI job is killed at 60 min, which loses the run
+    # record and integrity check. Stop fetching in time to finish cleanly —
+    # the rotating slice re-verifies whatever a run didn't reach.
+    BUDGET_MIN = int(os.environ.get("RECONCILE_BUDGET_MIN", "45"))
+
     CHUNK = 12
     for i in range(0, len(months), CHUNK):
+        elapsed_min = (datetime.datetime.now() - start).total_seconds() / 60
+        if elapsed_min > BUDGET_MIN:
+            log.warning("Time budget (%d min) reached after %d/%d months — stopping fetch, finishing run cleanly",
+                        BUDGET_MIN, i, len(months))
+            break
         chunk = months[i:i+CHUNK]
         rows = fetch_primary_yields_months(chunk)
         if not rows:

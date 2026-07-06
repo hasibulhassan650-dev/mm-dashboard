@@ -294,24 +294,36 @@ def fetch_primary_yields_months(months: List[tuple]) -> List[Dict]:
     RECAPTURE_EVERY = int(os.environ.get("TREASURY_POSTS_PER_CAPTURE", "12"))
     log.info("Treasury fetch (curl_cffi): %d month(s), recapture every %d", len(months), RECAPTURE_EVERY)
 
+    # Each failed capture is a full Chrome launch (~1-2 min). Without a cap, a
+    # dead Chrome turns the remaining months into an hours-long crash-loop that
+    # blows the CI job timeout — abort instead and return what we have.
+    MAX_CONSECUTIVE_CAPTURE_FAILS = 3
+
     all_rows: List[Dict] = []
-    state = {"cookies": None, "ua": None, "posts": 0}
+    state = {"cookies": None, "ua": None, "posts": 0, "fails": 0}
 
     def capture() -> bool:
         try:
             state["cookies"], state["ua"] = get_f5_cookies(
                 BB_TREASURY_URL, wait_selector="input[name='date_picker']")
             state["posts"] = 0
+            state["fails"] = 0
             return True
         except Exception as exc:
             log.error("  F5 cookie capture failed: %s", exc)
             state["cookies"] = None
+            state["fails"] += 1
             return False
 
     def post(mstr: str):
         return bb_post(BB_TREASURY_URL, {"date_picker": mstr}, state["cookies"], state["ua"])
 
     for mstr, snap_date in months:
+        if state["fails"] >= MAX_CONSECUTIVE_CAPTURE_FAILS:
+            log.error("Aborting treasury fetch: %d consecutive F5 capture failures "
+                      "(Chrome unusable) — returning %d rows fetched so far",
+                      state["fails"], len(all_rows))
+            break
         if state["cookies"] is None or state["posts"] >= RECAPTURE_EVERY:
             if not capture():
                 time.sleep(3)
