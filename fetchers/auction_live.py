@@ -257,10 +257,13 @@ def _parse_tables_from_html(html: str) -> List[Dict]:
             if len(cells) <= col_date:
                 continue
 
-            # Auction date
+            # Auction date — as datetime.date, matching the CSV parser: the
+            # outflow engine does date arithmetic on it (ISO strings made
+            # every live row error out on 2026-07-06: str + timedelta).
             date_str = _parse_date_str(cells[col_date])
             if not date_str:
                 continue   # skip header repeats or total rows
+            date_str = datetime.date.fromisoformat(date_str)
 
             # Auction number
             ano = ""
