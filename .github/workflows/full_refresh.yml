@@ -34,6 +34,9 @@ concurrency:
 jobs:
   refresh:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write     # integrity gate files/closes alert issues
     # GSOM Step 1 alone writes ~7,600 rows one-by-one to remote Postgres (~27 min);
     # the 5 Chrome/F5 fetchers add ~10 min. 30 min was too tight and the job was
     # cancelled mid-pipeline; 60 killed a run on 2026-07-06 after F5 retries
@@ -75,6 +78,45 @@ jobs:
         run: |
           # Let xvfb-run allocate and own the DISPLAY (no manual DISPLAY override).
           xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" python weekly_fetch.py
+
+      # ── Integrity gate: fail LOUD when the data is wrong or stale ──────────
+      # validate.py checks value plausibility + freshness expectations (e.g.
+      # "a planned auction must exist ≥7 days ahead"). On failure this step
+      # files/updates a GitHub issue (visible notification) and fails the run
+      # (email notification) — silent data rot is not an acceptable state.
+      - name: Data integrity gate
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python validate.py > integrity.json || true
+          cat integrity.json
+          ok=$(python -c "import json;print(json.load(open('integrity.json'))['ok'])")
+          if [ "$ok" = "True" ]; then
+            echo "Integrity OK"
+            # auto-close a previously opened alert, if any
+            n=$(gh issue list --repo "$GITHUB_REPOSITORY" --label data-integrity --state open --json number --jq '.[0].number // empty')
+            if [ -n "$n" ]; then
+              gh issue close "$n" --repo "$GITHUB_REPOSITORY" \
+                --comment "Integrity checks passing again as of run ${GITHUB_RUN_ID}. Auto-closing."
+            fi
+            exit 0
+          fi
+          echo "Integrity FAILED — filing alert issue"
+          body="Automated data-integrity alert from run [${GITHUB_RUN_ID}](https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}):
+
+          \`\`\`json
+          $(cat integrity.json)
+          \`\`\`"
+          n=$(gh issue list --repo "$GITHUB_REPOSITORY" --label data-integrity --state open --json number --jq '.[0].number // empty')
+          if [ -n "$n" ]; then
+            gh issue comment "$n" --repo "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" \
+              --title "DATA INTEGRITY ALERT: checks failing" \
+              --label data-integrity --body "$body"
+          fi
+          exit 1
 
       - name: Summarise log
         if: always()
