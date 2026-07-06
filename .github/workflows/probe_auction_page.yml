@@ -1,0 +1,51 @@
+# Diagnostic probe: fetch BB's auction-calendar page from CI (where Chrome
+# clears the F5 wall) and upload the raw HTML as an artifact, so page
+# redesigns can be inspected without a working local Chrome.
+# Manual-only; delete when no longer needed.
+name: Probe Auction Page
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - name: Install deps + xvfb
+        run: |
+          sudo apt-get update && sudo apt-get install -y xvfb
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Fetch calendar page via treasury-cookie F5 bypass
+        run: |
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" python - <<'EOF'
+          import logging, re
+          logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+          from fetchers.bb_session import get_f5_cookies, bb_get
+          from config import BB_TREASURY_URL
+
+          AUC = "https://www.bb.org.bd/en/index.php/monetaryactivity/auc_calendar/1"
+          # Capture on the treasury page — the wait selector there is proven in CI
+          cookies, ua = get_f5_cookies(BB_TREASURY_URL, wait_selector="input[name='date_picker']")
+          html = bb_get(AUC, cookies, ua)
+          open("auc_calendar_probe.html", "w", encoding="utf-8").write(html or "")
+          print("bytes:", len(html or ""))
+          print("challenge page:", bool(html and ("TSPD" in html or "bobcmn" in html)))
+          print("tables:", len(re.findall(r"<table", html or "", re.I)))
+          print("title:", re.findall(r"<title>([^<]*)</title>", html or "", re.I))
+          print("date-like strings:", re.findall(r"\d{1,2}-[A-Za-z]{3}-\d{4}", html or "")[:6])
+          print("calendar headings:", re.findall(r"Auction Calendar[^<]{0,60}", html or "")[:4])
+          EOF
+      - name: Upload HTML artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: auc-calendar-html
+          path: auc_calendar_probe.html
+          if-no-files-found: warn
