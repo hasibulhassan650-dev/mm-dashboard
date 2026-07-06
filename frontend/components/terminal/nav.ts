@@ -4,6 +4,7 @@ export interface NavItem { href: string; label: string; icon: string; }
 export const NAV: NavItem[] = [
   { href: "/",            label: "Overview",    icon: "grid" },
   { href: "/cashflows",   label: "Cash Flows",  icon: "flow" },
+  { href: "/forecast",    label: "Forecast",    icon: "pulse" },
   { href: "/omo",         label: "OMO",         icon: "layers" },
   { href: "/yields",      label: "Yields",      icon: "curve" },
   { href: "/callmoney",   label: "Call Money",  icon: "pulse" },

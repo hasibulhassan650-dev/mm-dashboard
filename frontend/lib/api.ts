@@ -33,6 +33,11 @@ export const api = {
   fx:              (days = 365) => get<FxAuctionRow[]>("/api/fx", { days }),
   refrate:         (days = 90)  => get<RefRateRow[]>("/api/refrate", { days }),
   drilldown:       (date: string) => get<DrilldownResult>(`/api/flows/drilldown`, { date }),
+  // New endpoint — degrade to empty until the backend is deployed with /api/flows/forecast.
+  flowsForecast:   async (days = 28): Promise<LiquidityForecast> => {
+    try { return await get<LiquidityForecast>("/api/flows/forecast", { days }); }
+    catch { return { as_of: "", days: [], unit: "BDT crore" }; }
+  },
   // Non-critical: must never break a page. Returns all-nulls if the endpoint is unavailable.
   freshness:       async (): Promise<Freshness> => {
     try { return await get<Freshness>("/api/meta/freshness"); }
@@ -169,6 +174,18 @@ export interface FlowRow {
   total_inflow_bdt_mill: number; auction_outflow_planned_mill: number;
   auction_outflow_confirmed_mill: number; net_borrowing_bdt_mill: number;
   coupon_payment_count: number; inflow_security_count: number; data_complete: boolean;
+}
+
+export interface LiquidityForecastDay {
+  date: string; weekday: string;
+  omo_return_crore: number; omo_repay_crore: number;
+  govt_inflow_crore: number; auction_out_crore: number;
+  net_crore: number; cum_net_crore: number;
+  omo_items: { instrument: string; direction: string; crore: number }[];
+  flows_confirmed: boolean;
+}
+export interface LiquidityForecast {
+  as_of: string; days: LiquidityForecastDay[]; unit: string;
 }
 
 export interface CallMoneyDailySummary {

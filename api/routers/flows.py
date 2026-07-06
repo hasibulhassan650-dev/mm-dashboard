@@ -28,6 +28,83 @@ def get_flows(months: int = Query(6, ge=1, le=24)):
         session.close()
 
 
+@router.get("/forecast")
+def get_forecast(days: int = Query(21, ge=7, le=60)):
+    """
+    Forward daily liquidity ladder for the banking system, in BDT crore.
+    Combines the flows that are KNOWN and dated today (no modelling of
+    future BB operations):
+      + OMO absorption maturing (SDF)          -> cash returns to banks
+      - OMO injection maturing (repo/AR/IBLF/SLF) -> banks repay BB
+      + G-sec coupon + maturity payments        -> govt pays banks
+      - Auction settlements                     -> banks pay for new issuance
+    """
+    import datetime
+    today = datetime.date.today()
+    end = today + datetime.timedelta(days=days)
+    session = get_session()
+    try:
+        omo = session.execute(text("""
+            SELECT maturity_date, instrument, direction,
+                   SUM(accepted_bdt_crore) AS amt_crore
+            FROM omo_transactions
+            WHERE transaction_date <= :today
+              AND maturity_date > :today AND maturity_date <= :end
+              AND accepted_bdt_crore > 0
+            GROUP BY maturity_date, instrument, direction
+            ORDER BY maturity_date
+        """), {"today": str(today), "end": str(end)}).fetchall()
+
+        flows = session.execute(text("""
+            SELECT flow_date, coupon_inflow_bdt_mill, principal_inflow_bdt_mill,
+                   auction_outflow_confirmed_mill, auction_outflow_planned_mill,
+                   data_complete
+            FROM daily_net_flow
+            WHERE flow_date > :today AND flow_date <= :end
+            ORDER BY flow_date
+        """), {"today": str(today), "end": str(end)}).fetchall()
+
+        omo_by_day: dict = {}
+        for r in omo:
+            omo_by_day.setdefault(str(r.maturity_date), []).append({
+                "instrument": r.instrument,
+                "direction":  r.direction,
+                "crore":      round(r.amt_crore, 2),
+            })
+        flow_by_day = {str(r.flow_date): r for r in flows}
+
+        out = []
+        cum = 0.0
+        d = today + datetime.timedelta(days=1)
+        while d <= end:
+            key = str(d)
+            items = omo_by_day.get(key, [])
+            omo_return = sum(i["crore"] for i in items if i["direction"] == "ABSORPTION")
+            omo_repay  = sum(i["crore"] for i in items if i["direction"] == "INJECTION")
+            f = flow_by_day.get(key)
+            govt_inflow = ((f.coupon_inflow_bdt_mill or 0) + (f.principal_inflow_bdt_mill or 0)) / 10.0 if f else 0.0
+            auction_out = ((f.auction_outflow_confirmed_mill or f.auction_outflow_planned_mill or 0) / 10.0) if f else 0.0
+            net = omo_return - omo_repay + govt_inflow - auction_out
+            cum += net
+            out.append({
+                "date":               key,
+                "weekday":            d.strftime("%a"),
+                "omo_return_crore":   round(omo_return, 2),
+                "omo_repay_crore":    round(omo_repay, 2),
+                "govt_inflow_crore":  round(govt_inflow, 2),
+                "auction_out_crore":  round(auction_out, 2),
+                "net_crore":          round(net, 2),
+                "cum_net_crore":      round(cum, 2),
+                "omo_items":          items,
+                "flows_confirmed":    bool(f.data_complete) if f is not None else False,
+            })
+            d += datetime.timedelta(days=1)
+
+        return {"as_of": str(today), "days": out, "unit": "BDT crore"}
+    finally:
+        session.close()
+
+
 @router.get("/drilldown")
 def get_drilldown(date: str = Query(..., description="YYYY-MM-DD")):
     """All events (maturities, coupons, auctions) for a specific date."""
