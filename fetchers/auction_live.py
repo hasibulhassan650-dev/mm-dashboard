@@ -116,6 +116,50 @@ def _extract_fiscal_year(text: str) -> str:
     return f"{y-1}-{str(y)[-2:]}"
 
 
+def _normalize_div_layout(html: str) -> str:
+    """
+    BB's July-2026 site redesign renders the calendars as div grids
+    (.table_caption / .row-header / .row-data with .column cells) instead of
+    <table>. Rebuild equivalent <table> markup so the proven table parser
+    keeps working unchanged. Input is returned as-is when real tables exist.
+    """
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:
+        return html
+    soup = BeautifulSoup(html, "lxml")
+    if soup.find("table") or not soup.select("div.table_caption"):
+        return html
+
+    parts = []
+    for cap in soup.select("div.table_caption"):
+        cap_text = cap.get_text(" ", strip=True)
+        header = cap.find_next(class_="row-header")
+        if header is None:
+            continue
+        ths = "".join(f"<th>{c.get_text(' ', strip=True)}</th>"
+                      for c in header.select(".column"))
+        trs = []
+        node = header
+        while True:
+            node = node.find_next_sibling()
+            if node is None:
+                break
+            classes = node.get("class") or []
+            if "row-data" in classes:
+                tds = "".join(f"<td>{c.get_text(' ', strip=True)}</td>"
+                              for c in node.select(".column"))
+                trs.append(f"<tr>{tds}</tr>")
+            elif "row-header" in classes or "table_caption" in classes:
+                break
+        parts.append(f"<p>{cap_text}</p><table><tr>{ths}</tr>{''.join(trs)}</table>")
+
+    if not parts:
+        return html
+    log.info("Normalized div-grid calendar layout: %d section(s)", len(parts))
+    return "<html><body>" + "".join(parts) + "</body></html>"
+
+
 def _parse_tables_from_html(html: str) -> List[Dict]:
     """
     Parse the BB auction calendar HTML.
@@ -130,6 +174,7 @@ def _parse_tables_from_html(html: str) -> List[Dict]:
         log.error("beautifulsoup4 not installed")
         return []
 
+    html  = _normalize_div_layout(html)
     soup  = BeautifulSoup(html, "lxml")
     rows  = []
     today = datetime.date.today()
@@ -281,26 +326,74 @@ def _parse_tables_from_html(html: str) -> List[Dict]:
     return rows
 
 
-def _fetch_with_chrome_f5() -> Optional[str]:
+def _has_calendar_content(html: Optional[str]) -> bool:
     """
-    Clear BB's F5 challenge with the shared undetected-chromedriver helper,
-    then GET the calendar with curl_cffi — the same proven pattern the
-    treasury/refrate fetchers use in CI (Playwright is not installed there,
-    so before this existed the CI silently fell back to the CSV seed, which
-    went stale at the FY2025-26 → FY2026-27 rollover).
+    Positive content check. NEVER test for TSPD/bobcmn absence — those
+    strings linger in inline scripts on the REAL page too, which made every
+    fetch path misreport "blocked" during the July 2026 incident.
+    """
+    if not html:
+        return False
+    low = html.lower()
+    return ("auction calendar" in low) and ("row-data" in low or "<table" in low)
+
+
+def _fetch_with_curl() -> Optional[str]:
+    """
+    Primary path: plain curl_cffi with Chrome TLS impersonation. Verified
+    2026-07-06 to return the full calendar page — no Chrome required.
     """
     try:
-        from fetchers.bb_session import get_f5_cookies, bb_get
-        cookies, ua = get_f5_cookies(_AUC_URL, wait_selector="table")
-        html = bb_get(_AUC_URL, cookies, ua)
-        if html and ("TSPD" in html or "bobcmn" in html):
-            log.warning("Chrome/F5: got bot challenge page — skipping")
-            return None
-        if html:
-            log.info("Chrome/F5: fetched auction calendar (%d bytes)", len(html))
-        return html
+        from curl_cffi import requests as cr
+        r = cr.get(_AUC_URL, impersonate="chrome", timeout=30)
+        if r.status_code == 200 and _has_calendar_content(r.text):
+            log.info("curl_cffi: fetched auction calendar (%d bytes)", len(r.text))
+            return r.text
+        log.warning("curl_cffi: no calendar content (status=%s, %d bytes)",
+                    r.status_code, len(r.text or ""))
     except Exception as exc:
-        log.error("Chrome/F5 auction calendar fetch failed: %s", exc)
+        log.warning("curl_cffi auction calendar fetch failed: %s", exc)
+    return None
+
+
+def _fetch_with_chrome_f5() -> Optional[str]:
+    """
+    Fallback: load the page in Chrome directly and return page_source once
+    calendar content appears. TSPD cookies are path-bound, so cookies
+    captured on another BB page do not clear this URL — Chrome must
+    navigate the calendar URL itself.
+    """
+    try:
+        import time
+        import undetected_chromedriver as uc
+        from fetchers.bb_session import get_chrome_version
+
+        options = uc.ChromeOptions()
+        options.add_argument("--window-position=-10000,-10000")
+        options.add_argument("--window-size=1920,1080")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        driver = None
+        try:
+            driver = uc.Chrome(options=options, version_main=get_chrome_version())
+            driver.get(_AUC_URL)
+            html = ""
+            for _ in range(18):          # up to ~90s for the challenge to clear
+                time.sleep(5)
+                html = driver.page_source or ""
+                if _has_calendar_content(html):
+                    log.info("Chrome: auction calendar loaded (%d bytes)", len(html))
+                    return html
+            log.warning("Chrome: calendar content never appeared (%d bytes)", len(html))
+            return None
+        finally:
+            if driver is not None:
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
+    except Exception as exc:
+        log.error("Chrome auction calendar fetch failed: %s", exc)
         return None
 
 
@@ -344,10 +437,11 @@ def fetch_live_auction_rows(
     Falls back to CSV seed if live fetch fails.
     Merges both sources — live overrides CSV for same keys.
     """
-    # ── Try live fetch: Chrome/F5 first (works in CI), then Playwright ──────
+    # ── Try live fetch: curl first (no Chrome needed), then Chrome, Playwright ──
     live_rows = []
     source_method = "CSV_ONLY"
-    for method, fetcher in (("CHROME_F5", _fetch_with_chrome_f5),
+    for method, fetcher in (("CURL", _fetch_with_curl),
+                            ("CHROME", _fetch_with_chrome_f5),
                             ("PLAYWRIGHT", _fetch_with_playwright)):
         html = fetcher()
         if not html:
