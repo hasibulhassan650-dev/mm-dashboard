@@ -1,4 +1,6 @@
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
+// Default to the live API host so the site works even without the env var set.
+// NEXT_PUBLIC_API_URL (Vercel dashboard) still overrides this when present.
+const BASE = process.env.NEXT_PUBLIC_API_URL || "https://mm-dashboard-vac3.vercel.app";
 
 async function get<T>(path: string, params?: Record<string, string | number>): Promise<T> {
   const url = new URL(BASE + path);
