@@ -7,6 +7,9 @@ import { NAV, navByPath } from "./nav";
 import { useTheme, ACCENTS, type Density } from "./ThemeProvider";
 import ExportAll from "./ExportAll";
 import UpdateStatus from "./UpdateStatus";
+import CommandPalette from "./CommandPalette";
+
+function openCommand() { if (typeof window !== "undefined") window.dispatchEvent(new Event("bb:command")); }
 
 export interface TickItem { sym: string; val: string; d: number }
 
@@ -51,11 +54,11 @@ function Topbar({ title, onMenu }: { title: string; onMenu: () => void }) {
         <Icon name="chevron" size={13} />
         <span className="crumb-cur">{title}</span>
       </div>
-      <div className="search">
+      <button className="search" onClick={openCommand} title="Jump to… (⌘K or /)" aria-label="Open command palette">
         <Icon name="search" size={15} />
-        <input placeholder="Search instruments, tenors, rates…" />
+        <span className="search-ph">Jump to a page or metric…</span>
         <kbd>/</kbd>
-      </div>
+      </button>
       <div className="topbar-right">
         <UpdateStatus />
         <ExportAll />
@@ -159,6 +162,7 @@ export function AppShell({ children, ticker, sub }: { children: React.ReactNode;
         </div>
       </div>
       <TweaksPanel />
+      <CommandPalette />
     </div>
   );
 }

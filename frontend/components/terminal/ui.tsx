@@ -1,5 +1,6 @@
 "use client";
 import * as React from "react";
+import Link from "next/link";
 import { Sparkline } from "./charts";
 import { Icon } from "./Icon";
 
@@ -41,13 +42,17 @@ export function Panel({ title, sub, right, children, span, pad = true, className
 export interface Kpi {
   id: string; label: string; value: string; unit?: string; sub?: string;
   delta?: number | null; dir?: "up" | "down" | "flat"; series?: number[]; tone?: "accent" | "neutral";
+  href?: string;   // when set, the whole card links to the detail page
 }
 export function KpiCard({ k }: { k: Kpi }) {
   const sparkColor = k.dir === "up" ? "var(--pos)" : k.dir === "down" ? "var(--neg)" : "var(--accent)";
   const cur = k.value.startsWith("৳");
-  return (
-    <div className="kpi">
-      <div className="kpi-top"><span className="kpi-label">{k.label}</span></div>
+  const inner = (
+    <>
+      <div className="kpi-top">
+        <span className="kpi-label">{k.label}</span>
+        {k.href && <span className="kpi-jump"><Icon name="chevron" size={13} /></span>}
+      </div>
       <div className="kpi-val">
         {cur
           ? <><span className="kpi-cur">৳</span><span className="kpi-num">{k.value.slice(1)}</span></>
@@ -57,8 +62,11 @@ export function KpiCard({ k }: { k: Kpi }) {
       </div>
       {k.series && k.series.length > 1 && <div className="kpi-spark"><Sparkline data={k.series} color={sparkColor} h={30} /></div>}
       {k.sub && <div className="kpi-sub">{k.sub}</div>}
-    </div>
+    </>
   );
+  return k.href
+    ? <Link href={k.href} className="kpi kpi-link">{inner}</Link>
+    : <div className="kpi">{inner}</div>;
 }
 
 // ---------------- Data table ----------------

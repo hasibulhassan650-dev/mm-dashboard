@@ -1,5 +1,6 @@
 import { api } from "@/lib/api";
 import Link from "next/link";
+import RelatedLinks from "@/components/RelatedLinks";
 import { fmtDate, fmtCrore, fmtRate } from "@/lib/format";
 import { Panel } from "@/components/terminal/ui";
 import LiquidityLadderChart from "@/components/LiquidityLadderChart";
@@ -133,6 +134,11 @@ export default async function ForecastPage() {
           </div>
         </Panel>
       </div>
+      <RelatedLinks items={[
+        { href: "/omo", label: "OMO Operations", why: "the repos & SDF driving these flows" },
+        { href: "/callmoney", label: "Call Money", why: "where tight/flush days hit the rate" },
+        { href: "/cashflows", label: "Cash Flows", why: "coupon & maturity detail by date" },
+      ]} />
     </>
   );
 }

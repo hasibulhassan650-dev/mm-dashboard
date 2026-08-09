@@ -46,12 +46,12 @@ export default async function Home() {
   const lastRes = macro.latest?.gross_reserves_usd_bn ?? null;
 
   const kpis: Kpi[] = [
-    { id: "omo", label: "OMO Net Injection", value: `৳${(totalInjection / 1000).toFixed(1)}k`, unit: "cr", sub: "outstanding today", dir: "up", series: netSeries.slice(-30), tone: "accent" },
-    { id: "war", label: "Call Money WAR", value: warSeries.length ? warSeries[warSeries.length - 1].toFixed(2) : "—", unit: "%", sub: "weighted avg rate", delta: delta(warSeries), dir: "up", series: warSeries.slice(-30) },
-    { id: "tb91", label: "91D T-Bill", value: tb91 ? tb91.cutoff_yield_pct.toFixed(2) : "—", unit: "%", sub: tb91 ? `cut-off · ${fmtDate(tb91.auction_date)}` : "", delta: delta(s91), dir: "up", series: s91 },
-    { id: "tb10y", label: "10Y T-Bond", value: tb10y ? tb10y.cutoff_yield_pct.toFixed(2) : "—", unit: "%", sub: tb10y ? `cut-off · ${fmtDate(tb10y.auction_date)}` : "", delta: delta(s10y), dir: "up", series: s10y },
-    { id: "fx", label: "USD / BDT", value: lastFx != null ? lastFx.toFixed(2) : "—", sub: "auction wtd-avg", delta: delta(fxS), dir: "down", series: fxS },
-    { id: "res", label: "FX Reserve", value: lastRes != null ? lastRes.toFixed(2) : "—", unit: "B$", sub: "gross · BB", delta: delta(resSeries), dir: "up", series: resSeries },
+    { id: "omo", label: "OMO Net Injection", value: `৳${(totalInjection / 1000).toFixed(1)}k`, unit: "cr", sub: "outstanding today", dir: "up", series: netSeries.slice(-30), tone: "accent", href: "/omo" },
+    { id: "war", label: "Call Money WAR", value: warSeries.length ? warSeries[warSeries.length - 1].toFixed(2) : "—", unit: "%", sub: "weighted avg rate", delta: delta(warSeries), dir: "up", series: warSeries.slice(-30), href: "/callmoney" },
+    { id: "tb91", label: "91D T-Bill", value: tb91 ? tb91.cutoff_yield_pct.toFixed(2) : "—", unit: "%", sub: tb91 ? `cut-off · ${fmtDate(tb91.auction_date)}` : "", delta: delta(s91), dir: "up", series: s91, href: "/yields" },
+    { id: "tb10y", label: "10Y T-Bond", value: tb10y ? tb10y.cutoff_yield_pct.toFixed(2) : "—", unit: "%", sub: tb10y ? `cut-off · ${fmtDate(tb10y.auction_date)}` : "", delta: delta(s10y), dir: "up", series: s10y, href: "/yields" },
+    { id: "fx", label: "USD / BDT", value: lastFx != null ? lastFx.toFixed(2) : "—", sub: "auction wtd-avg", delta: delta(fxS), dir: "down", series: fxS, href: "/fx" },
+    { id: "res", label: "FX Reserve", value: lastRes != null ? lastRes.toFixed(2) : "—", unit: "B$", sub: "gross · BB", delta: delta(resSeries), dir: "up", series: resSeries, href: "/macro" },
   ];
 
   // ---- corridor ----

@@ -1,5 +1,6 @@
 import { api } from "@/lib/api";
 import { fmtDate } from "@/lib/format";
+import RelatedLinks from "@/components/RelatedLinks";
 import { OMO_CATS, pivotOmo } from "@/lib/terminal";
 import { netLiquiditySeries } from "@/lib/analytics";
 import Freshness from "@/components/Freshness";
@@ -44,6 +45,11 @@ export default async function OmoPage() {
       <div className="grid12">
         <OmoView d={{ omoSeries, omoCats: OMO_CATS, ops, outstanding, stance, latestNet }} />
       </div>
+      <RelatedLinks items={[
+        { href: "/forecast", label: "Liquidity Forecast", why: "when these repos mature & drain" },
+        { href: "/callmoney", label: "Call Money", why: "where the corridor stance shows up" },
+        { href: "/refrate", label: "Reference Rates", why: "repo/SDF/SLF benchmark rates" },
+      ]} />
     </>
   );
 }
