@@ -1,4 +1,5 @@
 import { api } from "@/lib/api";
+import RelatedLinks from "@/components/RelatedLinks";
 import { buildCurve } from "@/lib/terminal";
 import { bidToCover } from "@/lib/analytics";
 import { fmtDate } from "@/lib/format";
@@ -145,6 +146,11 @@ export default async function YieldsPage() {
       <p style={{ fontSize: 11, color: "var(--fg-mute)", marginTop: 14, display: "flex", gap: 4, flexWrap: "wrap" }}>
         <InfoTip term="GSOM" /> <InfoTip term="MTM" /> <InfoTip term="Bid-to-cover" /> <InfoTip term="Yield-curve slope (2s10s)" />
       </p>
+      <RelatedLinks items={[
+        { href: "/securities", label: "Securities", why: "the ISINs behind each point" },
+        { href: "/callmoney", label: "Call Money", why: "the short end of the curve" },
+        { href: "/refrate", label: "Reference Rates", why: "money-market benchmarks" },
+      ]} />
     </>
   );
 }

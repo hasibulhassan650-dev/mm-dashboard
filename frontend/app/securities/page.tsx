@@ -1,4 +1,5 @@
 import { api } from "@/lib/api";
+import RelatedLinks from "@/components/RelatedLinks";
 import { fmtDate } from "@/lib/format";
 import { Panel } from "@/components/terminal/ui";
 import DownloadButton from "@/components/DownloadButton";
@@ -58,6 +59,11 @@ export default async function SecuritiesPage() {
           </Panel>
         ))}
       </div>
+      <RelatedLinks items={[
+        { href: "/yields", label: "Yields", why: "the curve these securities price on" },
+        { href: "/cashflows", label: "Cash Flows", why: "their coupons & maturities" },
+        { href: "/portfolio", label: "Portfolio", why: "value your holdings of them" },
+      ]} />
     </>
   );
 }

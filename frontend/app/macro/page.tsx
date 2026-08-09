@@ -1,4 +1,5 @@
 import { api } from "@/lib/api";
+import RelatedLinks from "@/components/RelatedLinks";
 import { fmtMonth } from "@/lib/format";
 import { Panel } from "@/components/terminal/ui";
 import ReservesChart from "@/components/ReservesChart";
@@ -47,6 +48,11 @@ export default async function MacroPage() {
           </div>
         </Panel>
       </div>
+      <RelatedLinks items={[
+        { href: "/fx", label: "FX Auctions", why: "interventions that spend these reserves" },
+        { href: "/monetary", label: "Monetary", why: "the policy & money-supply backdrop" },
+        { href: "/callmoney", label: "Call Money", why: "domestic liquidity conditions" },
+      ]} />
     </>
   );
 }

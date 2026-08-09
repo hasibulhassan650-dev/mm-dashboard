@@ -1,4 +1,5 @@
 import { api } from "@/lib/api";
+import RelatedLinks from "@/components/RelatedLinks";
 import { fmtMonth, fmtDate, fmtPct } from "@/lib/format";
 import { Panel } from "@/components/terminal/ui";
 import SeriesLineChart from "@/components/SeriesLineChart";
@@ -69,6 +70,11 @@ export default async function MonetaryPage() {
           </div>
         </Panel>
       </div>
+      <RelatedLinks items={[
+        { href: "/macro", label: "External Sector", why: "reserves & remittance" },
+        { href: "/callmoney", label: "Call Money", why: "where policy meets the market" },
+        { href: "/yields", label: "Yields", why: "the rate term structure" },
+      ]} />
     </>
   );
 }

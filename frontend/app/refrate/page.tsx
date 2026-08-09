@@ -2,28 +2,31 @@ import { api } from "@/lib/api";
 import { fmtDate } from "@/lib/format";
 import { Panel } from "@/components/terminal/ui";
 import RefRateChart from "@/components/RefRateChart";
-import PeriodSelector from "@/components/PeriodSelector";
+import DateRangeControl from "@/components/DateRangeControl";
+import { resolveRange, inRange } from "@/lib/daterange";
 import DownloadButton from "@/components/DownloadButton";
 import Freshness from "@/components/Freshness";
 import InfoTip from "@/components/InfoTip";
+import RelatedLinks from "@/components/RelatedLinks";
 import type { RefRateRow } from "@/lib/api";
 
 export const revalidate = 300;
 
 const PRODUCTS = ["Overnight", "1W", "1M", "3M"];
-const PERIODS = [
-  { label: "30d", days: 30 }, { label: "90d", days: 90 }, { label: "180d", days: 180 },
-  { label: "1y", days: 365 }, { label: "All", days: 0 },
-];
 
-export default async function RefRatePage({ searchParams }: { searchParams: Promise<{ days?: string }> }) {
-  const days = parseInt((await searchParams).days ?? "90", 10);
-  const [rows, fresh, corridor] = await Promise.all([api.refrate(days).catch(() => [] as RefRateRow[]), api.freshness(), api.policy()]);
+export default async function RefRatePage({ searchParams }: { searchParams: Promise<{ from?: string; to?: string }> }) {
+  const sp = await searchParams;
+  const [allRows, fresh, corridor] = await Promise.all([api.refrate(3650).catch(() => [] as RefRateRow[]), api.freshness(), api.policy()]);
   const repoRate = corridor.current?.repo ?? null;
 
-  const dates = [...new Set(rows.map((r) => r.trade_date))].sort().reverse();
+  const range = resolveRange(sp, allRows.map((r) => r.trade_date), 90);
+  const rows = allRows.filter((r) => inRange(r.trade_date, range.from, range.to));
+
+  // KPIs & the "latest day" breakdown always reflect the newest actual print,
+  // independent of the selected chart/export range.
+  const dates = [...new Set(allRows.map((r) => r.trade_date))].sort().reverse();
   const latestDate = dates[0] ?? null, prevDate = dates[1] ?? null;
-  const at = (type: string, prod: string, date: string | null) => rows.find((r) => r.rate_type === type && r.product === prod && r.trade_date === date)?.rate_pct ?? null;
+  const at = (type: string, prod: string, date: string | null) => allRows.find((r) => r.rate_type === type && r.product === prod && r.trade_date === date)?.rate_pct ?? null;
   const delta = (type: string) => { const a = at(type, "Overnight", latestDate), b = at(type, "Overnight", prevDate); return a != null && b != null ? a - b : null; };
 
   const miniList = (type: string, color: string) => (
@@ -43,7 +46,7 @@ export default async function RefRatePage({ searchParams }: { searchParams: Prom
     <>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: "var(--gap)", flexWrap: "wrap" }}>
         <Freshness updated={fresh.refrate} />
-        <PeriodSelector periods={PERIODS} current={days} />
+        <DateRangeControl min={range.min} max={range.max} from={range.from} to={range.to} />
       </div>
 
       {rows.length === 0 && (
@@ -70,7 +73,7 @@ export default async function RefRatePage({ searchParams }: { searchParams: Prom
         <Panel title="BOFR — rate by product" sub="bank overnight financing" span={6}><RefRateChart rows={rows} rateType="BOFR" repoRate={repoRate} /></Panel>
 
         {latestDate && (["DOMMR", "BOFR"] as const).map((rtype) => {
-          const latest = rows.filter((r) => r.trade_date === latestDate && r.rate_type === rtype).sort((a, b) => PRODUCTS.indexOf(a.product) - PRODUCTS.indexOf(b.product));
+          const latest = allRows.filter((r) => r.trade_date === latestDate && r.rate_type === rtype).sort((a, b) => PRODUCTS.indexOf(a.product) - PRODUCTS.indexOf(b.product));
           return (
             <Panel key={rtype} title={`${rtype} — ${fmtDate(latestDate)}`} sub="latest day breakdown" span={6} pad={false}>
               <div className="table-wrap">
@@ -110,6 +113,11 @@ export default async function RefRatePage({ searchParams }: { searchParams: Prom
           </Panel>
         )}
       </div>
+      <RelatedLinks items={[
+        { href: "/callmoney", label: "Call Money", why: "the actual traded overnight rate" },
+        { href: "/omo", label: "OMO Operations", why: "policy rates these benchmark against" },
+        { href: "/yields", label: "Yields", why: "the term structure" },
+      ]} />
     </>
   );
 }

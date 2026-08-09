@@ -3,13 +3,19 @@ import Link from "next/link";
 import { fmtDate } from "@/lib/format";
 import { Panel } from "@/components/terminal/ui";
 import CashFlowChart from "@/components/CashFlowChart";
+import DateRangeControl from "@/components/DateRangeControl";
+import { resolveRange, inRange } from "@/lib/daterange";
 import DownloadButton from "@/components/DownloadButton";
 import Freshness from "@/components/Freshness";
+import RelatedLinks from "@/components/RelatedLinks";
 
 export const revalidate = 300;
 
-export default async function CashFlowsPage() {
-  const [flows, fresh] = await Promise.all([api.flows(6).catch(() => []), api.freshness()]);
+export default async function CashFlowsPage({ searchParams }: { searchParams: Promise<{ from?: string; to?: string }> }) {
+  const sp = await searchParams;
+  const [flows, fresh] = await Promise.all([api.flows(24).catch(() => []), api.freshness()]);
+  const range = resolveRange(sp, flows.map((r) => r.flow_date), 180);
+  const rangeFlows = flows.filter((r) => inRange(r.flow_date, range.from, range.to));
   const today = new Date().toISOString().slice(0, 10);
   const todayRow = [...flows].reverse().find((r) => r.flow_date <= today) ?? flows[flows.length - 1];
   const upcoming = flows.filter((r) => r.flow_date >= today).slice(0, 30);
@@ -19,7 +25,10 @@ export default async function CashFlowsPage() {
 
   return (
     <>
-      <div style={{ marginBottom: "var(--gap)" }}><Freshness updated={fresh.flows} /></div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: "var(--gap)", flexWrap: "wrap" }}>
+        <Freshness updated={fresh.flows} />
+        <DateRangeControl min={range.min} max={range.max} from={range.from} to={range.to} />
+      </div>
 
       {todayRow && (
         <div className="kpi-strip" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
@@ -31,11 +40,11 @@ export default async function CashFlowsPage() {
       )}
 
       <div className="grid12">
-        <Panel title="Cash Flow Timeline" sub="6 months history + 4 months ahead" span={12}>
-          <CashFlowChart data={flows} />
+        <Panel title="Cash Flow Timeline" sub={`${range.from} → ${range.to} · pick any window above`} span={12}>
+          <CashFlowChart data={rangeFlows} />
         </Panel>
         <Panel title="Upcoming Events" sub="next 30 days · click a date to drill down" span={12} pad={false}
-          right={<DownloadButton data={flows} filename="cash_flows" />}>
+          right={<DownloadButton data={rangeFlows} filename="cash_flows" />}>
           <div className="table-wrap" style={{ maxHeight: 460, overflowY: "auto" }}>
             <table className="dt">
               <thead><tr><th>Date</th><th className="r">Maturity (mn)</th><th className="r">Coupon (mn)</th><th className="r">Inflow (mn)</th><th className="r">Auction Out (mn)</th><th className="r">Net (mn)</th><th>Status</th></tr></thead>
@@ -60,6 +69,11 @@ export default async function CashFlowsPage() {
           </div>
         </Panel>
       </div>
+      <RelatedLinks items={[
+        { href: "/forecast", label: "Liquidity Forecast", why: "these flows netted into daily liquidity" },
+        { href: "/securities", label: "Securities", why: "the bonds paying these coupons" },
+        { href: "/omo", label: "OMO Operations", why: "the other side of daily liquidity" },
+      ]} />
     </>
   );
 }
