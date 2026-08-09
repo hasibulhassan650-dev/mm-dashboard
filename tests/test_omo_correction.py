@@ -1,0 +1,106 @@
+"""
+tests/test_omo_correction.py — BB OMO press-release corrections.
+
+WHY: BB publishes each OMO release with a 1-day lag ('as on' = previous
+working day). Occasionally it mislabels the date (publishes same-day) and
+issues a corrected release days later re-stating the same operation date with
+the right figures. The store layer must treat the LATEST-published release for
+an operation date as authoritative — otherwise the wrong and corrected figures
+pile onto one day and every OMO/liquidity number for that date is wrong.
+Real case: serial 05/2026-343 (pub 06-Aug, 'as on 06-Aug', no lag) was
+superseded by 05/2026-345 (pub 09-Aug, 'as on 06-Aug').
+"""
+import sys, os, datetime
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from fetchers.omo import _parse_pub_meta, _parse_date_from_text
+
+
+class TestPubMetaParsing:
+    def test_normal_release_has_one_day_lag(self):
+        s = "Serial No- 05/2026-342 Date: 04-08-2026\nOpen Market Operations as on 03 August 2026"
+        pub, serial = _parse_pub_meta(s)
+        assert serial == "05/2026-342"
+        assert pub == datetime.date(2026, 8, 4)
+        assert _parse_date_from_text(s) == datetime.date(2026, 8, 3)
+        assert (pub - _parse_date_from_text(s)).days == 1
+
+    def test_mislabelled_release_has_no_lag(self):
+        # 343: published same day as the operation date it claims — the anomaly
+        s = "Serial No- 05/2026-343 Date: 06-08-2026\nOpen Market Operations as on 06 August 2026"
+        pub, serial = _parse_pub_meta(s)
+        ason = _parse_date_from_text(s)
+        assert serial == "05/2026-343"
+        assert pub <= ason   # no publication lag -> provisional/suspect
+
+    def test_correction_publishes_later(self):
+        s = "Serial No- 05/2026-345 Date: 09-08-2026\nOpen Market Operations as on 06 August 2026"
+        pub, serial = _parse_pub_meta(s)
+        assert serial == "05/2026-345"
+        assert pub == datetime.date(2026, 9 - 9 + 8, 9)  # 2026-08-09
+        assert (pub - _parse_date_from_text(s)).days == 3
+
+
+def _mem_session():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    import db as dbmod
+    eng = create_engine("sqlite:///:memory:")
+    dbmod.Base.metadata.create_all(eng)
+    return sessionmaker(bind=eng)()
+
+
+def _row(instr, tenor, acc, direction, pub, serial, ason=datetime.date(2026, 8, 6)):
+    return {"transaction_date": ason, "maturity_date": ason + datetime.timedelta(days=tenor),
+            "instrument": instr, "tenor_label": f"{tenor}D", "tenor_days": tenor,
+            "accepted_bdt_crore": acc, "maturity_bdt_crore": 0.0, "rate_pct": None,
+            "rate_range": None, "direction": direction, "source_pdf": f"pr_{serial}.pdf",
+            "source_pub_date": pub, "source_serial": serial}
+
+
+class TestSupersession:
+    def test_later_release_replaces_mislabelled_one(self):
+        from engines.pipeline import _store_omo_txns
+        from db import OMOTransaction
+        sess = _mem_session()
+
+        wrong = [_row("CB_REPO", 7, 17307.41, "INJECTION", datetime.date(2026, 8, 6), "05/2026-343"),
+                 _row("IBLF", 7, 4586.08, "INJECTION", datetime.date(2026, 8, 6), "05/2026-343"),
+                 _row("SDF", 1, 2988.0, "ABSORPTION", datetime.date(2026, 8, 6), "05/2026-343")]
+        _store_omo_txns(sess, wrong, datetime.datetime.utcnow()); sess.commit()
+
+        correct = [_row("IBLF", 7, 1945.80, "INJECTION", datetime.date(2026, 8, 9), "05/2026-345"),
+                   _row("SDF", 1, 3102.0, "ABSORPTION", datetime.date(2026, 8, 9), "05/2026-345")]
+        saved, superseded = _store_omo_txns(sess, correct, datetime.datetime.utcnow()); sess.commit()
+
+        got = sess.query(OMOTransaction).filter_by(transaction_date=datetime.date(2026, 8, 6)).all()
+        insts = sorted(g.instrument for g in got)
+        assert superseded == 1
+        assert insts == ["IBLF", "SDF"], f"expected only the correction's rows, got {insts}"
+        # the wrong release's figures must be gone, not piled on
+        assert all(g.instrument != "CB_REPO" for g in got)
+        iblf = next(g for g in got if g.instrument == "IBLF")
+        assert abs(iblf.accepted_bdt_crore - 1945.80) < 1e-6
+
+    def test_both_releases_in_one_batch_keeps_latest(self):
+        # if a single fetch pulls both 343 and 345, only 345 (latest pub) is kept
+        from engines.pipeline import _store_omo_txns
+        from db import OMOTransaction
+        sess = _mem_session()
+        batch = [_row("CB_REPO", 7, 17307.41, "INJECTION", datetime.date(2026, 8, 6), "05/2026-343"),
+                 _row("IBLF", 7, 1945.80, "INJECTION", datetime.date(2026, 8, 9), "05/2026-345")]
+        _store_omo_txns(sess, batch, datetime.datetime.utcnow()); sess.commit()
+        got = sess.query(OMOTransaction).filter_by(transaction_date=datetime.date(2026, 8, 6)).all()
+        assert sorted(g.instrument for g in got) == ["IBLF"]
+
+    def test_older_release_never_regresses_a_correction(self):
+        # if the correction is already stored, re-seeing the old release must not undo it
+        from engines.pipeline import _store_omo_txns
+        from db import OMOTransaction
+        sess = _mem_session()
+        _store_omo_txns(sess, [_row("IBLF", 7, 1945.80, "INJECTION", datetime.date(2026, 8, 9), "05/2026-345")],
+                        datetime.datetime.utcnow()); sess.commit()
+        _store_omo_txns(sess, [_row("CB_REPO", 7, 17307.41, "INJECTION", datetime.date(2026, 8, 6), "05/2026-343")],
+                        datetime.datetime.utcnow()); sess.commit()
+        got = sess.query(OMOTransaction).filter_by(transaction_date=datetime.date(2026, 8, 6)).all()
+        assert sorted(g.instrument for g in got) == ["IBLF"], "older release must not regress the correction"

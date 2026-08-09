@@ -142,6 +142,29 @@ def _parse_date_from_text(text: str) -> Optional[datetime.date]:
     return None
 
 
+def _parse_pub_meta(text: str):
+    """
+    Extract the press-release PUBLICATION date ('Date: 04-08-2026') and serial
+    ('Serial No- 05/2026-342'). BB publishes each OMO release with a lag — the
+    'as on' operation date is normally the previous working day. The pub date +
+    serial let us (a) spot BB's occasional same-day mislabels and (b) treat the
+    LATEST-published release for an operation date as authoritative (corrections
+    supersede originals). Returns (pub_date | None, serial | None).
+    """
+    pub_date = None
+    m = re.search(r'Date:\s*(\d{1,2})-(\d{1,2})-(\d{4})', text)
+    if m:
+        try:
+            pub_date = datetime.date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+        except ValueError:
+            pub_date = None
+    serial = None
+    m = re.search(r'Serial\s*No[-\s:]*([0-9A-Za-z/]+-\d+)', text)
+    if m:
+        serial = m.group(1).strip()
+    return pub_date, serial
+
+
 # ── PDF parser ────────────────────────────────────────────────────────────────
 
 def parse_omo_pdf(pdf_bytes: bytes, hint_date: Optional[datetime.date], pdf_url: str) -> List[Dict]:
@@ -192,18 +215,32 @@ def parse_omo_pdf(pdf_bytes: bytes, hint_date: Optional[datetime.date], pdf_url:
     # header (e.g. "IBLF") on a later row, causing the first row to inherit the
     # wrong instrument via carry-forward.  Text extraction always puts the
     # instrument name on its own line before the data rows.
+    pub_date, serial = _parse_pub_meta(full_text)
+    # BB publishes the next working day; 'as on' == pub date (no lag) means BB
+    # mislabelled the date and a corrected release usually follows. Surface it —
+    # the store layer treats the latest-published release for a date as truth.
+    if pub_date and pub_date <= txn_date:
+        log.warning("OMO date anomaly: 'as on' %s but PUBLISHED %s (serial %s) — no lag; "
+                    "PROVISIONAL, expect a correction to supersede this", txn_date, pub_date, serial)
+
+    def _annotate(rows: List[Dict]) -> List[Dict]:
+        for r in rows:
+            r["source_pub_date"] = pub_date
+            r["source_serial"] = serial
+        return rows
+
     transactions = _parse_via_text(full_text, txn_date, pdf_url)
     if transactions:
-        log.info("Parsed %d rows via text parser (date=%s, url=%s)",
-                 len(transactions), txn_date, Path(pdf_url).name)
-        return transactions
+        log.info("Parsed %d rows via text parser (date=%s, pub=%s, serial=%s, url=%s)",
+                 len(transactions), txn_date, pub_date, serial, Path(pdf_url).name)
+        return _annotate(transactions)
 
     # ── Fallback: table-based parsing ─────────────────────────────────────────
     log.debug("Text parser yielded nothing, falling back to table extraction")
     transactions = _parse_via_table(all_tables, txn_date, pdf_url)
-    log.info("Parsed %d rows via table fallback (date=%s, url=%s)",
-             len(transactions), txn_date, Path(pdf_url).name)
-    return transactions
+    log.info("Parsed %d rows via table fallback (date=%s, pub=%s, url=%s)",
+             len(transactions), txn_date, pub_date, Path(pdf_url).name)
+    return _annotate(transactions)
 
 
 def _build_txn(instr: str, direction: str, tenor_days: int,

@@ -171,6 +171,8 @@ class OMOTransaction(Base):
     rate_range          = Column(String(30))        # full range as published, e.g. "4.00-5.25"; NULL when a single rate
     direction           = Column(String(20))        # INJECTION or ABSORPTION
     source_pdf          = Column(String(300))
+    source_pub_date     = Column(Date)               # press-release publication date ("Date: DD-MM-YYYY")
+    source_serial       = Column(String(40))         # "Serial No- 05/2026-343" — orders corrections
     ingested_utc        = Column(DateTime)
 
 
@@ -352,6 +354,8 @@ def init_db():
     migrations = [
         "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS maturity_bdt_crore REAL",
         "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS rate_range VARCHAR(30)",
+        "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS source_pub_date DATE",
+        "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS source_serial VARCHAR(40)",
         "ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS quality TEXT",
     ]
     for ddl in migrations:

@@ -332,48 +332,104 @@ def _fetch_all_gsom_pages() -> list:
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN PIPELINE
 
+def _store_omo_txns(session, txns: list, now: datetime.datetime) -> tuple:
+    """
+    Store OMO rows with correction-aware supersession, returning (saved,
+    superseded). For each operation ('as on') date, only the LATEST-published
+    release is authoritative — this is how BB's corrections work: a later press
+    release re-states the same operation date with the right figures (serial
+    345 published 09-Aug supersedes the mislabelled 343 published 06-Aug, both
+    claiming 'as on 06 August'). Naively keying on date alone would pile both
+    onto one day. Extracted from run_omo_fetch so it is unit-testable.
+    """
+    from collections import defaultdict
+
+    def _pub(x) -> datetime.date:
+        return x.get("source_pub_date") or datetime.date.min
+
+    def _insert(r):
+        session.add(OMOTransaction(
+            transaction_date   = r["transaction_date"],
+            maturity_date      = r["maturity_date"],
+            instrument         = r["instrument"],
+            tenor_label        = r["tenor_label"],
+            tenor_days         = r["tenor_days"],
+            accepted_bdt_crore = r["accepted_bdt_crore"],
+            maturity_bdt_crore = r.get("maturity_bdt_crore"),
+            rate_pct           = r.get("rate_pct"),
+            rate_range         = r.get("rate_range"),
+            direction          = r["direction"],
+            source_pdf         = r.get("source_pdf"),
+            source_pub_date    = r.get("source_pub_date"),
+            source_serial      = r.get("source_serial"),
+            ingested_utc       = now,
+        ))
+
+    by_date: dict = defaultdict(list)
+    for r in txns:
+        by_date[r["transaction_date"]].append(r)
+
+    saved = superseded = 0
+    for d, rows in by_date.items():
+        latest_pub = max((_pub(x) for x in rows), default=datetime.date.min)
+        keep = [x for x in rows if _pub(x) == latest_pub]   # drop older release if both in batch
+        if not keep:
+            continue
+
+        existing = session.query(OMOTransaction).filter_by(transaction_date=d).all()
+        stored_pub = max((e.source_pub_date for e in existing if e.source_pub_date), default=None)
+        inc_pub = None if latest_pub == datetime.date.min else latest_pub
+
+        replace = existing and inc_pub is not None and (stored_pub is None or inc_pub > stored_pub)
+        if replace:
+            if stored_pub is not None:
+                superseded += 1
+                log.warning("OMO supersede %s: release pub %s replaces older pub %s (%d rows)",
+                            d, inc_pub, stored_pub, len(existing))
+            for e in existing:
+                session.delete(e)
+            session.flush()
+            for r in keep:
+                _insert(r); saved += 1
+        elif not existing:
+            for r in keep:
+                _insert(r); saved += 1
+        elif inc_pub is not None and stored_pub is not None and inc_pub < stored_pub:
+            # Incoming release is OLDER than what we already have for this date
+            # (e.g. re-seeing the mislabelled 343 after the 345 correction is
+            # stored) — never regress: add nothing, remove nothing.
+            continue
+        else:
+            # Same publication (or legacy rows w/o pub info): row-level upsert so
+            # genuinely new lines are added and fields backfilled.
+            for r in keep:
+                ex = session.query(OMOTransaction).filter_by(
+                    transaction_date=r["transaction_date"], instrument=r["instrument"],
+                    tenor_days=r["tenor_days"], accepted_bdt_crore=r["accepted_bdt_crore"],
+                ).first()
+                if ex:
+                    if ex.source_pub_date is None and r.get("source_pub_date"):
+                        ex.source_pub_date = r["source_pub_date"]; ex.source_serial = r.get("source_serial")
+                    if ex.maturity_bdt_crore is None and r.get("maturity_bdt_crore"):
+                        ex.maturity_bdt_crore = r["maturity_bdt_crore"]
+                    if ex.rate_range is None and r.get("rate_range"):
+                        ex.rate_range = r["rate_range"]
+                else:
+                    _insert(r); saved += 1
+    return saved, superseded
+
+
 def run_omo_fetch(days_back: int = 28, max_files: int = 20) -> dict:
     """Fetch last N OMO press release PDFs and store transactions to DB."""
     from fetchers.omo import fetch_omo_data
     init_db()
     session = get_session()
     try:
-        txns  = fetch_omo_data(days_back=days_back, max_files=max_files)
-        saved = 0
-        now   = datetime.datetime.utcnow()
-        for r in txns:
-            existing = session.query(OMOTransaction).filter_by(
-                transaction_date   = r["transaction_date"],
-                instrument         = r["instrument"],
-                tenor_days         = r["tenor_days"],
-                accepted_bdt_crore = r["accepted_bdt_crore"],
-            ).first()
-            if existing:
-                # Backfill fields not yet populated from an earlier parse
-                if existing.maturity_bdt_crore is None and r.get("maturity_bdt_crore"):
-                    existing.maturity_bdt_crore = r["maturity_bdt_crore"]
-                    saved += 1
-                if existing.rate_range is None and r.get("rate_range"):
-                    existing.rate_range = r["rate_range"]
-                    saved += 1
-            else:
-                session.add(OMOTransaction(
-                    transaction_date   = r["transaction_date"],
-                    maturity_date      = r["maturity_date"],
-                    instrument         = r["instrument"],
-                    tenor_label        = r["tenor_label"],
-                    tenor_days         = r["tenor_days"],
-                    accepted_bdt_crore = r["accepted_bdt_crore"],
-                    maturity_bdt_crore = r.get("maturity_bdt_crore"),
-                    rate_pct           = r.get("rate_pct"),
-                    rate_range         = r.get("rate_range"),
-                    direction          = r["direction"],
-                    source_pdf         = r.get("source_pdf"),
-                    ingested_utc       = now,
-                ))
-                saved += 1
+        txns = fetch_omo_data(days_back=days_back, max_files=max_files)
+        saved, superseded = _store_omo_txns(session, txns, datetime.datetime.utcnow())
         session.commit()
-        log.info("OMO fetch: %d new transactions stored from %d PDFs", saved, len(txns))
+        log.info("OMO fetch: %d rows stored, %d date(s) superseded by corrections, from %d PDFs",
+                 saved, superseded, len(txns))
         return {"rows": saved, "pdfs": max_files, "errors": []}
     except Exception as exc:
         session.rollback()
