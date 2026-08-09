@@ -249,6 +249,49 @@ def main():
         log.exception("Reserves fetch failed: %s", exc)
         errors.append(f"reserves: {exc}")
 
+    # ── 9. Policy-rate corridor (BB homepage POLICY RATES box) ───────────────
+    # Authoritative & self-updating: an MPC rate change is picked up within a
+    # day. A CHANGE vs the last stored corridor is logged LOUD (surfaces in the
+    # run summary + integrity gate) so it's never silently missed.
+    log.info("--- Step 9: Policy-rate corridor ---")
+    try:
+        from fetchers.policy_rates import fetch_policy_rates
+        from db import PolicyRateSnapshot
+        import datetime as _dt
+        pr = fetch_policy_rates()
+        if not pr:
+            raise RuntimeError("policy fetch returned nothing (page unparseable)")
+        today = _dt.date.today()
+        session = get_session()
+        latest = session.query(PolicyRateSnapshot).order_by(
+            PolicyRateSnapshot.first_seen_date.desc(), PolicyRateSnapshot.id.desc()).first()
+        same = latest and all(
+            abs((getattr(latest, k) or -1) - (pr[k] if pr[k] is not None else -1)) < 1e-9
+            for k in ("repo", "slf", "sdf", "bank_rate"))
+        if same:
+            latest.last_seen_date = today
+            latest.ingested_utc = _dt.datetime.utcnow()
+            session.commit()
+            log.info("Policy corridor unchanged | repo=%s SLF=%s SDF=%s", pr["repo"], pr["slf"], pr["sdf"])
+        else:
+            if latest:
+                log.warning("POLICY RATE CHANGE DETECTED | was repo=%s/SLF=%s/SDF=%s -> now repo=%s/SLF=%s/SDF=%s",
+                            latest.repo, latest.slf, latest.sdf, pr["repo"], pr["slf"], pr["sdf"])
+                errors.append(f"POLICY RATE CHANGE: repo {latest.repo}->{pr['repo']}, "
+                              f"SLF {latest.slf}->{pr['slf']}, SDF {latest.sdf}->{pr['sdf']} — verify & note the MPC date")
+            session.add(PolicyRateSnapshot(
+                first_seen_date=today, last_seen_date=today,
+                repo=pr["repo"], slf=pr["slf"], sdf=pr["sdf"], bank_rate=pr["bank_rate"],
+                crr=pr.get("crr"), slr=pr.get("slr"),
+                source_last_update=pr.get("source_last_update"), source=pr.get("source"),
+                ingested_utc=_dt.datetime.utcnow()))
+            session.commit()
+            log.info("Policy corridor stored | repo=%s SLF=%s SDF=%s bank=%s", pr["repo"], pr["slf"], pr["sdf"], pr["bank_rate"])
+        session.close()
+    except Exception as exc:
+        log.exception("Policy-rate fetch failed: %s", exc)
+        errors.append(f"policy: {exc}")
+
     # ── Summary ───────────────────────────────────────────────────────────────
     elapsed = (datetime.datetime.now() - start).seconds
     if errors:

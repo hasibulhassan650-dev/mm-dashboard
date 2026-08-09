@@ -98,10 +98,14 @@ export interface PolicyRateSnapshot {
   effective_date: string;
   repo: number | null; slf: number | null; sdf: number | null;
   bank_rate: number | null; note?: string;
+  crr?: number | null; slr?: number | null;
+  source?: string; verified?: boolean; last_checked?: string | null;
+  source_last_update?: string | null;
 }
 export interface PolicyCorridor {
   current: PolicyRateSnapshot | null;
   history: PolicyRateSnapshot[];
+  verified?: boolean;
 }
 
 export interface DatasetStatus {

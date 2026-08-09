@@ -242,6 +242,26 @@ class ReservesMonthly(Base):
     ingested_utc              = Column(DateTime)
 
 
+class PolicyRateSnapshot(Base):
+    """BB policy-rate corridor, fetched live from bb.org.bd's POLICY RATES box.
+    One row per DISTINCT corridor observed — a new row means a rate change,
+    so history + change-detection come for free. last_seen_date advances each
+    day the same corridor is re-confirmed."""
+    __tablename__ = "policy_rate_snapshots"
+    id                 = Column(Integer, primary_key=True, autoincrement=True)
+    first_seen_date    = Column(Date, nullable=False)
+    last_seen_date     = Column(Date)
+    repo               = Column(Float)
+    slf                = Column(Float)
+    sdf                = Column(Float)
+    bank_rate          = Column(Float)
+    crr                = Column(Float)
+    slr                = Column(Float)
+    source_last_update = Column(String(40))
+    source             = Column(String(200))
+    ingested_utc       = Column(DateTime)
+
+
 class HolidayCalendar(Base):
     __tablename__ = "holiday_calendar"
     calendar_date  = Column(Date, primary_key=True)

@@ -142,6 +142,19 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
             if mx is None or mx < min_ok:
                 add("freshness", f"{name}: latest={mx} (need ≥{min_ok}) — {desc}")
 
+        # ---- policy corridor freshness (tolerant until first fetch populates it) ----
+        # The daily fetcher re-confirms the corridor from BB's homepage; if it
+        # stops, the displayed policy rates could silently drift from BB again.
+        try:
+            pv = s.execute(text("SELECT MAX(last_seen_date) FROM policy_rate_snapshots")).scalar()
+            if pv is not None:
+                if isinstance(pv, str):
+                    pv = datetime.date.fromisoformat(pv[:10])
+                if pv < today - datetime.timedelta(days=5):
+                    add("freshness", f"policy_corridor: last re-checked {pv} (>5 days) — BB policy fetcher may be broken; rates could be drifting")
+        except Exception:
+            pass  # table not created yet (first pipeline run makes it)
+
         # ---- reserves / remittance ----
         for r in q("SELECT month, gross_reserves_usd_mn, net_reserves_bpm6_usd_mn FROM reserves_monthly "
                    "WHERE gross_reserves_usd_mn IS NOT NULL AND (gross_reserves_usd_mn < 0 OR gross_reserves_usd_mn > 60000 "

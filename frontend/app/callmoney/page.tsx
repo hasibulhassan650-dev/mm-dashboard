@@ -59,9 +59,13 @@ export default async function CallMoneyPage({ searchParams }: { searchParams: Pr
       </div>
 
       {cur && (
-        <div style={{ fontSize: 11.5, color: "var(--warn)", margin: "0 2px 8px" }}>
-          ⚠ Policy corridor — illustrative / pending verification against BB MPC circulars (assumed eff. {fmtDate(cur.effective_date)}).
-        </div>
+        corridor.verified
+          ? <div style={{ fontSize: 11.5, color: "var(--pos)", margin: "0 2px 8px" }}>
+              ✓ Policy corridor — live from Bangladesh Bank (bb.org.bd){cur.last_checked ? ` · last checked ${fmtDate(cur.last_checked)}` : ""} · eff. {fmtDate(cur.effective_date)}
+            </div>
+          : <div style={{ fontSize: 11.5, color: "var(--warn)", margin: "0 2px 8px" }}>
+              ⚠ Policy corridor — illustrative / pending verification against BB MPC circulars (assumed eff. {fmtDate(cur.effective_date)}).
+            </div>
       )}
       {cur && (
         <div className="kpi-strip" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
