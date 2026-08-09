@@ -264,6 +264,49 @@ class PolicyRateSnapshot(Base):
     ingested_utc       = Column(DateTime)
 
 
+class AuctionForecast(Base):
+    """One row = one model's forecast of the next auction cutoff for one tenor.
+
+    Written by forecast/run_forecast.py in GitHub Actions — NEVER computed in the
+    API (Vercel serverless can't carry the stats stack). The API only reads this.
+    `actual_yield` is backfilled by a later run once the auction has printed, so
+    every published forecast can be scored against what actually happened.
+    """
+    __tablename__ = "auction_forecasts"
+    __table_args__ = (UniqueConstraint("forecast_run_date", "target_auction_date", "tenor", "model"),)
+    id                  = Column(Integer, primary_key=True, autoincrement=True)
+    forecast_run_date   = Column(Date, nullable=False)   # when the model ran
+    target_auction_date = Column(Date)                   # estimated next auction date
+    tenor               = Column(String(15), nullable=False)   # 91D, 182D, 2Y, ...
+    instrument          = Column(String(10))             # T_BILL, T_BOND, FRTB
+    model               = Column(String(20), nullable=False)   # naive, momentum
+    point_yield         = Column(Float)
+    lo_yield            = Column(Float)                  # point − 1.96×RMSE
+    hi_yield            = Column(Float)                  # point + 1.96×RMSE
+    actual_yield        = Column(Float)                  # backfilled after the print
+    created_utc         = Column(DateTime)
+
+
+class BacktestMetric(Base):
+    """Rolling out-of-sample skill of one model on one tenor, as of computed_date.
+
+    Errors are in basis points so bills and bonds are directly comparable.
+    dir_acc is NULL for the naive model — it predicts zero change, so it makes
+    no directional call to score.
+    """
+    __tablename__ = "backtest_metrics"
+    __table_args__ = (UniqueConstraint("computed_date", "model", "tenor"),)
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    computed_date = Column(Date, nullable=False)
+    model         = Column(String(20), nullable=False)
+    tenor         = Column(String(15), nullable=False)
+    mae_bps       = Column(Float)
+    rmse_bps      = Column(Float)
+    dir_acc       = Column(Float)    # share of correct direction calls, 0–1
+    hit_5bps      = Column(Float)    # share of forecasts within ±5 bps, 0–1
+    n_obs         = Column(Integer)
+
+
 class HolidayCalendar(Base):
     __tablename__ = "holiday_calendar"
     calendar_date  = Column(Date, primary_key=True)
@@ -357,6 +400,16 @@ def init_db():
         "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS source_pub_date DATE",
         "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS source_serial VARCHAR(40)",
         "ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS quality TEXT",
+        # Forecast tables: the unique keys are what keep a re-run idempotent —
+        # run_forecast.py looks up on exactly these columns before writing, and
+        # the index stops a concurrent/partial run from double-inserting. If a
+        # table pre-dates the constraint, create_all() will NOT add it, so the
+        # index is created explicitly here.
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_auction_forecasts_key "
+        "ON auction_forecasts (forecast_run_date, target_auction_date, tenor, model)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_backtest_metrics_key "
+        "ON backtest_metrics (computed_date, model, tenor)",
+        "ALTER TABLE auction_forecasts ADD COLUMN IF NOT EXISTS actual_yield DOUBLE PRECISION",
     ]
     for ddl in migrations:
         try:

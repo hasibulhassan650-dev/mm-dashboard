@@ -6,6 +6,7 @@ export const NAV: NavItem[] = [
   { href: "/cashflows",   label: "Cash Flows",  icon: "flow" },
   { href: "/forecast",    label: "Forecast",    icon: "pulse" },
   { href: "/explore",     label: "Explore",     icon: "grid" },
+  { href: "/research",    label: "Research",    icon: "pulse" },
   { href: "/omo",         label: "OMO",         icon: "layers" },
   { href: "/yields",      label: "Yields",      icon: "curve" },
   { href: "/callmoney",   label: "Call Money",  icon: "pulse" },

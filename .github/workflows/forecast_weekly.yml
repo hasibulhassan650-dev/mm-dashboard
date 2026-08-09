@@ -1,0 +1,55 @@
+# .github/workflows/forecast_weekly.yml
+#
+# Weekly auction cutoff-rate forecast.
+#
+# This is where ALL the modelling happens. The Vercel API is serverless and
+# cannot carry a stats stack, so run_forecast.py fits here, writes the results
+# to Supabase, and /api/forecast + the /research tab only read them back.
+#
+# Thursday 04:00 UTC (10:00 Bangladesh) — after the week's bill prints are in
+# and a clear run ahead of the Sunday/Monday auctions being forecast.
+#
+# Phase 1 is pandas/numpy only, so the existing requirements.txt is enough.
+# When statsmodels/pmdarima/arch models land they get their own
+# requirements-forecast.txt installed here — never in api/requirements.txt.
+
+name: Weekly Forecast
+
+on:
+  schedule:
+    - cron: "0 4 * * 4"        # Thursday 04:00 UTC
+  workflow_dispatch:
+    inputs:
+      lookback_years:
+        description: "Years of history to fit on (0 = full 2007+ history)"
+        required: false
+        default: "3"
+
+jobs:
+  forecast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      FORECAST_LOOKBACK_YEARS: ${{ inputs.lookback_years || '3' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run forecast
+        run: python forecast/run_forecast.py
+
+      - name: Log result
+        if: always()
+        run: echo "Forecast run finished at $(date)"

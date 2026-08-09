@@ -60,11 +60,43 @@ export const api = {
     try { return await get<MacroSeries>("/api/macro/reserves"); }
     catch { return { series: [], latest: null }; }
   },
+  // Pre-computed in GitHub Actions, never in the API. Degrades to an empty run
+  // until the weekly workflow has populated the tables.
+  forecast:        async (): Promise<ForecastPayload> => {
+    try { return await get<ForecastPayload>("/api/forecast"); }
+    catch { return { run_date: null, forecasts: [], metrics: [], track_record: [] }; }
+  },
   monetary:        async (): Promise<MonetaryData> => {
     try { return await get<MonetaryData>("/api/macro/monetary"); }
     catch { return { monthly: [], latest: null, reserve_requirements: { current: null, history: [] } }; }
   },
 };
+
+export type ForecastModel = "naive" | "momentum";
+
+export interface ForecastRow {
+  tenor: string; instrument: string | null; model: ForecastModel;
+  target_auction_date: string | null;
+  point_yield: number; lo_yield: number; hi_yield: number;
+  last_actual_yield: number | null; last_auction_date: string | null;
+}
+/** Rolling out-of-sample skill. dir_acc is null for naive — it calls no direction. */
+export interface BacktestRow {
+  tenor: string; model: ForecastModel;
+  mae_bps: number | null; rmse_bps: number | null;
+  dir_acc: number | null; hit_5bps: number | null; n_obs: number;
+}
+export interface TrackRecordRow {
+  tenor: string; model: ForecastModel;
+  target_auction_date: string; forecast_run_date: string;
+  point_yield: number; lo_yield: number; hi_yield: number; actual_yield: number;
+}
+export interface ForecastPayload {
+  run_date: string | null;
+  forecasts: ForecastRow[];
+  metrics: BacktestRow[];
+  track_record: TrackRecordRow[];
+}
 
 export interface MonetaryRow {
   month: string;

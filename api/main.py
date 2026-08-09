@@ -11,6 +11,7 @@ Endpoints:
   GET /api/securities             securities list
   GET /api/flows                  daily net flows (coupons + maturities)
   GET /api/auctions               auction events
+  GET /api/forecast               pre-computed auction cutoff forecasts (CI-written)
 """
 import os
 from fastapi import FastAPI
@@ -19,7 +20,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from routers import omo, yields, securities, flows, callmoney, fx, refrate, meta, policy, macro
+from routers import omo, yields, securities, flows, callmoney, fx, refrate, meta, policy, macro, forecast
 
 app = FastAPI(title="MM Dashboard API", version="1.0.0")
 
@@ -40,6 +41,7 @@ app.include_router(refrate.router,     prefix="/api/refrate",     tags=["RefRate
 app.include_router(meta.router,        prefix="/api/meta",        tags=["Meta"])
 app.include_router(policy.router,      prefix="/api/policy",      tags=["Policy"])
 app.include_router(macro.router,       prefix="/api/macro",       tags=["Macro"])
+app.include_router(forecast.router,    prefix="/api/forecast",    tags=["Forecast"])
 
 
 @app.get("/health")
