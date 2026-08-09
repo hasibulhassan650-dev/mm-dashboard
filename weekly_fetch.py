@@ -25,6 +25,10 @@ sys.path.insert(0, str(ROOT))
 # Fetch windows — overridable via env. Defaults preserve the original local
 # behaviour; the cloud workflow sets a smaller OMO window for fast daily runs
 # (the DB already holds history, so daily runs only need to catch new days).
+# Light mode (hourly refresh): skip the heavy end-of-day GSOM securities scrape,
+# run only the intraday-relevant feeds (OMO, treasury, call money, FX, ref
+# rates, remittance, reserves, policy). Set FETCH_MODE=light.
+LIGHT           = os.environ.get("FETCH_MODE", "full").lower() == "light"
 OMO_DAYS_BACK   = int(os.environ.get("OMO_DAYS_BACK", "200"))
 OMO_MAX_FILES   = int(os.environ.get("OMO_MAX_FILES", "220"))
 TREASURY_MONTHS = int(os.environ.get("TREASURY_MONTHS", "2"))
@@ -76,22 +80,28 @@ def main():
     errors = []
 
     # ── 1. GSOM pipeline ──────────────────────────────────────────────────────
-    log.info("--- Step 1: GSOM pipeline ---")
-    try:
-        summary = run_pipeline(
-            today - datetime.timedelta(days=60),
-            today + datetime.timedelta(days=120),
-        )
-        log.info(
-            "Pipeline OK | securities=%s coupons=%s maturities=%s auctions=%s",
-            summary.get("securities"), summary.get("coupons"),
-            summary.get("maturities"), summary.get("auctions"),
-        )
-        if summary.get("errors"):
-            errors.extend(summary["errors"])
-    except Exception as exc:
-        log.exception("Pipeline failed: %s", exc)
-        errors.append(f"pipeline: {exc}")
+    # Heavy (~27 min: ~7,600 MTM rows + event regen) and BB only updates GSOM
+    # end-of-day — so the hourly LIGHT refresh skips it. The 3×/day full runs
+    # keep securities/secondary/flows current; light runs reuse that data.
+    if LIGHT:
+        log.info("--- Step 1: GSOM pipeline — SKIPPED (light/hourly mode) ---")
+    else:
+        log.info("--- Step 1: GSOM pipeline ---")
+        try:
+            summary = run_pipeline(
+                today - datetime.timedelta(days=60),
+                today + datetime.timedelta(days=120),
+            )
+            log.info(
+                "Pipeline OK | securities=%s coupons=%s maturities=%s auctions=%s",
+                summary.get("securities"), summary.get("coupons"),
+                summary.get("maturities"), summary.get("auctions"),
+            )
+            if summary.get("errors"):
+                errors.extend(summary["errors"])
+        except Exception as exc:
+            log.exception("Pipeline failed: %s", exc)
+            errors.append(f"pipeline: {exc}")
 
     # ── 2. OMO fetch (last 200 days — covers AR 180D + all outstanding positions) ─
     # AR 180D transactions from ~6 months ago are still outstanding today.

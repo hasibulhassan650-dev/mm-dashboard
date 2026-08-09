@@ -1,0 +1,107 @@
+# .github/workflows/hourly_refresh.yml
+#
+# HOURLY light refresh — keeps the intraday feeds fresh every hour without the
+# heavy end-of-day GSOM securities scrape (that stays in full_refresh.yml,
+# 3×/day). Runs OMO, treasury, call money, FX, ref rates, remittance, reserves,
+# and the policy corridor (so an MPC rate change surfaces within the hour).
+# Idempotent upserts make it safe alongside the full refresh.
+
+name: Hourly Refresh
+
+on:
+  schedule:
+    - cron: "30 * * * *"   # every hour at :30 (offset from the :00 full runs)
+  workflow_dispatch:
+
+concurrency:
+  group: hourly-refresh
+  cancel-in-progress: true   # a light run is quick; drop a stale one if it overruns
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write          # integrity gate files/closes alert issues
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      FETCH_MODE: "light"    # skip Step 1 GSOM
+      OMO_DAYS_BACK: "35"    # just catch new press releases; history already stored
+      OMO_MAX_FILES: "35"
+      TREASURY_MONTHS: "1"
+      CALLMONEY_DAYS: "20"
+      REFRATE_DAYS: "20"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install xvfb (Chrome is pre-installed on the runner)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          google-chrome --version
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run light refresh (Chrome under virtual display)
+        run: |
+          xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" python weekly_fetch.py
+
+      - name: Data integrity gate
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python validate.py > integrity.json || true
+          cat integrity.json
+          ok=$(python -c "import json;print(json.load(open('integrity.json'))['ok'])")
+          if [ "$ok" = "True" ]; then
+            echo "Integrity OK"
+            n=$(gh issue list --repo "$GITHUB_REPOSITORY" --label data-integrity --state open --json number --jq '.[0].number // empty')
+            if [ -n "$n" ]; then
+              gh issue close "$n" --repo "$GITHUB_REPOSITORY" \
+                --comment "Integrity checks passing again as of run ${GITHUB_RUN_ID}. Auto-closing."
+            fi
+            exit 0
+          fi
+          echo "Integrity FAILED — filing alert issue"
+          body="Automated data-integrity alert from hourly run [${GITHUB_RUN_ID}](https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}):
+
+          \`\`\`json
+          $(cat integrity.json)
+          \`\`\`"
+          n=$(gh issue list --repo "$GITHUB_REPOSITORY" --label data-integrity --state open --json number --jq '.[0].number // empty')
+          if [ -n "$n" ]; then
+            gh issue comment "$n" --repo "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" \
+              --title "DATA INTEGRITY ALERT: checks failing" \
+              --label data-integrity --body "$body"
+          fi
+          exit 1
+
+      - name: Summarise log
+        if: always()
+        run: |
+          echo "===== weekly_fetch.log (tail) ====="
+          tail -n 40 logs/weekly_fetch.log || echo "(no log file)"
+
+      - name: Upload log artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hourly-log
+          path: logs/weekly_fetch.log
+          if-no-files-found: ignore
+          retention-days: 3
