@@ -102,7 +102,8 @@ export default function ForecastIntervalChart({ rows }: { rows: ForecastRow[] })
           </g>
         ))}
         <text className="chart-axis" x={w - PAD.r} y={h - PAD.b + 28} textAnchor="end">bps vs last print</text>
-        <text className="chart-axis" x={PAD.l} y={PAD.t - 14} textAnchor="middle" style={{ fontSize: 10 }}>
+        {/* labels the zero line itself — zero change IS the naive forecast */}
+        <text className="chart-axis" x={px(0)} y={PAD.t - 14} textAnchor="middle" style={{ fontSize: 10 }}>
           unchanged
         </text>
 
