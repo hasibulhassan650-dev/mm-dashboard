@@ -311,3 +311,21 @@ a { color: inherit; text-decoration: none; }
 :root[data-theme="light"] .drc-range input[type="date"] { color-scheme: light; }
 .drc-range input[type="date"]:hover { color: var(--accent); }
 .drc-dash { color: var(--fg-mute); font-size: 12px; }
+
+/* ---------------- EXPLORE / RELATIONSHIP TOOL ---------------- */
+.exp-vars { display: flex; flex-direction: column; gap: 9px; }
+.exp-group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.exp-group-lb { font-size: 10px; text-transform: uppercase; letter-spacing: .4px; color: var(--fg-mute); font-weight: 600; width: 78px; }
+.exp-chip { font-size: 11.5px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel); color: var(--fg-dim); cursor: pointer; transition: .12s; }
+.exp-chip:hover { border-color: var(--fg-mute); color: var(--fg); }
+.exp-chip.on { background: var(--accent-soft); border-color: color-mix(in oklab, var(--accent) 45%, transparent); color: var(--accent); }
+.exp-matrix-wrap { overflow-x: auto; }
+.exp-matrix { border-collapse: separate; border-spacing: 2px; font-family: var(--mono); }
+.exp-matrix th { font-family: var(--sans); font-size: 10.5px; color: var(--fg-mute); font-weight: 500; padding: 3px 5px; white-space: nowrap; }
+.exp-matrix thead th { writing-mode: vertical-rl; transform: rotate(180deg); max-height: 96px; text-align: left; }
+.exp-matrix tbody th { text-align: right; max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
+.exp-cell { width: 46px; height: 30px; text-align: center; font-size: 11px; color: var(--fg); border-radius: 4px; }
+.exp-cell.click { cursor: pointer; }
+.exp-cell.click:hover { outline: 2px solid var(--accent); }
+.exp-legend { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 11px; color: var(--fg-dim); font-family: var(--mono); }
+.exp-scale { width: 120px; height: 10px; border-radius: 3px; background: linear-gradient(90deg, rgba(220,38,38,.9), rgba(120,120,120,.2), rgba(13,148,136,.9)); }
