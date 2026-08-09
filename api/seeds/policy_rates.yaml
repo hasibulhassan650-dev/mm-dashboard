@@ -36,4 +36,11 @@ corridor:
     slf: 11.50
     sdf: 8.50
     bank_rate: 5.00
-    note: "DRAFT - verify; assumed current corridor"
+    note: "verify against BB MPC circular"
+
+  - effective_date: "2026-08-02"
+    repo: 9.50
+    slf: 11.00
+    sdf: 7.50
+    bank_rate: 4.00
+    note: "MPC 30-Jul-2026: repo cut 50bps 10.0->9.5, SLF 11.5->11.0, SDF held 7.5, Bank Rate 4.0. Verified vs BB homepage POLICY RATES box (bb.org.bd)."
