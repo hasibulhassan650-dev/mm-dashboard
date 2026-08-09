@@ -4,27 +4,26 @@ import { fmtDate, fmtPct } from "@/lib/format";
 import { Panel } from "@/components/terminal/ui";
 import { ComboChart } from "@/components/terminal/charts";
 import CallMoneyChart from "@/components/CallMoneyChart";
-import PeriodSelector from "@/components/PeriodSelector";
+import DateRangeControl from "@/components/DateRangeControl";
+import { resolveRange, inRange } from "@/lib/daterange";
 import DownloadButton from "@/components/DownloadButton";
 import Freshness from "@/components/Freshness";
 import InfoTip from "@/components/InfoTip";
+import RelatedLinks from "@/components/RelatedLinks";
 
 export const revalidate = 300;
 
-const PERIODS = [
-  { label: "30d", days: 30 }, { label: "90d", days: 90 }, { label: "180d", days: 180 },
-  { label: "1y", days: 365 }, { label: "All", days: 0 },
-];
-
-export default async function CallMoneyPage({ searchParams }: { searchParams: Promise<{ days?: string }> }) {
-  const days = parseInt((await searchParams).days ?? "90", 10);
-  const [data, fresh, corridor] = await Promise.all([api.callmoney(days), api.freshness(), api.policy()]);
-  const summary = [...data.daily_summary].sort((a, b) => a.trade_date.localeCompare(b.trade_date));
+export default async function CallMoneyPage({ searchParams }: { searchParams: Promise<{ from?: string; to?: string }> }) {
+  const sp = await searchParams;
+  const [data, fresh, corridor] = await Promise.all([api.callmoney(3650), api.freshness(), api.policy()]);
+  const summaryAll = [...data.daily_summary].sort((a, b) => a.trade_date.localeCompare(b.trade_date));
+  const range = resolveRange(sp, summaryAll.map((r) => r.trade_date), 90);
+  const summary = summaryAll.filter((r) => inRange(r.trade_date, range.from, range.to));
   const latest = data.latest_breakdown;
   const cur = corridor.current;
-  const combo = callMoneyCombo(data);
+  const combo = callMoneyCombo({ ...data, daily_summary: summary });
 
-  const lastRow = summary.at(-1), prevRow = summary.at(-2);
+  const lastRow = summaryAll.at(-1), prevRow = summaryAll.at(-2);
   const rateNow = lastRow?.overnight_wavg_rate ?? null;
   const rateDelta = rateNow != null && prevRow?.overnight_wavg_rate != null ? rateNow - prevRow.overnight_wavg_rate : null;
   const products = [...new Set(latest.map((r) => r.product))].sort();
@@ -33,7 +32,7 @@ export default async function CallMoneyPage({ searchParams }: { searchParams: Pr
     <>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: "var(--gap)", flexWrap: "wrap" }}>
         <Freshness updated={fresh.callmoney} />
-        <PeriodSelector periods={PERIODS} current={days} />
+        <DateRangeControl min={range.min} max={range.max} from={range.from} to={range.to} />
       </div>
 
       <div className="kpi-strip" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
@@ -128,6 +127,11 @@ export default async function CallMoneyPage({ searchParams }: { searchParams: Pr
           </div>
         </Panel>
       </div>
+      <RelatedLinks items={[
+        { href: "/omo", label: "OMO Operations", why: "the corridor tools that anchor this rate" },
+        { href: "/forecast", label: "Liquidity Forecast", why: "why tight/flush days move the rate" },
+        { href: "/refrate", label: "Reference Rates", why: "SOFR-style benchmark rates" },
+      ]} />
     </>
   );
 }

@@ -2,22 +2,21 @@ import { api } from "@/lib/api";
 import { fmtDate } from "@/lib/format";
 import { Panel } from "@/components/terminal/ui";
 import FxChart from "@/components/FxChart";
-import PeriodSelector from "@/components/PeriodSelector";
+import DateRangeControl from "@/components/DateRangeControl";
+import { resolveRange, inRange } from "@/lib/daterange";
 import DownloadButton from "@/components/DownloadButton";
 import Freshness from "@/components/Freshness";
+import RelatedLinks from "@/components/RelatedLinks";
 
 export const revalidate = 300;
 
-const PERIODS = [
-  { label: "90d", days: 90 }, { label: "180d", days: 180 }, { label: "1y", days: 365 },
-  { label: "2y", days: 730 }, { label: "All", days: 0 },
-];
+export default async function FxPage({ searchParams }: { searchParams: Promise<{ from?: string; to?: string }> }) {
+  const sp = await searchParams;
+  const [allRows, fresh] = await Promise.all([api.fx(3650).catch(() => []), api.freshness()]);
+  const range = resolveRange(sp, allRows.map((r) => r.auction_date), 365);
+  const rows = allRows.filter((r) => inRange(r.auction_date, range.from, range.to));
 
-export default async function FxPage({ searchParams }: { searchParams: Promise<{ days?: string }> }) {
-  const days = parseInt((await searchParams).days ?? "365", 10);
-  const [rows, fresh] = await Promise.all([api.fx(days).catch(() => []), api.freshness()]);
-
-  const latest = rows[0] ?? null, prev = rows[1] ?? null;
+  const latest = allRows[0] ?? null, prev = allRows[1] ?? null;
   const rateDelta = latest?.weighted_avg_rate != null && prev?.weighted_avg_rate != null ? latest.weighted_avg_rate - prev.weighted_avg_rate : null;
   const totalAcc = rows.reduce((s, r) => s + (r.accepted_amount_usd_mill ?? 0), 0);
   const totalBid = rows.reduce((s, r) => s + (r.bid_amount_usd_mill ?? 0), 0);
@@ -27,7 +26,7 @@ export default async function FxPage({ searchParams }: { searchParams: Promise<{
     <>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: "var(--gap)", flexWrap: "wrap" }}>
         <Freshness updated={fresh.fx} />
-        <PeriodSelector periods={PERIODS} current={days} />
+        <DateRangeControl min={range.min} max={range.max} from={range.from} to={range.to} />
       </div>
 
       <div className="kpi-strip" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
@@ -82,6 +81,11 @@ export default async function FxPage({ searchParams }: { searchParams: Promise<{
           </div>
         </Panel>
       </div>
+      <RelatedLinks items={[
+        { href: "/macro", label: "External Sector", why: "reserves the interventions defend" },
+        { href: "/monetary", label: "Monetary", why: "policy backdrop" },
+        { href: "/refrate", label: "Reference Rates", why: "money-market benchmarks" },
+      ]} />
     </>
   );
 }
