@@ -11,9 +11,10 @@ export const revalidate = 300;
 const DASH = "—";
 const pct1 = (v: number | null) => (v == null ? DASH : `${(v * 100).toFixed(0)}%`);
 const MODEL_LABEL: Record<ForecastModel, string> = {
-  naive: "Naive", momentum: "Momentum", ols: "OLS", curve: "Curve carry", blend: "Blend",
+  naive: "Naive", momentum: "Momentum", ols: "OLS", curve: "Curve carry",
+  ecm: "ECM", blend: "Blend",
 };
-const MODEL_ORDER: ForecastModel[] = ["naive", "momentum", "curve", "ols", "blend"];
+const MODEL_ORDER: ForecastModel[] = ["naive", "momentum", "curve", "ecm", "ols", "blend"];
 const TRACK_TENOR = "91D";   // deepest series — the one worth eyeballing
 
 /** Section heading inside a prose panel. */
@@ -74,6 +75,8 @@ export default async function ResearchPage() {
   const scored = fc.track_record.length;
 
   const empty = fc.run_date == null;
+  const gate = diags.find(d => d.test === "policy_gate");
+  const gateBlocked = gate?.conclusion?.startsWith("BLOCKED") ?? false;
 
   return (
     <>
@@ -192,7 +195,7 @@ export default async function ResearchPage() {
                 {tenors.flatMap(t => {
                   const e = byTenor.get(t)!;
                   const naiveMae = e.naive?.mae_bps ?? null;
-                  return (["naive", "momentum", "ols"] as ForecastModel[])
+                  return MODEL_ORDER
                     .filter(m => e[m])
                     .map((m, mi) => {
                       const r = e[m]!;
@@ -258,6 +261,45 @@ export default async function ResearchPage() {
                   })}
                 </tbody>
               </table>
+            </div>
+          </Panel>
+        )}
+
+        {gate && (
+          <Panel title="Error-Correction Model — Status" span={12}
+            sub="the pull-to-anchor model from the project guide (Phase 5.3), and what it is waiting on">
+            <div style={{ fontSize: 12.5, lineHeight: 1.7, color: "var(--fg-mute)", maxWidth: 980 }}>
+              <div style={{
+                display: "inline-flex", alignItems: "center", gap: 8, marginBottom: 12,
+                padding: "6px 12px", borderRadius: "var(--radius-sm)", fontSize: 12,
+                border: `1px solid ${gateBlocked ? "var(--warn)" : "var(--pos)"}`,
+                color: gateBlocked ? "var(--warn)" : "var(--pos)",
+                background: `color-mix(in oklab, ${gateBlocked ? "var(--warn)" : "var(--pos)"} 10%, transparent)`,
+              }}>
+                <b>{gateBlocked ? "BLOCKED" : "ACTIVE"}</b>
+                <span style={{ color: "var(--fg-dim)" }}>{gate.conclusion?.replace(/^(BLOCKED|OPEN) — /, "")}</span>
+              </div>
+
+              <p>The ECM is the most theoretically honest model for a corridor regime: it says a cutoff
+              sitting well above the policy rate should get <i>pulled back</i> toward it, at a speed α that
+              the data estimates. Everything for it is built and wired — the effective-dated corridor table,
+              the step-function lookup, the spread and policy-change terms, the Engle-Granger cointegration
+              test, and a sign check that withholds the forecast if α comes out positive (which would mean
+              the spread is explosive, not error-correcting).</p>
+
+              <p><b style={{ color: "var(--fg)" }}>What it is waiting on is data, not code.</b> The model
+              needs the corridor as a step function across the whole fit window. The database holds one
+              verified corridor observation; the seed&apos;s other two entries say in their own notes that
+              they were drafted from memory. Fitting on those would not fail loudly — it would produce a
+              confident α and a plausible-looking pull-to-anchor built on invented numbers, which is worse
+              than having no model at all. So it stays switched off.</p>
+
+              <p><b style={{ color: "var(--fg)" }}>To unlock it:</b> add every corridor change back to at
+              least the start of the fit window into{" "}
+              <span className="mono">api/seeds/policy_rates.yaml</span> from the BB MPD circular archive,
+              set <span className="mono">verified: true</span> on each one you actually checked, then run{" "}
+              <span className="mono">python forecast/policy.py --load</span>. The ECM and the cointegration
+              test switch themselves on at the next weekly run — no code change needed.</p>
             </div>
           </Panel>
         )}

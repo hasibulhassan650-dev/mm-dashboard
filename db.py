@@ -347,6 +347,32 @@ class ResearchDiagnostic(Base):
     conclusion    = Column(String(120))
 
 
+class PolicyRateHistory(Base):
+    """Effective-dated BB policy corridor — the ANCHOR series for the ECM.
+
+    Distinct from policy_rate_snapshots, which is the live daily fetch and only
+    ever knows today's corridor. This table is the step function through time
+    that `cutoff - repo` needs in order to be a meaningful spread.
+
+    `verified` is load-bearing, not decoration: an entry is False until it has
+    been checked against a BB circular. Modelling REFUSES to use unverified
+    history (see forecast/policy.py:usable) — a fabricated anchor would produce
+    a confident, wrong error-correction model, which is worse than none.
+    """
+    __tablename__ = "policy_rate_history"
+    __table_args__ = (UniqueConstraint("effective_date"),)
+    id             = Column(Integer, primary_key=True, autoincrement=True)
+    effective_date = Column(Date, nullable=False)
+    repo           = Column(Float)
+    slf            = Column(Float)
+    sdf            = Column(Float)
+    bank_rate      = Column(Float)
+    verified       = Column(Boolean, default=False)
+    source         = Column(String(300))
+    note           = Column(Text)
+    ingested_utc   = Column(DateTime)
+
+
 class HolidayCalendar(Base):
     __tablename__ = "holiday_calendar"
     calendar_date  = Column(Date, primary_key=True)
@@ -455,6 +481,8 @@ def init_db():
         "ON backtest_predictions (computed_date, tenor, model, auction_date)",
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_research_diagnostics_key "
         "ON research_diagnostics (computed_date, tenor, test, subject)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_policy_rate_history_key "
+        "ON policy_rate_history (effective_date)",
     ]
     for ddl in migrations:
         try:

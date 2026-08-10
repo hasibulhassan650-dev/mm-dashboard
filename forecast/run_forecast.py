@@ -39,6 +39,8 @@ from db import (init_db, get_session, fix_all_sequences,       # noqa: E402
 from forecast.features import (build as build_features, ols_fit, ols_predict,  # noqa: E402
                                build_anchor, add_curve_anchor, beta_no_intercept,
                                FEATURE_COLS)
+from forecast.policy import (load_history as policy_history,   # noqa: E402
+                            usable as policy_usable, attach as policy_attach)
 
 log = logging.getLogger("forecast")
 
@@ -48,7 +50,8 @@ log = logging.getLogger("forecast")
 # the metrics would be noise dressed up as skill, so the tenor is skipped.
 MIN_HISTORY = 16
 MIN_TRAIN   = 12
-MODELS      = ("naive", "momentum", "ols", "curve", "blend")
+MODELS      = ("naive", "momentum", "ols", "curve", "ecm", "blend")
+ECM_COLS    = ["spread_policy_lag1", "d_policy"]
 ANCHOR_TENOR = "364D"   # freshest deep weekly series; see features.build_anchor
 Z95         = 1.96
 
@@ -128,7 +131,25 @@ def predict(train: pd.DataFrame, row: pd.Series) -> dict:
                                 train["d_cutoff"].to_numpy(dtype=float))
         out["curve"] = last + lam * float(d_anchor)
 
-    # Model 4 — blend. The plain average of every other model available.
+    # Model 4 — error correction (guide Phase 5.3). Only reachable when
+    # forecast/policy.py's gate has opened, i.e. verified corridor history
+    # spanning the sample exists. Until then these columns are all-NaN and this
+    # block is skipped, by design — see policy.py for why that guard matters.
+    if all(c in row.index for c in ECM_COLS) and np.all(np.isfinite(row[ECM_COLS].to_numpy(dtype=float))):
+        tr = train.dropna(subset=ECM_COLS)
+        if len(tr) >= MIN_TRAIN_OLS:
+            coef = ols_fit(tr[ECM_COLS].to_numpy(dtype=float),
+                           tr["d_cutoff"].to_numpy(dtype=float))
+            if coef is not None:
+                # coef[1] is alpha, the pull-to-anchor. Theory says it must be
+                # NEGATIVE: sitting above the corridor should predict a fall
+                # back toward it. A positive alpha means the spread is
+                # explosive, which is not an error-correction model at all — so
+                # the forecast is withheld rather than published as one.
+                if coef[1] < 0:
+                    out["ecm"] = last + ols_predict(coef, row[ECM_COLS].to_numpy(dtype=float))
+
+    # Model 5 — blend. The plain average of every other model available.
     # Forecast combination is the most reliable free lunch in this literature:
     # averaging cancels independent errors, so the blend is usually near the
     # best single model without needing to know in advance which that is. It
@@ -287,9 +308,17 @@ def _next_row(f: pd.DataFrame, anchor: pd.DataFrame | None = None) -> pd.Series:
         if prev is not None and np.isfinite(prev):
             d_anchor = anchor_now - float(prev)
 
+    # ECM inputs for the next auction. All NaN while the policy gate is closed,
+    # which is exactly what keeps the ECM switched off.
+    repo_now = float(last["repo_now"]) if np.isfinite(last.get("repo_now", np.nan)) else np.nan
     return pd.Series({
         "anchor_now":     anchor_now,
         "d_anchor":       d_anchor,
+        "repo_now":       repo_now,
+        # the previous cutoff's distance from the corridor in force now
+        "spread_policy_lag1": float(last["cutoff_yield_pct"]) - repo_now,
+        # no corridor change is known for a future date, so no step to apply
+        "d_policy":       0.0 if np.isfinite(repo_now) else np.nan,
         "cutoff_lag1":    float(last["cutoff_yield_pct"]),
         "d_cutoff_lag1":  float(last["d_cutoff"]),
         "cover_lag1":     float(last["cover_now"]),
@@ -400,6 +429,10 @@ def run(dry_run: bool = False) -> dict:
         anchor = build_anchor(hist, ANCHOR_TENOR)
         log.info("curve anchor: %s with %d prints", ANCHOR_TENOR, len(anchor))
 
+        pol_hist = policy_history(session)
+        ecm_ok, ecm_why = policy_usable(pol_hist, hist["auction_date"].min())
+        log.info("ECM gate: %s — %s", "OPEN" if ecm_ok else "BLOCKED", ecm_why)
+
         for (tenor, instrument), g in hist.groupby(["tenor_label", "security_type"], sort=True):
             g = g.sort_values("auction_date")
             if len(g) < MIN_HISTORY:
@@ -407,6 +440,9 @@ def run(dry_run: bool = False) -> dict:
                 continue
 
             f = add_curve_anchor(build_features(g), anchor)
+            # Attaching only when the gate is open is what keeps unverified
+            # corridor numbers out of every downstream fit.
+            f = policy_attach(f, pol_hist if ecm_ok else pol_hist.iloc[0:0])
             if tenor == ANCHOR_TENOR:
                 # The anchor cannot carry itself: d_anchor would just be this
                 # tenor's own last change, making curve a duplicate of momentum

@@ -23,24 +23,36 @@
 # All values are percent per annum.
 # ============================================================================
 
+# `verified: true` means the entry has been checked against a BB circular or the
+# BB homepage POLICY RATES box. THIS FLAG IS LOAD-BEARING — the forecasting
+# models refuse to use unverified corridor history (forecast/policy.py), because
+# an invented anchor produces a confident, wrong error-correction model. Setting
+# it true without actually checking silently defeats that guard.
+#
+# To unlock the ECM: add every corridor change back to at least 2023-07 from the
+# BB MPD circular archive, set verified: true on each, then run
+#   python forecast/policy.py --load
 corridor:
   - effective_date: "2024-09-25"
     repo: 9.50
     slf: 11.00
     sdf: 8.00
     bank_rate: 4.00
-    note: "DRAFT - verify against BB MPC circular"
+    verified: false
+    note: "DRAFT - drafted from memory, NOT checked against a BB circular"
 
   - effective_date: "2024-10-27"
     repo: 10.00
     slf: 11.50
     sdf: 8.50
     bank_rate: 5.00
-    note: "verify against BB MPC circular"
+    verified: false
+    note: "DRAFT - drafted from memory, NOT checked against a BB circular"
 
   - effective_date: "2026-08-02"
     repo: 9.50
     slf: 11.00
     sdf: 7.50
     bank_rate: 4.00
+    verified: true
     note: "MPC 30-Jul-2026: repo cut 50bps 10.0->9.5, SLF 11.5->11.0, SDF held 7.5, Bank Rate 4.0. Verified vs BB homepage POLICY RATES box (bb.org.bd)."

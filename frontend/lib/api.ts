@@ -80,7 +80,7 @@ export const api = {
   },
 };
 
-export type ForecastModel = "naive" | "momentum" | "ols" | "curve" | "blend";
+export type ForecastModel = "naive" | "momentum" | "ols" | "curve" | "ecm" | "blend";
 
 /** One out-of-sample backtest prediction. A simulation, not the published log. */
 export interface BacktestPredictionRow {
@@ -229,6 +229,9 @@ export interface CurveSlopeRow {
 export interface Security {
   isin: string; security_name_norm: string; security_type: string;
   issue_date: string; maturity_date: string; coupon_rate_pct: number;
+  /** "HALF_YEARLY" | "YEARLY" | "NONE" — /api/securities returns this; the
+   *  type was missing it, which broke PortfolioTool's coupon-schedule logic. */
+  coupon_frequency?: string | null;
   outstanding_bdt_mill: number;
 }
 export interface FlowRow {

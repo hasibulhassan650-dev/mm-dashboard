@@ -34,6 +34,8 @@ sys.path.insert(0, str(ROOT))
 from db import init_db, get_session, ResearchDiagnostic          # noqa: E402
 from forecast.features import build as build_features, FEATURE_COLS  # noqa: E402
 from forecast.run_forecast import load_history, MIN_SCORED, MIN_TRAIN  # noqa: E402
+from forecast.policy import (load_history as policy_history,     # noqa: E402
+                            usable as policy_usable, attach as policy_attach)
 
 log = logging.getLogger("diagnostics")
 
@@ -154,6 +156,37 @@ def diagnose_tenor(tenor: str, f: pd.DataFrame, today) -> list[dict]:
     return out
 
 
+def cointegration(tenor: str, f: pd.DataFrame, today) -> list[dict]:
+    """Engle-Granger between the cutoff level and the policy rate (guide 4.5).
+
+    If they are cointegrated, the spread is stationary and an error-correction
+    model is the theoretically right specification: cutoffs wander but get
+    pulled back to the corridor. This runs ONLY on verified corridor history —
+    see forecast/policy.py for why that guard is non-negotiable.
+    """
+    from statsmodels.tsa.stattools import coint, adfuller
+    out = []
+    d = f[["cutoff_yield_pct", "repo_now"]].dropna()
+    if len(d) < 30 or d["repo_now"].nunique() < 3:
+        return out
+    try:
+        stat, p, _ = coint(d["cutoff_yield_pct"].astype(float), d["repo_now"].astype(float))
+        concl = ("cointegrated with policy rate — ECM is the right spec" if p < ALPHA
+                 else "no cointegration detected — ECM not justified")
+        out.append(_rows(today, tenor, "coint", "cutoff~repo", stat, p, None, concl))
+    except Exception as exc:
+        log.warning("coint failed %s: %s", tenor, exc)
+    try:
+        spread = (d["cutoff_yield_pct"] - d["repo_now"]).astype(float).to_numpy()
+        stat, p, *_ = adfuller(spread, autolag="AIC")
+        concl = ("spread is stationary — mean-reverting to the corridor" if p < ALPHA
+                 else "spread not stationary")
+        out.append(_rows(today, tenor, "adf", "spread_policy", stat, p, None, concl))
+    except Exception as exc:
+        log.warning("spread ADF failed %s: %s", tenor, exc)
+    return out
+
+
 def save(session, rows: list[dict]) -> int:
     n = 0
     for r in rows:
@@ -175,12 +208,22 @@ def run(dry_run: bool = False) -> dict:
     session = get_session()
     try:
         hist = load_history(session)
-        rows, tested = [], []
+        pol = policy_history(session)
+        ecm_ok, ecm_why = policy_usable(pol, hist["auction_date"].min())
+        log.info("ECM gate: %s — %s", "OPEN" if ecm_ok else "BLOCKED", ecm_why)
+
+        # Always record the gate's verdict, open or shut. A blocked ECM should
+        # be visible on the page with the reason, not silently missing.
+        rows = [_rows(today, "ALL", "policy_gate", "ecm", None, None, None,
+                      ("OPEN — " if ecm_ok else "BLOCKED — ") + ecm_why)]
+        tested = []
         for (tenor, _instrument), g in hist.groupby(["tenor_label", "security_type"], sort=True):
             f = build_features(g.sort_values("auction_date"))
             if len(f) - MIN_TRAIN < MIN_SCORED:
                 continue
             r = diagnose_tenor(tenor, f, today)
+            if ecm_ok:
+                r.extend(cointegration(tenor, policy_attach(f, pol), today))
             rows.extend(r)
             tested.append(f"{tenor}({len(f)})")
 
