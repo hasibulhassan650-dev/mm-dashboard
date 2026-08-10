@@ -305,6 +305,46 @@ class BacktestMetric(Base):
     dir_acc       = Column(Float)    # share of correct direction calls, 0–1
     hit_5bps      = Column(Float)    # share of forecasts within ±5 bps, 0–1
     n_obs         = Column(Integer)
+    dm_pvalue     = Column(Float)    # Diebold-Mariano vs naive; NULL for naive itself
+
+
+class BacktestPrediction(Base):
+    """Every out-of-sample prediction the backtest made, kept so the tab can
+    plot model-vs-actual over history.
+
+    This is NOT the live forecast log — `auction_forecasts` is, and only that
+    table proves what was published before an auction. These rows are a
+    simulation and are labelled as such wherever they are displayed.
+    """
+    __tablename__ = "backtest_predictions"
+    __table_args__ = (UniqueConstraint("computed_date", "tenor", "model", "auction_date"),)
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    computed_date = Column(Date, nullable=False)
+    tenor         = Column(String(15), nullable=False)
+    model         = Column(String(20), nullable=False)
+    auction_date  = Column(Date, nullable=False)
+    actual_yield  = Column(Float)
+    pred_yield    = Column(Float)
+
+
+class ResearchDiagnostic(Base):
+    """Statistical test results (guide Phase 4) — ADF/KPSS, Granger, Ljung-Box,
+    VIF, and OLS coefficient inference with Newey-West errors.
+
+    Written by forecast/run_diagnostics.py, which is the ONLY place statsmodels
+    is imported. One row per test per subject so the UI can table them directly.
+    """
+    __tablename__ = "research_diagnostics"
+    __table_args__ = (UniqueConstraint("computed_date", "tenor", "test", "subject"),)
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    computed_date = Column(Date, nullable=False)
+    tenor         = Column(String(15), nullable=False)
+    test          = Column(String(30), nullable=False)   # adf, kpss, granger, ljungbox, vif, ols_coef
+    subject       = Column(String(60), nullable=False)   # series or feature name
+    statistic     = Column(Float)
+    pvalue        = Column(Float)
+    lag           = Column(Integer)
+    conclusion    = Column(String(120))
 
 
 class HolidayCalendar(Base):
@@ -410,6 +450,11 @@ def init_db():
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_backtest_metrics_key "
         "ON backtest_metrics (computed_date, model, tenor)",
         "ALTER TABLE auction_forecasts ADD COLUMN IF NOT EXISTS actual_yield DOUBLE PRECISION",
+        "ALTER TABLE backtest_metrics ADD COLUMN IF NOT EXISTS dm_pvalue DOUBLE PRECISION",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_backtest_predictions_key "
+        "ON backtest_predictions (computed_date, tenor, model, auction_date)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_research_diagnostics_key "
+        "ON research_diagnostics (computed_date, tenor, test, subject)",
     ]
     for ddl in migrations:
         try:

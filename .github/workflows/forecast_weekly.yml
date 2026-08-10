@@ -45,10 +45,19 @@ jobs:
           cache: "pip"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        # requirements-forecast.txt pulls in requirements.txt plus the stats
+        # stack. This is the ONLY place statsmodels/scipy are installed —
+        # api/requirements.txt must stay slim for Vercel.
+        run: pip install -r requirements-forecast.txt
 
-      - name: Run forecast
+      - name: Run forecast (numpy only — this is the published forecast)
         run: python forecast/run_forecast.py
+
+      - name: Run statistical diagnostics (statsmodels)
+        # Inference is reporting, not the forecast: if it breaks, the forecast
+        # above has already been written and must not be marked failed.
+        continue-on-error: true
+        run: python forecast/run_diagnostics.py
 
       - name: Log result
         if: always()

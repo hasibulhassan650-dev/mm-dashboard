@@ -21,9 +21,10 @@ import { fmtPct, fmtDate } from "@/lib/format";
 const MODELS: { key: ForecastModel; label: string; color: string }[] = [
   { key: "momentum", label: "Momentum", color: "#1f9e6e" },  // --accent
   { key: "naive",    label: "Naive",    color: "#4f8ff7" },  // --info
+  { key: "ols",      label: "OLS",      color: "#c2703c" },  // validated 3rd hue
 ];
 
-const ROW_H = 46;
+const ROW_H = 58;
 const PAD = { t: 26, r: 18, b: 30, l: 62 };
 
 interface Band { tenor: string; model: ForecastModel; mid: number; lo: number; hi: number; row: number }
@@ -31,7 +32,7 @@ interface Band { tenor: string; model: ForecastModel; mid: number; lo: number; h
 export default function ForecastIntervalChart({ rows }: { rows: ForecastRow[] }) {
   const [ref, w] = useSize();
   const [hover, setHover] = React.useState<Band | null>(null);
-  const [on, setOn] = React.useState<Record<ForecastModel, boolean>>({ momentum: true, naive: true });
+  const [on, setOn] = React.useState<Record<ForecastModel, boolean>>({ momentum: true, naive: true, ols: true });
 
   // Order tenors short → long so the plot reads like a curve.
   const tenors = React.useMemo(() => {
@@ -71,8 +72,11 @@ export default function ForecastIntervalChart({ rows }: { rows: ForecastRow[] })
   const ticks = niceTicks(lo, hi, 6);
   const xMin = Math.min(...ticks), xMax = Math.max(...ticks);
   const px = (v: number) => PAD.l + ((v - xMin) / (xMax - xMin || 1)) * (w - PAD.l - PAD.r);
+  // Stack the models within each tenor's band so they never overlap. OLS only
+  // exists on the deep bill series, so its slot is simply empty elsewhere.
+  const OFFSET: Record<ForecastModel, number> = { momentum: -14, naive: 0, ols: 14 };
   const py = (row: number, model: ForecastModel) =>
-    PAD.t + row * ROW_H + ROW_H / 2 + (model === "momentum" ? -8 : 8);
+    PAD.t + row * ROW_H + ROW_H / 2 + OFFSET[model];
 
   return (
     <div ref={ref} style={{ position: "relative" }}>
@@ -80,7 +84,9 @@ export default function ForecastIntervalChart({ rows }: { rows: ForecastRow[] })
         {MODELS.map(m => (
           <button key={m.key} className={"leg" + (on[m.key] ? "" : " off")}
             onClick={() => setOn(p => ({ ...p, [m.key]: !p[m.key] }))}
-            title={m.key === "naive" ? "Last cutoff, unchanged — the benchmark" : "Last cutoff + β × last change"}>
+            title={m.key === "naive" ? "Last cutoff, unchanged — the benchmark"
+              : m.key === "momentum" ? "Last cutoff + β × last change"
+              : "OLS on the auction-demand factor set (deep bill series only)"}>
             <span className="leg-sw" style={{ background: m.color }} />
             {m.label}
           </button>

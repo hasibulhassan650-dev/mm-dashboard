@@ -1,0 +1,14 @@
+# Isolated dependency set for the statistical-inference layer
+# (forecast/run_diagnostics.py). Installed ONLY by the weekly forecast
+# workflow in GitHub Actions.
+#
+# These must NEVER migrate into api/requirements.txt — the API runs as a
+# Vercel serverless function and cannot carry a stats stack. run_forecast.py
+# (the weekly production forecast) deliberately does not import any of these
+# either; it fits with numpy so the forecast keeps working if this layer is
+# unavailable.
+
+-r requirements.txt
+
+statsmodels>=0.14.2
+scipy>=1.13.0

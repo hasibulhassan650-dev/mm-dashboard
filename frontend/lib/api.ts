@@ -66,13 +66,33 @@ export const api = {
     try { return await get<ForecastPayload>("/api/forecast"); }
     catch { return { run_date: null, forecasts: [], metrics: [], track_record: [] }; }
   },
+  forecastPredictions: async (tenor: string): Promise<BacktestPredictionRow[]> => {
+    try { return await get<BacktestPredictionRow[]>(`/api/forecast/predictions?tenor=${encodeURIComponent(tenor)}`); }
+    catch { return []; }
+  },
+  forecastDiagnostics: async (): Promise<DiagnosticRow[]> => {
+    try { return await get<DiagnosticRow[]>("/api/forecast/diagnostics"); }
+    catch { return []; }
+  },
   monetary:        async (): Promise<MonetaryData> => {
     try { return await get<MonetaryData>("/api/macro/monetary"); }
     catch { return { monthly: [], latest: null, reserve_requirements: { current: null, history: [] } }; }
   },
 };
 
-export type ForecastModel = "naive" | "momentum";
+export type ForecastModel = "naive" | "momentum" | "ols";
+
+/** One out-of-sample backtest prediction. A simulation, not the published log. */
+export interface BacktestPredictionRow {
+  auction_date: string; model: ForecastModel;
+  actual_yield: number | null; pred_yield: number | null;
+}
+/** A Phase-4 statistical test result. */
+export interface DiagnosticRow {
+  tenor: string; test: string; subject: string;
+  statistic: number | null; pvalue: number | null;
+  lag: number | null; conclusion: string | null;
+}
 
 export interface ForecastRow {
   tenor: string; instrument: string | null; model: ForecastModel;
@@ -85,6 +105,8 @@ export interface BacktestRow {
   tenor: string; model: ForecastModel;
   mae_bps: number | null; rmse_bps: number | null;
   dir_acc: number | null; hit_5bps: number | null; n_obs: number;
+  /** Diebold-Mariano vs naive on squared-error loss; null for naive itself. */
+  dm_pvalue: number | null;
 }
 export interface TrackRecordRow {
   tenor: string; model: ForecastModel;

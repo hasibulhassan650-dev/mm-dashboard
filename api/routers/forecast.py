@@ -53,7 +53,7 @@ def get_forecast():
         """), {"d": run_date}).fetchall()
 
         metrics = session.execute(text("""
-            SELECT tenor, model, mae_bps, rmse_bps, dir_acc, hit_5bps, n_obs
+            SELECT tenor, model, mae_bps, rmse_bps, dir_acc, hit_5bps, n_obs, dm_pvalue
             FROM backtest_metrics
             WHERE computed_date = (SELECT MAX(computed_date) FROM backtest_metrics)
             ORDER BY tenor, model
@@ -78,5 +78,45 @@ def get_forecast():
             "metrics": rows(metrics),
             "track_record": rows(track),
         }
+    finally:
+        session.close()
+
+
+@router.get("/predictions")
+def get_predictions(tenor: str = "91D"):
+    """Backtest out-of-sample predictions vs actual for one tenor.
+
+    A SIMULATION, not the published forecast log — see the note on
+    BacktestPrediction. The tab labels it as such.
+    """
+    session = get_session()
+    try:
+        rows = session.execute(text("""
+            SELECT auction_date, model, actual_yield, pred_yield
+            FROM backtest_predictions
+            WHERE tenor = :t
+              AND computed_date = (SELECT MAX(computed_date) FROM backtest_predictions)
+            ORDER BY auction_date, model
+        """), {"t": tenor.upper()}).fetchall()
+        return [{"auction_date": str(r._mapping["auction_date"]),
+                 "model": r._mapping["model"],
+                 "actual_yield": r._mapping["actual_yield"],
+                 "pred_yield": r._mapping["pred_yield"]} for r in rows]
+    finally:
+        session.close()
+
+
+@router.get("/diagnostics")
+def get_diagnostics():
+    """Latest Phase-4 statistical test results (ADF/KPSS/Granger/VIF/OLS/Ljung-Box)."""
+    session = get_session()
+    try:
+        rows = session.execute(text("""
+            SELECT tenor, test, subject, statistic, pvalue, lag, conclusion
+            FROM research_diagnostics
+            WHERE computed_date = (SELECT MAX(computed_date) FROM research_diagnostics)
+            ORDER BY tenor, test, subject
+        """)).fetchall()
+        return [dict(r._mapping) for r in rows]
     finally:
         session.close()
