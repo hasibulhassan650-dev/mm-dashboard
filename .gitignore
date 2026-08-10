@@ -27,3 +27,6 @@ migrate_to_supabase.py
 # OS
 .DS_Store
 Thumbs.db
+
+# generated logs
+frontend/cleanup.log
