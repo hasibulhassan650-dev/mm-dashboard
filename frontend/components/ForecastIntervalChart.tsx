@@ -18,10 +18,14 @@ import { fmtPct, fmtDate } from "@/lib/format";
  * error, not an assumption about how yields are distributed.
  */
 
+// Only the three competitive models are plotted. Five models x nine tenors is
+// 45 bands — unreadable, and it would need a five-hue categorical palette to
+// stay colourblind-safe. OLS and Blend are still fully visible in the scoreboard
+// table below; this chart is for the comparison you actually act on.
 const MODELS: { key: ForecastModel; label: string; color: string }[] = [
-  { key: "momentum", label: "Momentum", color: "#1f9e6e" },  // --accent
-  { key: "naive",    label: "Naive",    color: "#4f8ff7" },  // --info
-  { key: "ols",      label: "OLS",      color: "#c2703c" },  // validated 3rd hue
+  { key: "curve",    label: "Curve carry", color: "#1f9e6e" },  // --accent
+  { key: "naive",    label: "Naive",       color: "#4f8ff7" },  // --info
+  { key: "momentum", label: "Momentum",    color: "#c2703c" },  // validated 3rd hue
 ];
 
 const ROW_H = 58;
@@ -32,7 +36,8 @@ interface Band { tenor: string; model: ForecastModel; mid: number; lo: number; h
 export default function ForecastIntervalChart({ rows }: { rows: ForecastRow[] }) {
   const [ref, w] = useSize();
   const [hover, setHover] = React.useState<Band | null>(null);
-  const [on, setOn] = React.useState<Record<ForecastModel, boolean>>({ momentum: true, naive: true, ols: true });
+  const [on, setOn] = React.useState<Partial<Record<ForecastModel, boolean>>>(
+    { curve: true, naive: true, momentum: true });
 
   // Order tenors short → long so the plot reads like a curve.
   const tenors = React.useMemo(() => {
@@ -72,11 +77,11 @@ export default function ForecastIntervalChart({ rows }: { rows: ForecastRow[] })
   const ticks = niceTicks(lo, hi, 6);
   const xMin = Math.min(...ticks), xMax = Math.max(...ticks);
   const px = (v: number) => PAD.l + ((v - xMin) / (xMax - xMin || 1)) * (w - PAD.l - PAD.r);
-  // Stack the models within each tenor's band so they never overlap. OLS only
-  // exists on the deep bill series, so its slot is simply empty elsewhere.
-  const OFFSET: Record<ForecastModel, number> = { momentum: -14, naive: 0, ols: 14 };
+  // Stack the models within each tenor's band so they never overlap. Curve does
+  // not exist on the anchor tenor, so that slot is simply left empty.
+  const OFFSET: Partial<Record<ForecastModel, number>> = { curve: -14, naive: 0, momentum: 14 };
   const py = (row: number, model: ForecastModel) =>
-    PAD.t + row * ROW_H + ROW_H / 2 + OFFSET[model];
+    PAD.t + row * ROW_H + ROW_H / 2 + (OFFSET[model] ?? 0);
 
   return (
     <div ref={ref} style={{ position: "relative" }}>
@@ -86,7 +91,7 @@ export default function ForecastIntervalChart({ rows }: { rows: ForecastRow[] })
             onClick={() => setOn(p => ({ ...p, [m.key]: !p[m.key] }))}
             title={m.key === "naive" ? "Last cutoff, unchanged — the benchmark"
               : m.key === "momentum" ? "Last cutoff + β × last change"
-              : "OLS on the auction-demand factor set (deep bill series only)"}>
+              : "Last cutoff + λ × how far the 364D bill has moved since this tenor last auctioned"}>
             <span className="leg-sw" style={{ background: m.color }} />
             {m.label}
           </button>

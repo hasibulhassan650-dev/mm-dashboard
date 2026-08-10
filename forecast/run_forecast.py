@@ -36,7 +36,9 @@ sys.path.insert(0, str(ROOT))
 from db import (init_db, get_session, fix_all_sequences,       # noqa: E402
                 PrimaryYieldSnapshot, AuctionForecast, BacktestMetric,
                 BacktestPrediction)
-from forecast.features import build as build_features, ols_fit, ols_predict, FEATURE_COLS  # noqa: E402
+from forecast.features import (build as build_features, ols_fit, ols_predict,  # noqa: E402
+                               build_anchor, add_curve_anchor, beta_no_intercept,
+                               FEATURE_COLS)
 
 log = logging.getLogger("forecast")
 
@@ -46,7 +48,8 @@ log = logging.getLogger("forecast")
 # the metrics would be noise dressed up as skill, so the tenor is skipped.
 MIN_HISTORY = 16
 MIN_TRAIN   = 12
-MODELS      = ("naive", "momentum", "ols")
+MODELS      = ("naive", "momentum", "ols", "curve", "blend")
+ANCHOR_TENOR = "364D"   # freshest deep weekly series; see features.build_anchor
 Z95         = 1.96
 
 # Model 2 (OLS on the Phase-2 factors) carries 6 parameters, so it needs a
@@ -114,6 +117,25 @@ def predict(train: pd.DataFrame, row: pd.Series) -> dict:
                        train["d_cutoff"].to_numpy(dtype=float))
         if coef is not None:
             out["ols"] = last + ols_predict(coef, row[FEATURE_COLS].to_numpy(dtype=float))
+
+    # Model 3 — curve carry. Move this tenor by lambda x however far the weekly
+    # bill anchor has travelled since this tenor last auctioned. lambda is a
+    # beta (a pass-through), fitted through the origin: no anchor move means no
+    # predicted move, which is the correct behaviour when nothing has happened.
+    d_anchor = row.get("d_anchor")
+    if d_anchor is not None and np.isfinite(d_anchor):
+        lam = beta_no_intercept(train["d_anchor"].to_numpy(dtype=float),
+                                train["d_cutoff"].to_numpy(dtype=float))
+        out["curve"] = last + lam * float(d_anchor)
+
+    # Model 4 — blend. The plain average of every other model available.
+    # Forecast combination is the most reliable free lunch in this literature:
+    # averaging cancels independent errors, so the blend is usually near the
+    # best single model without needing to know in advance which that is. It
+    # also shrinks any one model's overconfidence toward the naive anchor.
+    others = [v for k, v in out.items() if np.isfinite(v)]
+    if len(others) >= 2:
+        out["blend"] = float(np.mean(others))
     return out
 
 
@@ -243,7 +265,7 @@ def next_auction_date(dates: pd.Series) -> datetime.date | None:
     return (dates.iloc[-1] + datetime.timedelta(days=gap)).date()
 
 
-def _next_row(f: pd.DataFrame) -> pd.Series:
+def _next_row(f: pd.DataFrame, anchor: pd.DataFrame | None = None) -> pd.Series:
     """The feature row for the NEXT (unheld) auction.
 
     Its lag-1 inputs are the latest auction's realised values, so they shift up
@@ -254,7 +276,20 @@ def _next_row(f: pd.DataFrame) -> pd.Series:
     last = f.iloc[-1]
     cut = f["cutoff_yield_pct"].astype(float)
     trail = cut.tail(8)
+
+    # Anchor for the next auction: the freshest bill print available now. Its
+    # move is measured against the anchor that was current at the last auction
+    # of this tenor — the same comparison every backtested row used.
+    anchor_now = d_anchor = np.nan
+    if anchor is not None and not anchor.empty:
+        anchor_now = float(anchor["anchor_yield"].iloc[-1])
+        prev = last.get("anchor_now")
+        if prev is not None and np.isfinite(prev):
+            d_anchor = anchor_now - float(prev)
+
     return pd.Series({
+        "anchor_now":     anchor_now,
+        "d_anchor":       d_anchor,
         "cutoff_lag1":    float(last["cutoff_yield_pct"]),
         "d_cutoff_lag1":  float(last["d_cutoff"]),
         "cover_lag1":     float(last["cover_now"]),
@@ -362,6 +397,8 @@ def run(dry_run: bool = False) -> dict:
                  LOOKBACK_YEARS or "all")
 
         forecasts, metrics, preds, skipped = [], [], [], []
+        anchor = build_anchor(hist, ANCHOR_TENOR)
+        log.info("curve anchor: %s with %d prints", ANCHOR_TENOR, len(anchor))
 
         for (tenor, instrument), g in hist.groupby(["tenor_label", "security_type"], sort=True):
             g = g.sort_values("auction_date")
@@ -369,7 +406,12 @@ def run(dry_run: bool = False) -> dict:
                 skipped.append(f"{tenor} (n={len(g)})")
                 continue
 
-            f = build_features(g)
+            f = add_curve_anchor(build_features(g), anchor)
+            if tenor == ANCHOR_TENOR:
+                # The anchor cannot carry itself: d_anchor would just be this
+                # tenor's own last change, making curve a duplicate of momentum
+                # and double-weighting it inside the blend.
+                f = f.assign(d_anchor=np.nan)
             if len(f) - MIN_TRAIN < MIN_SCORED:
                 skipped.append(f"{tenor} (only {max(0, len(f) - MIN_TRAIN)} scorable)")
                 continue
@@ -379,8 +421,18 @@ def run(dry_run: bool = False) -> dict:
 
             # The live forecast: train on EVERY usable row, then predict the
             # next auction from a synthetic row carrying only lagged inputs.
-            live_row = _next_row(f)
+            live_row = _next_row(f, anchor if tenor != ANCHOR_TENOR else None)
             points = predict(f, live_row)
+
+            # The pass-through actually being applied — the single number that
+            # decides how aggressive the curve model is. Worth seeing in the log
+            # every run: a lambda drifting far from its usual level is the first
+            # sign the tenor's relationship to the bill curve has changed.
+            if "curve" in points:
+                lam = beta_no_intercept(f["d_anchor"].to_numpy(dtype=float),
+                                        f["d_cutoff"].to_numpy(dtype=float))
+                log.info("%-8s curve lambda=%.3f (anchor moved %+.0f bps since last auction)",
+                         tenor, lam, float(live_row["d_anchor"]) * 100)
 
             naive_err = np.asarray(bt["naive"]["err"], dtype=float)
 

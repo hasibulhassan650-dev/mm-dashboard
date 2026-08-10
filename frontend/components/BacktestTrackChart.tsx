@@ -19,15 +19,17 @@ import { fmtDateShort, fmtPct } from "@/lib/format";
  * Levels, not changes: here the question is "does the model track the rate",
  * and the eye reads tracking best on the actual series.
  */
+// Three series against the actual, matching the interval chart's assignment so
+// a colour means the same model on both. Not --warn (#d99a1f): too light for the
+// dark surface (L .73 vs .67 cap); the burnt orange clears the lightness band
+// and the CVD checks in both themes.
 const SERIES: { key: ForecastModel; label: string; color: string }[] = [
-  { key: "momentum", label: "Momentum", color: "#1f9e6e" },   // --accent
-  { key: "naive",    label: "Naive",    color: "#4f8ff7" },   // --info
-  // Not --warn (#d99a1f): too light for the dark surface (L .73 vs .67 cap).
-  // This burnt orange clears the lightness band and CVD checks in both themes.
-  { key: "ols",      label: "OLS",      color: "#c2703c" },
+  { key: "curve",    label: "Curve carry", color: "#1f9e6e" },   // --accent
+  { key: "naive",    label: "Naive",       color: "#4f8ff7" },   // --info
+  { key: "momentum", label: "Momentum",    color: "#c2703c" },
 ];
 
-interface Row { date: string; actual: number | null; naive?: number | null; momentum?: number | null; ols?: number | null }
+type Row = { date: string; actual: number | null } & Partial<Record<ForecastModel, number | null>>;
 
 interface TipProps { active?: boolean; payload?: { value: number; name: string; color: string }[]; label?: string }
 function Tip({ active, payload, label }: TipProps) {

@@ -80,7 +80,7 @@ export const api = {
   },
 };
 
-export type ForecastModel = "naive" | "momentum" | "ols";
+export type ForecastModel = "naive" | "momentum" | "ols" | "curve" | "blend";
 
 /** One out-of-sample backtest prediction. A simulation, not the published log. */
 export interface BacktestPredictionRow {

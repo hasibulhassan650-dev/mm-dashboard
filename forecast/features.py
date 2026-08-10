@@ -87,6 +87,61 @@ def build(g: pd.DataFrame) -> pd.DataFrame:
     return out.reset_index(drop=True)
 
 
+def build_anchor(hist: pd.DataFrame, tenor: str = "364D") -> pd.DataFrame:
+    """The market's freshest observable rate: the weekly bill cutoff series.
+
+    Bills auction every week; bonds auction roughly monthly. Between two bond
+    auctions the bill curve prints ~4 more times, so by the time a bond is bid
+    the market has moved in a way the previous bond cutoff cannot know about.
+    That move is the information a naive forecast throws away.
+    """
+    a = (hist[hist["tenor_label"] == tenor][["auction_date", "cutoff_yield_pct"]]
+         .dropna().sort_values("auction_date")
+         .rename(columns={"cutoff_yield_pct": "anchor_yield"}))
+    return a.drop_duplicates(subset=["auction_date"], keep="last").reset_index(drop=True)
+
+
+def add_curve_anchor(f: pd.DataFrame, anchor: pd.DataFrame) -> pd.DataFrame:
+    """Attach the anchor rate KNOWN BEFORE each auction, and its move since the
+    previous auction of this tenor.
+
+    `allow_exact_matches=False` is the whole safety argument: a bond and a bill
+    can print on the same day, and that day's bill result is not knowable when
+    the bond is bid. Matching strictly earlier keeps the feature honest.
+
+    `anchor_now` is not lagged and does not need to be — it is built only from
+    auctions strictly before t, so it is in the bidder's information set.
+    `d_anchor` is how far the anchor moved between this auction's information
+    set and the previous one's.
+    """
+    if anchor.empty or f.empty:
+        f = f.copy()
+        f["anchor_now"] = np.nan
+        f["d_anchor"] = np.nan
+        return f
+
+    merged = pd.merge_asof(
+        f.sort_values("auction_date"),
+        anchor.sort_values("auction_date"),
+        on="auction_date", direction="backward", allow_exact_matches=False,
+    )
+    merged = merged.rename(columns={"anchor_yield": "anchor_now"})
+    merged["d_anchor"] = merged["anchor_now"].diff()
+    return merged
+
+
+def beta_no_intercept(x: np.ndarray, y: np.ndarray) -> float:
+    """Slope through the origin: b = sum(xy)/sum(xx). 0.0 when unidentified."""
+    m = np.isfinite(x) & np.isfinite(y)
+    x, y = x[m], y[m]
+    if len(x) < 5:
+        return 0.0
+    denom = float(np.dot(x, x))
+    if denom <= 1e-12:
+        return 0.0
+    return float(np.dot(x, y) / denom)
+
+
 def ols_fit(X: np.ndarray, y: np.ndarray) -> np.ndarray | None:
     """Plain OLS coefficients with an intercept, via numpy least squares.
 
