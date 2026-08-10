@@ -36,8 +36,14 @@ def get_forecast():
         if run_date is None:
             return {"run_date": None, "forecasts": [], "metrics": [], "track_record": []}
 
+        # DISTINCT ON keeps only the FURTHEST-OUT target per tenor/model. A single
+        # run can hold two targets for one tenor — re-running after that week's
+        # auction has printed rolls the target forward while the superseded row
+        # keeps the same run date. Without this the tab shows each bill twice and
+        # the chart silently overplots the stale forecast on the live one.
         forecasts = session.execute(text("""
-            SELECT f.tenor, f.instrument, f.model, f.target_auction_date,
+            SELECT DISTINCT ON (f.tenor, f.model)
+                   f.tenor, f.instrument, f.model, f.target_auction_date,
                    f.point_yield, f.lo_yield, f.hi_yield,
                    p.cutoff_yield_pct AS last_actual_yield,
                    p.auction_date     AS last_auction_date
@@ -49,7 +55,7 @@ def get_forecast():
                 ORDER BY auction_date DESC LIMIT 1
             ) p ON TRUE
             WHERE f.forecast_run_date = :d
-            ORDER BY f.tenor, f.model
+            ORDER BY f.tenor, f.model, f.target_auction_date DESC
         """), {"d": run_date}).fetchall()
 
         metrics = session.execute(text("""
