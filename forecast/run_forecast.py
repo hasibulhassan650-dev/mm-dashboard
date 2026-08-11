@@ -78,6 +78,35 @@ MIN_SCORED = 10
 # to fit the full history.
 LOOKBACK_YEARS = float(os.environ.get("FORECAST_LOOKBACK_YEARS", "3"))
 
+# One window cannot do both jobs, so there are two.
+#
+# EVIDENCE WINDOW — how much history a model is fitted and judged on. Wants
+# statistical power. Bills auction weekly (150+ prints in 3 years) and get
+# nothing from going longer except the 2007-2022 regimes that inflate their
+# band. Bonds auction monthly: 3 years is only ~20 scored forecasts, which is
+# too few to resolve anything — 20Y's "no edge" verdict was low power, not
+# absence of an effect. At 5 years (~40) every bond tenor's curve edge is
+# significant. Justification for reaching back that far: the curve model's OWN
+# error is nearly window-invariant (2Y: 24.0 / 24.4 / 25.5 bps at 3 / 5 / 8
+# years) while naive's swings (50.4 / 40.4 / 39.9), which is what a structural
+# relationship looks like as opposed to a regime artifact.
+LOOKBACK_BONDS = float(os.environ.get("FORECAST_LOOKBACK_BONDS", "5"))
+
+# BAND WINDOW — how wide the published interval is. Wants the CURRENT regime,
+# never the average of a calm past and a choppy present. Naive's MAE at 20Y
+# falls from 50.4 to 24.3 bps as the window lengthens purely because older
+# periods were calmer; sizing a band on that would quietly understate today's
+# risk. So the band and the headline "typical miss" are computed from only the
+# most recent share of scored forecasts.
+BAND_RECENT_FRAC = float(os.environ.get("FORECAST_BAND_RECENT_FRAC", "0.5"))
+
+BILL_TENORS = {"91D", "182D", "364D", "14D", "28D"}
+
+
+def lookback_for(tenor: str) -> float:
+    """Evidence window for this tenor, in years."""
+    return LOOKBACK_YEARS if tenor in BILL_TENORS else LOOKBACK_BONDS
+
 
 # ── models ────────────────────────────────────────────────────────────────────
 
@@ -232,9 +261,17 @@ def score(e: dict) -> dict | None:
     dir_acc = (float(np.mean(np.sign(pred_chg[called]) == np.sign(act_chg[called])))
                if called.any() else None)
 
+    # RMSE over the most recent slice only — this is what the published band is
+    # built from, so the interval reflects today's volatility rather than an
+    # average that includes calmer years.
+    k = max(8, int(round(len(err) * BAND_RECENT_FRAC)))
+    err_recent = err[-k:] if len(err) > k else err
+    rmse_recent = float(np.sqrt(np.mean(err_recent ** 2))) * 100
+
     return {
         "mae_bps":  round(float(np.mean(err_bps)), 2),
         "rmse_bps": round(float(np.sqrt(np.mean(err ** 2))) * 100, 2),
+        "rmse_recent_bps": round(rmse_recent, 2),
         "dir_acc":  round(dir_acc, 4) if dir_acc is not None else None,
         "hit_5bps": round(float(np.mean(err_bps <= 5.0)), 4),
         "n_obs":    int(err.size),
@@ -439,12 +476,16 @@ def run(dry_run: bool = False) -> dict:
     today = datetime.date.today()
     session = get_session()
     try:
-        hist = load_history(session)
+        # Load the widest window any tenor needs; each tenor is trimmed to its
+        # own below. The curve anchor is built from this full span so a bond
+        # reaching back 5 years still has bill prints to compare against.
+        hist = load_history(session, lookback_years=max(LOOKBACK_YEARS, LOOKBACK_BONDS))
         if hist.empty:
             raise RuntimeError("no cutoff history in primary_yield_snapshots — nothing to model")
-        log.info("fitting on %d prints, %s to %s (lookback=%s years)", len(hist),
+        log.info("loaded %d prints, %s to %s (evidence window: bills %sy, bonds %sy; "
+                 "band from most recent %.0f%% of forecasts)", len(hist),
                  hist["auction_date"].min().date(), hist["auction_date"].max().date(),
-                 LOOKBACK_YEARS or "all")
+                 LOOKBACK_YEARS or "all", LOOKBACK_BONDS or "all", BAND_RECENT_FRAC * 100)
 
         forecasts, metrics, preds, skipped = [], [], [], []
         anchor = build_anchor(hist, ANCHOR_TENOR)
@@ -456,6 +497,12 @@ def run(dry_run: bool = False) -> dict:
 
         for (tenor, instrument), g in hist.groupby(["tenor_label", "security_type"], sort=True):
             g = g.sort_values("auction_date")
+            # Trim to THIS tenor's evidence window — bonds get more history than
+            # bills because they auction ~12x less often. See lookback_for().
+            yrs = lookback_for(tenor)
+            if yrs > 0 and not g.empty:
+                cut = g["auction_date"].max() - pd.Timedelta(days=round(365.25 * yrs))
+                g = g[g["auction_date"] >= cut]
             if len(g) < MIN_HISTORY:
                 skipped.append(f"{tenor} (n={len(g)})")
                 continue
@@ -520,7 +567,8 @@ def run(dry_run: bool = False) -> dict:
                     gap = rb.bootstrap_gap_ci(err, nb)
                     s["gap_lo"], s["gap_hi"] = (round(gap[0], 2), round(gap[1], 2)) if gap else (None, None)
                     s["verdict"] = _verdict(gap, s["dm_pvalue"])
-                band = Z95 * s["rmse_bps"] / 100.0     # bps -> yield %
+                # Band from the RECENT error, not the lifetime average.
+                band = Z95 * s["rmse_recent_bps"] / 100.0     # bps -> yield %
                 point = points[model]
                 e = bt[model]
                 preds.extend({

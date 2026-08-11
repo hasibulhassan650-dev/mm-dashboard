@@ -302,6 +302,9 @@ class BacktestMetric(Base):
     tenor         = Column(String(15), nullable=False)
     mae_bps       = Column(Float)
     rmse_bps      = Column(Float)
+    # RMSE over the recent slice only — this is what the published band uses,
+    # so the interval tracks today's volatility not a calmer average.
+    rmse_recent_bps = Column(Float)
     dir_acc       = Column(Float)    # share of correct direction calls, 0–1
     hit_5bps      = Column(Float)    # share of forecasts within ±5 bps, 0–1
     n_obs         = Column(Integer)
@@ -497,6 +500,7 @@ def init_db():
         "ALTER TABLE backtest_metrics ADD COLUMN IF NOT EXISTS mae_first DOUBLE PRECISION",
         "ALTER TABLE backtest_metrics ADD COLUMN IF NOT EXISTS mae_recent DOUBLE PRECISION",
         "ALTER TABLE backtest_metrics ADD COLUMN IF NOT EXISTS verdict VARCHAR(20)",
+        "ALTER TABLE backtest_metrics ADD COLUMN IF NOT EXISTS rmse_recent_bps DOUBLE PRECISION",
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_backtest_predictions_key "
         "ON backtest_predictions (computed_date, tenor, model, auction_date)",
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_research_diagnostics_key "

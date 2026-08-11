@@ -155,6 +155,12 @@ export default async function ResearchPage() {
                 This is <b style={{ color: "var(--pos)" }}>statistically established</b>, not a hunch.
               </li>
               <li style={{ marginBottom: 10 }}>
+                <b style={{ color: "var(--fg)" }}>That now includes the 20Y.</b>{" "}
+                It previously showed no edge — but that was because three years of monthly auctions is
+                only ~20 examples, too few to detect anything. Given five years it clears the bar
+                comfortably. Not finding an effect and showing there isn&apos;t one are different things.
+              </li>
+              <li style={{ marginBottom: 10 }}>
                 <b style={{ color: "var(--fg)" }}>On BILLS, nothing beats &quot;same as last time&quot;.</b>{" "}
                 Some models look slightly better, by one or two basis points. When we tested whether that
                 could just be luck, it could. So for 91D / 182D / 364D the honest answer is: use the last
@@ -168,9 +174,15 @@ export default async function ResearchPage() {
               </li>
               <li>
                 <b style={{ color: "var(--fg)" }}>Read the range, not just the number.</b>{" "}
-                Every forecast comes with a band. That band is measured from how wrong this model has
-                actually been before — and we checked that real outcomes land inside it about 90–95% of
-                the time, as advertised. A wide band is the model telling you it does not know.
+                Every forecast comes with a band, measured from how wrong this model has recently been —
+                not from a lifetime average that includes calmer years. Real outcomes land inside it about
+                90–95% of the time, as advertised. A wide band is the model telling you it does not know.
+              </li>
+              <li style={{ marginTop: 10 }}>
+                <b style={{ color: "var(--fg)" }}>Bonds are judged on more history than bills.</b>{" "}
+                Bills auction weekly, so three years gives 150+ examples — plenty. Bonds auction monthly,
+                so three years is only about 20, which is too few to tell a real edge from luck. Bonds are
+                therefore tested on five years. The band still comes from recent data either way.
               </li>
             </ol>
 

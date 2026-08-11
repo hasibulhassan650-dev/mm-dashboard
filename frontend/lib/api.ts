@@ -104,6 +104,8 @@ export interface ForecastRow {
 export interface BacktestRow {
   tenor: string; model: ForecastModel;
   mae_bps: number | null; rmse_bps: number | null;
+  /** RMSE over the recent slice — what the published band is actually built from. */
+  rmse_recent_bps: number | null;
   dir_acc: number | null; hit_5bps: number | null; n_obs: number;
   /** Diebold-Mariano vs naive, Harvey-Leybourne-Newbold small-sample corrected. */
   dm_pvalue: number | null;
