@@ -20,7 +20,7 @@ from db import get_session
 _COVID_LO = datetime.date(2020, 9, 1)
 _COVID_HI = datetime.date(2021, 10, 31)
 
-_OMO_INSTRUMENTS = {"CB_REPO", "CM_REPO", "SLF", "IBLF", "MLS", "AR", "SDF"}
+_OMO_INSTRUMENTS = {"CB_REPO", "CM_REPO", "SLF", "IBLF", "MLS", "SLS", "SRF", "AR", "SDF"}
 _YIELD_TENORS = {"14D", "28D", "91D", "182D", "364D", "2Y", "3Y", "3Y_FRTB",
                  "5Y", "10Y", "15Y", "20Y", "25Y"}
 

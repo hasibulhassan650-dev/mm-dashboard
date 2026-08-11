@@ -58,6 +58,8 @@ _INSTRUMENTS = [
     ("SLF",     r"\bslf\b|standing\s+lending\s+facilit",          "INJECTION"),
     ("IBLF",    r"\biblf\b|islami\s+bank",                        "INJECTION"),
     ("MLS",     r"\bmls\b|mudaraba\s+liquidity",                  "INJECTION"),
+    ("SLS",     r"\bsls\b|special\s+liquidity\s+support",         "INJECTION"),
+    ("SRF",     r"\bsrf\b|special\s+repo",                        "INJECTION"),
     ("AR",      r"\bar\b(?!\s*=)|assured[\s\-]*repo",             "INJECTION"),
     ("SDF",     r"\bsdf\b|standing\s+deposit\s+facilit",          "ABSORPTION"),
 ]
@@ -460,14 +462,19 @@ def _parse_via_text(full_text: str, txn_date: datetime.date, pdf_url: str) -> Li
             continue   # unnamed / empty block — skip rather than risk a wrong label
         if direction is None:   # unknown standalone-name block — infer from amount sign
             direction = "ABSORPTION" if b["rows"][0]["accepted"] < 0 else "INJECTION"
-        if not b.get("known", True):
-            unknown.add(name)
+        emitted = 0
         for r in b["rows"]:
             txn = _build_txn(name, direction, r["tenor_days"], abs(r["accepted"]),
                              r["maturity"], r["rate"], txn_date, pdf_url,
                              rate_range=r.get("rate_range"))
             if txn:
                 transactions.append(txn)
+                emitted += 1
+        # Only alarm on an unrecognised instrument that actually STORED a
+        # transaction — maturity-only rows (accepted=0, e.g. a wrapped "for
+        # maintaining …" fragment) produce nothing and must not raise noise.
+        if not b.get("known", True) and emitted:
+            unknown.add(name)
 
     if unknown:
         log.warning("OMO: UNRECOGNISED instrument(s) %s in %s — stored under their own "
