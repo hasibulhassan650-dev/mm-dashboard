@@ -54,8 +54,10 @@ log = logging.getLogger(__name__)
 # ── Instrument definitions ────────────────────────────────────────────────────
 _INSTRUMENTS = [
     ("CB_REPO", r"cb[\s\-]*repo|central[\s\-]*bank[\s\-]*repo",   "INJECTION"),
+    ("CM_REPO", r"cm[\s\-]*repo|capital[\s\-]*market[\s\-]*repo", "INJECTION"),
     ("SLF",     r"\bslf\b|standing\s+lending\s+facilit",          "INJECTION"),
     ("IBLF",    r"\biblf\b|islami\s+bank",                        "INJECTION"),
+    ("MLS",     r"\bmls\b|mudaraba\s+liquidity",                  "INJECTION"),
     ("AR",      r"\bar\b(?!\s*=)|assured[\s\-]*repo",             "INJECTION"),
     ("SDF",     r"\bsdf\b|standing\s+deposit\s+facilit",          "ABSORPTION"),
 ]
@@ -86,6 +88,39 @@ def _parse_tenor(text: str) -> Optional[int]:
     if re.search(r'\bo/?n\b|overnight', text, re.I):
         return 1
     return None
+
+
+def _extract_label(line: str) -> Optional[str]:
+    """
+    The instrument label printed at the START of a data row (the text before the
+    tenor). Captures ANY label — recognised or brand-new — so a new BB product is
+    never silently inherited from the previous block. None on continuation rows
+    (where the merged name renders elsewhere).
+    """
+    m = re.match(r'^\s*([A-Za-z][A-Za-z0-9/.\s\-]*?)\s+\d+\s*[-\s]*days?\b', line, re.I)
+    if not m:
+        return None
+    label = re.sub(r'\s+', ' ', m.group(1)).strip()
+    if not label or len(label) > 30 or _should_skip(label):
+        return None
+    return label
+
+
+def _resolve_instrument(label: Optional[str], accepted_negative: bool):
+    """
+    → (name, direction, known:bool) or None when there is no label.
+    Known label → canonical name+direction. UNKNOWN label → keep its own name
+    (never borrow a neighbour's) with direction inferred from the amount sign
+    (BB prints absorption negative); the caller alarms so it gets added to the
+    canonical map.
+    """
+    if not label:
+        return None
+    known = _match_instrument(label)
+    if known:
+        return known[0], known[1], True
+    name = re.sub(r'[^A-Z0-9]+', '_', label.upper()).strip('_')[:30] or "UNKNOWN"
+    return name, ("ABSORPTION" if accepted_negative else "INJECTION"), False
 
 
 def _clean_num(s: str) -> Optional[float]:
@@ -352,10 +387,17 @@ def _parse_via_text(full_text: str, txn_date: datetime.date, pdf_url: str) -> Li
         return [v for v in (_clean_num(t) for t in re.findall(r'-?[\d,]+\.?\d*', s))
                 if v is not None]
 
-    # ── Pass 1: segment rows into instrument blocks ──────────────────────────
+    # ── Pass 1: segment rows into instrument blocks by their OWN label ────────
     blocks: List[Dict] = []
-    cur: Dict = {"name": None, "dir": None, "rows": []}
+    cur: Dict = {"name": None, "dir": None, "known": True, "rows": []}
     last_tenor: Optional[int] = None
+
+    def _flush():
+        nonlocal cur, last_tenor
+        if cur["rows"] or cur["name"]:
+            blocks.append(cur)
+        cur = {"name": None, "dir": None, "known": True, "rows": []}
+        last_tenor = None
 
     for raw_line in full_text.split("\n"):
         line = raw_line.strip()
@@ -363,49 +405,74 @@ def _parse_via_text(full_text: str, txn_date: datetime.date, pdf_url: str) -> Li
             continue
 
         tenor_days = _parse_tenor(line)
-        instr_match = _match_instrument(line)
 
         if tenor_days is None:
-            # standalone instrument name — belongs to the block we're building
-            if instr_match:
-                cur["name"], cur["dir"] = instr_match
+            # Standalone instrument-name line (no data). Resolve to a known
+            # instrument, or — if it's an unrecognised alpha label — keep it as a
+            # NEW instrument under its own name (never borrow a neighbour's).
+            m = _match_instrument(line)
+            if m:
+                lbl, dirn, known = m[0], m[1], True
+            elif re.fullmatch(r'[A-Za-z][A-Za-z0-9/.\s\-]{0,28}', line):
+                lbl, dirn, known = (re.sub(r'[^A-Z0-9]+', '_', line.upper()).strip('_')[:30] or None), None, False
+            else:
+                lbl = None
+            if lbl:
+                if cur["rows"] and cur["name"] and lbl != cur["name"]:
+                    _flush()
+                cur["name"], cur["known"] = lbl, known
+                if dirn:
+                    cur["dir"] = dirn
             continue
 
         nums = _extract_nums(line)
         if len(nums) < 4:
             continue   # tenor split onto its own line (no data) — skip
-
-        # tenor reset → previous instrument block is complete
-        if last_tenor is not None and tenor_days <= last_tenor:
-            if cur["rows"] or cur["name"]:
-                blocks.append(cur)
-            cur = {"name": None, "dir": None, "rows": []}
-
-        if instr_match:                       # name inline on this data row
-            cur["name"], cur["dir"] = instr_match
-
         accepted = nums[1]
+
+        # Every data row is classified by its OWN leading label. A different label
+        # (recognised OR brand-new) starts a new block — a new BB product can never
+        # be silently absorbed into the previous instrument. Tenor reset is a
+        # fallback delimiter for genuine continuation rows with no label.
+        resolved = _resolve_instrument(_extract_label(line), accepted < 0)
+        new_name = resolved[0] if resolved else None
+        name_change = new_name is not None and cur["rows"] and cur["name"] is not None and new_name != cur["name"]
+        tenor_reset = last_tenor is not None and tenor_days <= last_tenor
+        if name_change or (tenor_reset and (cur["rows"] or cur["name"])):
+            _flush()
+        if resolved:
+            cur["name"], cur["dir"], cur["known"] = resolved[0], resolved[1], resolved[2]
+
         maturity = abs(nums[-2])
         rate, rate_range = _resolve_rate(nums[2:-2])
         cur["rows"].append({"tenor_days": tenor_days, "accepted": accepted,
                             "maturity": maturity, "rate": rate, "rate_range": rate_range})
         last_tenor = tenor_days
 
-    if cur["rows"] or cur["name"]:
-        blocks.append(cur)
+    _flush()
 
-    # ── Pass 2: emit transactions; instrument = the block's own name ─────────
+    # ── Pass 2: emit transactions; instrument = the block's own label ─────────
     transactions: List[Dict] = []
+    unknown: set = set()
     for b in blocks:
         name, direction = b["name"], b["dir"]
-        if not name:
-            continue   # unnamed block — skip rather than risk a wrong label
+        if not name or not b["rows"]:
+            continue   # unnamed / empty block — skip rather than risk a wrong label
+        if direction is None:   # unknown standalone-name block — infer from amount sign
+            direction = "ABSORPTION" if b["rows"][0]["accepted"] < 0 else "INJECTION"
+        if not b.get("known", True):
+            unknown.add(name)
         for r in b["rows"]:
             txn = _build_txn(name, direction, r["tenor_days"], abs(r["accepted"]),
                              r["maturity"], r["rate"], txn_date, pdf_url,
                              rate_range=r.get("rate_range"))
             if txn:
                 transactions.append(txn)
+
+    if unknown:
+        log.warning("OMO: UNRECOGNISED instrument(s) %s in %s — stored under their own "
+                    "name with sign-inferred direction; ADD them to _INSTRUMENTS so the "
+                    "canonical label & direction are used.", sorted(unknown), Path(pdf_url).name)
 
     # SDF is physically overnight-only; any SDF >1D is a misread → treat as AR.
     for txn in transactions:

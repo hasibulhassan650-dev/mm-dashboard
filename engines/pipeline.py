@@ -380,9 +380,16 @@ def _store_omo_txns(session, txns: list, now: datetime.datetime) -> tuple:
         stored_pub = max((e.source_pub_date for e in existing if e.source_pub_date), default=None)
         inc_pub = None if latest_pub == datetime.date.min else latest_pub
 
-        replace = existing and inc_pub is not None and (stored_pub is None or inc_pub > stored_pub)
+        # Replace the date's rows when the incoming release is NEWER (a
+        # correction supersedes), or SAME publication but re-parsed into at least
+        # as many rows (a parser fix must be able to overwrite already-stored
+        # wrong labels — e.g. MLS/SDF that were mislabelled as IBLF — without a
+        # partial parse ever shrinking good data).
+        newer = inc_pub is not None and (stored_pub is None or inc_pub > stored_pub)
+        same_reparse = inc_pub is not None and stored_pub is not None and inc_pub == stored_pub and len(keep) >= len(existing)
+        replace = existing and (newer or same_reparse)
         if replace:
-            if stored_pub is not None:
+            if stored_pub is not None and inc_pub is not None and inc_pub > stored_pub:
                 superseded += 1
                 log.warning("OMO supersede %s: release pub %s replaces older pub %s (%d rows)",
                             d, inc_pub, stored_pub, len(existing))

@@ -104,3 +104,45 @@ class TestSupersession:
                         datetime.datetime.utcnow()); sess.commit()
         got = sess.query(OMOTransaction).filter_by(transaction_date=datetime.date(2026, 8, 6)).all()
         assert sorted(g.instrument for g in got) == ["IBLF"], "older release must not regress the correction"
+
+
+class TestInstrumentParsing:
+    """A new BB product must NEVER be silently mislabelled as an existing one.
+    Real case (09-Aug-2026): MLS 28-Days and SDF 1-Day were both being absorbed
+    into IBLF's block, poisoning IBLF's numbers and hiding an absorption as an
+    injection."""
+
+    def _parse(self, text):
+        import datetime
+        from fetchers.omo import _parse_via_text
+        return _parse_via_text(text, datetime.date(2026, 8, 9), "pr_test.pdf")
+
+    def test_mls_and_sdf_not_swallowed_by_iblf(self):
+        text = (
+            "Open Market Operations as on 09 August 2026\n"
+            "IBLF 7-Days 2,839.24 2,839.24 3.00-7.00 -2,220.99 618.25\n"
+            "MLS 28-Days 1,340.00 1,340.00 5.25 0.00 1,340.00\n"
+            "AR 7-Days 1,289.42 1,289.42 9.50 -2,218.06 -928.63\n"
+            "AR 180-Days 465.53 465.53 9.50 -1,918.43 -1,452.90\n"
+            "Sub-Total 8,148.22 8,148.22 -6,357.47 1,790.74\n"
+            "SDF 1-Day -5,011.00 -5,011.00 7.50 3,103.91 -1,907.09\n"
+        )
+        by = {(r["instrument"], r["tenor_days"]): r for r in self._parse(text)}
+        assert ("MLS", 28) in by, "MLS mislabelled"
+        assert ("SDF", 1) in by and by[("SDF", 1)]["direction"] == "ABSORPTION"
+        assert ("IBLF", 7) in by and abs(by[("IBLF", 7)]["accepted_bdt_crore"] - 2839.24) < 0.01
+        assert ("AR", 180) in by
+        # IBLF must NOT have picked up the 28D (MLS) or 1D (SDF) rows
+        assert ("IBLF", 28) not in by and ("IBLF", 1) not in by
+
+    def test_unknown_instrument_captured_under_own_name(self):
+        text = (
+            "Open Market Operations as on 09 August 2026\n"
+            "CB Repo 7-Days 100.00 100.00 9.50 0.00 100.00\n"
+            "NEWFAC 30-Days 250.00 250.00 6.00 0.00 250.00\n"
+            "SDF 1-Day -80.00 -80.00 7.50 0.00 -80.00\n"
+        )
+        rows = self._parse(text)
+        insts = {r["instrument"] for r in rows}
+        assert "NEWFAC" in insts, "unknown instrument lost / mislabelled"
+        assert ("CB_REPO", 30) not in {(r["instrument"], r["tenor_days"]) for r in rows}
