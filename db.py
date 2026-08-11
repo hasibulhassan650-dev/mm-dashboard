@@ -305,7 +305,19 @@ class BacktestMetric(Base):
     dir_acc       = Column(Float)    # share of correct direction calls, 0–1
     hit_5bps      = Column(Float)    # share of forecasts within ±5 bps, 0–1
     n_obs         = Column(Integer)
-    dm_pvalue     = Column(Float)    # Diebold-Mariano vs naive; NULL for naive itself
+    dm_pvalue     = Column(Float)    # Diebold-Mariano vs naive, HLN small-sample corrected
+    # Bootstrap 95% CI for this model's own MAE (bps).
+    mae_lo        = Column(Float)
+    mae_hi        = Column(Float)
+    # Bootstrap 95% CI for (naive MAE - this model's MAE) in bps. The decisive
+    # number: if this interval contains 0, the edge is not established, however
+    # good the point estimate looks.
+    gap_lo        = Column(Float)
+    gap_hi        = Column(Float)
+    coverage      = Column(Float)    # share of actuals inside the published band
+    mae_first     = Column(Float)    # first-half MAE (bps)
+    mae_recent    = Column(Float)    # second-half MAE (bps) — what today looks like
+    verdict       = Column(String(20))  # established | unproven | worse
 
 
 class BacktestPrediction(Base):
@@ -477,6 +489,14 @@ def init_db():
         "ON backtest_metrics (computed_date, model, tenor)",
         "ALTER TABLE auction_forecasts ADD COLUMN IF NOT EXISTS actual_yield DOUBLE PRECISION",
         "ALTER TABLE backtest_metrics ADD COLUMN IF NOT EXISTS dm_pvalue DOUBLE PRECISION",
+        "ALTER TABLE backtest_metrics ADD COLUMN IF NOT EXISTS mae_lo DOUBLE PRECISION",
+        "ALTER TABLE backtest_metrics ADD COLUMN IF NOT EXISTS mae_hi DOUBLE PRECISION",
+        "ALTER TABLE backtest_metrics ADD COLUMN IF NOT EXISTS gap_lo DOUBLE PRECISION",
+        "ALTER TABLE backtest_metrics ADD COLUMN IF NOT EXISTS gap_hi DOUBLE PRECISION",
+        "ALTER TABLE backtest_metrics ADD COLUMN IF NOT EXISTS coverage DOUBLE PRECISION",
+        "ALTER TABLE backtest_metrics ADD COLUMN IF NOT EXISTS mae_first DOUBLE PRECISION",
+        "ALTER TABLE backtest_metrics ADD COLUMN IF NOT EXISTS mae_recent DOUBLE PRECISION",
+        "ALTER TABLE backtest_metrics ADD COLUMN IF NOT EXISTS verdict VARCHAR(20)",
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_backtest_predictions_key "
         "ON backtest_predictions (computed_date, tenor, model, auction_date)",
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_research_diagnostics_key "

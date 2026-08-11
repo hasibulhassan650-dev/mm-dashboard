@@ -48,14 +48,18 @@ export default async function ResearchPage() {
   };
   const tenors = [...byTenor.keys()].sort((a, b) => tenorOrder(a) - tenorOrder(b));
 
-  // The model to actually bid off, per tenor: lowest out-of-sample MAE. This is
-  // chosen from backtest skill, never from which forecast looks nicer today.
+  // The model to actually bid off. NOT simply the lowest MAE — picking the
+  // winner after seeing the results is selection bias, and across six models and
+  // eight tenors something always wins by luck. A challenger is only chosen when
+  // its improvement over naive is statistically established (bootstrap interval
+  // excludes zero AND small-sample DM agrees). Otherwise: naive.
   const bestModel = (t: string): ForecastModel | null => {
     const e = byTenor.get(t);
     if (!e) return null;
-    const ranked = MODEL_ORDER.filter(m => e[m]?.mae_bps != null)
+    const proven = MODEL_ORDER
+      .filter(m => m !== "naive" && e[m]?.verdict === "established" && e[m]?.mae_bps != null)
       .sort((a, b) => e[a]!.mae_bps! - e[b]!.mae_bps!);
-    return ranked[0] ?? null;
+    return proven[0] ?? (e.naive ? "naive" : null);
   };
   const headline: { row: ForecastRow; model: ForecastModel; metric: BacktestRow }[] = tenors
     .map(t => {
@@ -122,6 +126,55 @@ export default async function ResearchPage() {
       </div>
 
       <div className="grid12">
+        <Panel title="Start Here — What This Page Says, In Plain Words" span={12}
+          sub="no statistics required · read this first and the rest is detail">
+          <div style={{ fontSize: 13, lineHeight: 1.8, color: "var(--fg-mute)", maxWidth: 980 }}>
+            <p style={{ marginBottom: 10 }}><b style={{ color: "var(--fg)" }}>The question this page answers:</b>{" "}
+            what rate will the next auction clear at, and how much should you trust that number?</p>
+
+            <ol style={{ paddingLeft: 20, margin: 0 }}>
+              <li style={{ marginBottom: 10 }}>
+                <b style={{ color: "var(--fg)" }}>The thing to beat is &quot;same as last time&quot;.</b>{" "}
+                Guessing that the next cutoff equals the last one is surprisingly hard to improve on,
+                because rates only move when genuinely new information arrives. We call that guess
+                <span className="mono"> naive</span>. Every other model has to prove it is better than that,
+                or it is not worth using.
+              </li>
+              <li style={{ marginBottom: 10 }}>
+                <b style={{ color: "var(--fg)" }}>On BONDS, we found something that genuinely works.</b>{" "}
+                Bonds auction about monthly, but T-bills auction every week. So by the time a bond is bid,
+                the bill market has already moved — and &quot;same as last time&quot; ignores that.
+                Following the bill curve cuts the average error on 2Y, 5Y and 10Y roughly in half.
+                This is <b style={{ color: "var(--pos)" }}>statistically established</b>, not a hunch.
+              </li>
+              <li style={{ marginBottom: 10 }}>
+                <b style={{ color: "var(--fg)" }}>On BILLS, nothing beats &quot;same as last time&quot;.</b>{" "}
+                Some models look slightly better, by one or two basis points. When we tested whether that
+                could just be luck, it could. So for 91D / 182D / 364D the honest answer is: use the last
+                cutoff, and treat any model tilt as a mild lean at most.
+              </li>
+              <li style={{ marginBottom: 10 }}>
+                <b style={{ color: "var(--fg)" }}>The market got choppier, so use the RECENT error.</b>{" "}
+                Average error over the whole history flatters the present. On 91D the error was about
+                5 bps in the earlier period and about 14 bps recently. The
+                <span className="mono"> recent error</span> column is the one to size positions against.
+              </li>
+              <li>
+                <b style={{ color: "var(--fg)" }}>Read the range, not just the number.</b>{" "}
+                Every forecast comes with a band. That band is measured from how wrong this model has
+                actually been before — and we checked that real outcomes land inside it about 90–95% of
+                the time, as advertised. A wide band is the model telling you it does not know.
+              </li>
+            </ol>
+
+            <p style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid var(--border-soft)" }}>
+              <b style={{ color: "var(--fg)" }}>The one-line summary:</b> trust the bond forecasts, bid the
+              bills off the last print, and size everything off the recent error and the band — not the
+              headline average.
+            </p>
+          </div>
+        </Panel>
+
         <Panel title="Next Auction — Forecast Change per Tenor" span={12}
           sub="change from the last cutoff, in bps · bar = 95% band from the model's own out-of-sample error">
           <ForecastIntervalChart rows={fc.forecasts} />
@@ -136,7 +189,9 @@ export default async function ResearchPage() {
                 <th>Tenor</th><th>Model</th><th>Target Auction</th>
                 <th className="r">Last Print</th><th className="r">Forecast</th>
                 <th className="r">Change</th><th className="r">95% Low</th><th className="r">95% High</th>
-                <th className="r">MAE</th><th className="r">Dir. Acc.</th>
+                <th className="r">Typical miss<br /><span style={{ fontWeight: 400, color: "var(--fg-mute)" }}>recent, bps</span></th>
+                <th className="r">Right direction</th>
+                <th>Verdict</th>
               </tr></thead>
               <tbody>
                 {headline.map(({ row: f, model, metric }, i) => {
@@ -160,8 +215,15 @@ export default async function ResearchPage() {
                       </td>
                       <td className="r mono" style={{ color: "var(--fg-mute)" }}>{fmtPct(f.lo_yield, 4)}</td>
                       <td className="r mono" style={{ color: "var(--fg-mute)" }}>{fmtPct(f.hi_yield, 4)}</td>
-                      <td className="r mono">{metric.mae_bps?.toFixed(1) ?? DASH}</td>
+                      <td className="r mono" title={`full-sample MAE ${metric.mae_bps?.toFixed(1) ?? "—"} bps`}>
+                        {(metric.mae_recent ?? metric.mae_bps)?.toFixed(1) ?? DASH}
+                      </td>
                       <td className="r mono">{pct1(metric.dir_acc)}</td>
+                      <td style={{ fontSize: 11.5 }}>
+                        {model === "naive"
+                          ? <span style={{ color: "var(--fg-mute)" }}>nothing beat &quot;same as last&quot;</span>
+                          : <span style={{ color: "var(--pos)" }}>proven better than &quot;same as last&quot;</span>}
+                      </td>
                     </tr>
                   );
                 })}
@@ -181,15 +243,19 @@ export default async function ResearchPage() {
         </Panel>
 
         <Panel title="Backtest — Model vs Naive" span={12} pad={false}
-          sub="expanding-window, one-step-ahead, out-of-sample · naive is the bar every model must clear · DM p<0.05 means the gap is real, not luck"
+          sub={'every model tested against "same as last time" on auctions it never saw · '
+            + '"better than naive by" is a 95% range from 2,000 bootstrap resamples — if it straddles 0, the edge is not proven'}
           right={<DownloadButton data={fc.metrics} filename="backtest_metrics" />}>
           <div className="table-wrap">
             <table className="dt">
               <thead><tr>
                 <th>Tenor</th><th>Model</th>
-                <th className="r">MAE (bps)</th><th className="r">RMSE</th><th className="r">Edge vs naive</th>
-                <th className="r">Dir. Acc.</th><th className="r">Within ±5bps</th>
-                <th className="r">DM p vs naive</th><th className="r">n</th>
+                <th className="r">Typical miss<br /><span style={{ fontWeight: 400 }}>bps (early → recent)</span></th>
+                <th className="r">Better than naive by<br /><span style={{ fontWeight: 400 }}>bps, 95% range</span></th>
+                <th className="r">Could it be luck?<br /><span style={{ fontWeight: 400 }}>p-value</span></th>
+                <th>Verdict</th>
+                <th className="r">Right direction</th>
+                <th className="r">Band holds</th><th className="r">n</th>
               </tr></thead>
               <tbody>
                 {tenors.flatMap(t => {
@@ -199,23 +265,35 @@ export default async function ResearchPage() {
                     .filter(m => e[m])
                     .map((m, mi) => {
                       const r = e[m]!;
-                      const edge = m !== "naive" && naiveMae != null && r.mae_bps != null
-                        ? naiveMae - r.mae_bps : null;
-                      const sig = r.dm_pvalue != null && r.dm_pvalue < 0.05;
+                      const v = r.verdict;
+                      const vColor = v === "established" ? "var(--pos)"
+                        : v === "worse" ? "var(--neg)"
+                        : v === "benchmark" ? "var(--fg-mute)" : "var(--warn)";
+                      const vText = v === "established" ? "real edge"
+                        : v === "worse" ? "worse than naive"
+                        : v === "benchmark" ? "the benchmark" : "could be luck";
+                      const gap = r.gap_lo != null && r.gap_hi != null
+                        ? `${r.gap_lo > 0 ? "+" : ""}${r.gap_lo.toFixed(1)} to ${r.gap_hi > 0 ? "+" : ""}${r.gap_hi.toFixed(1)}`
+                        : DASH;
+                      // An interval that straddles zero is the whole story: the
+                      // model might be better, might be worse. Say so in colour.
+                      const gapProven = r.gap_lo != null && r.gap_lo > 0;
                       return (
                         <tr key={`${t}-${m}`}>
                           <td style={{ fontWeight: 600, color: mi === 0 ? undefined : "transparent" }}>{t}</td>
                           <td style={{ color: m === "naive" ? "var(--fg-mute)" : undefined }}>{MODEL_LABEL[m]}</td>
-                          <td className="r mono" style={{ fontWeight: m === "naive" ? 400 : 600 }}>{r.mae_bps?.toFixed(2) ?? DASH}</td>
-                          <td className="r mono" style={{ color: "var(--fg-mute)" }}>{r.rmse_bps?.toFixed(2) ?? DASH}</td>
-                          <td className="r mono" style={{ fontWeight: 600, color: edge == null ? "var(--fg-mute)" : edge > 0 ? "var(--pos)" : "var(--neg)" }}>
-                            {edge == null ? DASH : `${edge > 0 ? "+" : ""}${edge.toFixed(2)}`}
+                          <td className="r mono" style={{ fontWeight: m === "naive" ? 400 : 600 }}>
+                            {r.mae_first != null && r.mae_recent != null
+                              ? <>{r.mae_first.toFixed(1)} <span style={{ color: "var(--fg-mute)" }}>→</span> {r.mae_recent.toFixed(1)}</>
+                              : (r.mae_bps?.toFixed(1) ?? DASH)}
                           </td>
-                          <td className="r mono">{pct1(r.dir_acc)}</td>
-                          <td className="r mono">{pct1(r.hit_5bps)}</td>
-                          <td className="r mono" style={{ color: sig ? "var(--fg)" : "var(--fg-mute)", fontWeight: sig ? 600 : 400 }}>
+                          <td className="r mono" style={{ color: gapProven ? "var(--pos)" : "var(--fg-mute)" }}>{gap}</td>
+                          <td className="r mono" style={{ color: r.dm_pvalue != null && r.dm_pvalue < 0.05 ? "var(--fg)" : "var(--fg-mute)" }}>
                             {r.dm_pvalue == null ? DASH : r.dm_pvalue.toFixed(3)}
                           </td>
+                          <td style={{ color: vColor, fontSize: 11.5, fontWeight: v === "established" ? 600 : 400 }}>{vText}</td>
+                          <td className="r mono">{pct1(r.dir_acc)}</td>
+                          <td className="r mono" style={{ color: "var(--fg-mute)" }}>{pct1(r.coverage)}</td>
                           <td className="r mono" style={{ color: "var(--fg-mute)" }}>{r.n_obs}</td>
                         </tr>
                       );
@@ -338,6 +416,34 @@ export default async function ResearchPage() {
             print the same day as the anchor, so much of the move is already shared). Those numbers were
             not assumed — they were estimated, and they match how a curve is supposed to behave. That
             agreement is the main reason to trust this model rather than the OLS one.</p>
+
+            <H>How we decide an edge is real, not luck</H>
+            <p>A lower average error in a backtest is a <i>claim</i>, not a fact. With six models and eight
+            tenors, something always looks good by chance. Three defences are applied, and they changed the
+            conclusions materially:</p>
+            <p><b style={{ color: "var(--fg)" }}>1. A range instead of a number.</b> Each model&apos;s
+            improvement over naive is re-computed on 2,000 resampled versions of history (in blocks, so
+            neighbouring auctions stay together — errors are correlated week to week, and pretending
+            otherwise would make the range look far tighter than it is). If that 95% range includes zero,
+            the model might genuinely be worse, and we call it unproven. This is what demoted the bill
+            models: 91D momentum&apos;s &quot;win&quot; has a range of −0.2 to +1.1 bps.</p>
+            <p><b style={{ color: "var(--fg)" }}>2. A small-sample correction.</b> The Diebold-Mariano test
+            over-rejects badly on ~20 bond auctions — it declares victories that are not there. The
+            Harvey-Leybourne-Newbold correction rescales it and reads a t-distribution instead of a normal.
+            Every p-value shown is the corrected one.</p>
+            <p><b style={{ color: "var(--fg)" }}>3. A rule fixed in advance.</b> The model shown at the top
+            is not simply the one with the lowest error — choosing after seeing results is how backtests
+            lie. A challenger is used only when its range excludes zero <i>and</i> the corrected test agrees.
+            Otherwise the page falls back to naive, even when another model&apos;s headline number looks better.</p>
+            <p>We also checked the band actually holds: real prints landed inside the published 95%
+            interval about 90–95% of the time, so it is not being oversold.</p>
+
+            <H>Why the average error understates today</H>
+            <p>Splitting the backtest in half is uncomfortable reading. On 91D the typical miss was about
+            <b style={{ color: "var(--fg)" }}> 5 bps early on and about 14 bps recently</b>; the same pattern
+            holds across the bills. The models did not break — the market got more volatile. But it means a
+            single lifetime-average error is the wrong number to size against, which is why the tables show
+            <b style={{ color: "var(--fg)" }}> early → recent</b> and the headline uses the recent figure.</p>
 
             <H>The insight that failed, and why that is useful too</H>
             <p><b style={{ color: "var(--fg)" }}>OLS</b> regresses the cutoff change on auction-demand

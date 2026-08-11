@@ -41,6 +41,7 @@ from forecast.features import (build as build_features, ols_fit, ols_predict,  #
                                FEATURE_COLS)
 from forecast.policy import (load_history as policy_history,   # noqa: E402
                             usable as policy_usable, attach as policy_attach)
+from forecast import robustness as rb  # noqa: E402
 
 log = logging.getLogger("forecast")
 
@@ -286,6 +287,26 @@ def next_auction_date(dates: pd.Series) -> datetime.date | None:
     return (dates.iloc[-1] + datetime.timedelta(days=gap)).date()
 
 
+def _verdict(gap: tuple[float, float] | None, dm_p: float | None) -> str:
+    """Turn the evidence into one word, by a rule fixed in advance.
+
+    The rule exists to stop model selection from being done by eye. Picking the
+    lowest-MAE model AFTER seeing the results is selection bias: across six
+    models and eight tenors some will win by luck, and the winner's MAE then
+    flatters itself. So a model is only 'established' when the bootstrap
+    interval for its improvement over naive EXCLUDES ZERO and the small-sample
+    DM test agrees. Anything else is 'unproven', no matter how good it looks.
+    """
+    if gap is None:
+        return "unproven"
+    lo, hi = gap
+    if hi < 0:
+        return "worse"
+    if lo > 0 and dm_p is not None and dm_p < 0.05:
+        return "established"
+    return "unproven"
+
+
 def _next_row(f: pd.DataFrame, anchor: pd.DataFrame | None = None) -> pd.Series:
     """The feature row for the NEXT (unheld) auction.
 
@@ -478,14 +499,27 @@ def run(dry_run: bool = False) -> dict:
                 s = score(bt[model])
                 if s is None:
                     continue
-                if model != "naive":
+                err = np.asarray(bt[model]["err"], dtype=float)
+                rmse_pct = s["rmse_bps"] / 100.0
+                ci = rb.bootstrap_ci(err)
+                s["mae_lo"], s["mae_hi"] = (round(ci[0], 2), round(ci[1], 2)) if ci else (None, None)
+                s["coverage"] = rb.coverage(err, rmse_pct)
+                st = rb.stability(err)
+                s["mae_first"], s["mae_recent"] = st if st else (None, None)
+
+                if model == "naive":
+                    s["verdict"] = "benchmark"
+                else:
                     # OLS starts later than naive (bigger training requirement),
                     # so the two error series must be aligned on the auctions
                     # BOTH models actually scored before they can be compared.
                     shared = set(bt[model]["date"])
                     idx = [i for i, d in enumerate(bt["naive"]["date"]) if d in shared]
-                    s["dm_pvalue"] = diebold_mariano(
-                        np.asarray(bt[model]["err"], dtype=float), naive_err[idx])
+                    nb = naive_err[idx]
+                    s["dm_pvalue"] = rb.dm_test(err, nb, hln=True)
+                    gap = rb.bootstrap_gap_ci(err, nb)
+                    s["gap_lo"], s["gap_hi"] = (round(gap[0], 2), round(gap[1], 2)) if gap else (None, None)
+                    s["verdict"] = _verdict(gap, s["dm_pvalue"])
                 band = Z95 * s["rmse_bps"] / 100.0     # bps -> yield %
                 point = points[model]
                 e = bt[model]
@@ -506,12 +540,12 @@ def run(dry_run: bool = False) -> dict:
                     "actual_yield": None,
                 })
                 metrics.append({"computed_date": today, "model": model, "tenor": tenor, **s})
-                log.info("%-8s %-9s point=%.4f  band=+/-%.0fbps  MAE=%.2f  RMSE=%.2f  "
-                         "dir=%s  hit5=%.0f%%  n=%d  DM=%s",
-                         tenor, model, point, band * 100, s["mae_bps"], s["rmse_bps"],
-                         f"{s['dir_acc']:.0%}" if s["dir_acc"] is not None else "n/a",
-                         s["hit_5bps"] * 100, s["n_obs"],
-                         s.get("dm_pvalue") if s.get("dm_pvalue") is not None else "—")
+                log.info("%-8s %-9s MAE=%.2f [%s,%s]  gap=[%s,%s]  DM=%s  cov=%s  "
+                         "%s->%s  %s",
+                         tenor, model, s["mae_bps"], s.get("mae_lo"), s.get("mae_hi"),
+                         s.get("gap_lo"), s.get("gap_hi"),
+                         s.get("dm_pvalue"), s.get("coverage"),
+                         s.get("mae_first"), s.get("mae_recent"), s.get("verdict"))
 
         if skipped:
             log.info("skipped (too little history): %s", ", ".join(skipped))

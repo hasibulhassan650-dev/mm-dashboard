@@ -105,8 +105,17 @@ export interface BacktestRow {
   tenor: string; model: ForecastModel;
   mae_bps: number | null; rmse_bps: number | null;
   dir_acc: number | null; hit_5bps: number | null; n_obs: number;
-  /** Diebold-Mariano vs naive on squared-error loss; null for naive itself. */
+  /** Diebold-Mariano vs naive, Harvey-Leybourne-Newbold small-sample corrected. */
   dm_pvalue: number | null;
+  /** Bootstrap 95% CI for this model's own MAE, in bps. */
+  mae_lo: number | null; mae_hi: number | null;
+  /** Bootstrap 95% CI for (naive MAE − this model's MAE), bps. Contains 0 = no proven edge. */
+  gap_lo: number | null; gap_hi: number | null;
+  /** Share of actual prints that landed inside the published band (target 0.95). */
+  coverage: number | null;
+  /** First-half vs second-half MAE — mae_recent is what today actually looks like. */
+  mae_first: number | null; mae_recent: number | null;
+  verdict: "established" | "unproven" | "worse" | "benchmark" | null;
 }
 export interface TrackRecordRow {
   tenor: string; model: ForecastModel;
