@@ -263,7 +263,7 @@ export default function PortfolioTool({ secondary, securities, repoDefault }: Pr
       {rowsA.length > 0 && (
         <>
           {/* P&L block */}
-          <div className="kpi-strip" style={{ gridTemplateColumns: hasCost ? "repeat(4,1fr)" : "repeat(3,1fr)" }}>
+          <div className="kpi-strip" style={{ gridColumn: "span 12", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))" }}>
             <div className="kpi"><div className="kpi-top"><span className="kpi-label">Dirty Market Value</span></div><div className="kpi-val"><span className="kpi-num" style={{ color: "var(--accent)" }}>{fmtNum(V)}</span><span className="kpi-unit">mn</span></div><div className="kpi-sub">incl. accrued · settlement value</div></div>
             {hasCost && <div className="kpi"><div className="kpi-top"><span className="kpi-label">Cost Basis</span></div><div className="kpi-val"><span className="kpi-num">{fmtNum(cost)}</span><span className="kpi-unit">mn</span></div></div>}
             {hasCost && <div className="kpi"><div className="kpi-top"><span className="kpi-label">Unrealized P&amp;L</span></div><div className="kpi-val"><span className="kpi-num" style={{ color: pnl >= 0 ? "var(--pos)" : "var(--neg)" }}>{kfmt(pnl)}</span><span className="kpi-unit">mn</span></div><div className="kpi-sub">{cost ? kfmt(pnl / cost * 100, 2) + "%" : ""}</div></div>}
@@ -271,7 +271,7 @@ export default function PortfolioTool({ secondary, securities, repoDefault }: Pr
           </div>
 
           {/* Risk + carry block */}
-          <div className="kpi-strip" style={{ gridTemplateColumns: "repeat(5,1fr)" }}>
+          <div className="kpi-strip" style={{ gridColumn: "span 12", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))" }}>
             <div className="kpi"><div className="kpi-top"><span className="kpi-label">Mod Duration</span></div><div className="kpi-val"><span className="kpi-num">{wDur.toFixed(2)}</span><span className="kpi-unit">yr</span></div></div>
             <div className="kpi"><div className="kpi-top"><span className="kpi-label">Portfolio DV01</span></div><div className="kpi-val"><span className="kpi-num">{fmtNum(dv01, 3)}</span><span className="kpi-unit">mn/bp</span></div></div>
             <div className="kpi"><div className="kpi-top"><span className="kpi-label">Convexity</span></div><div className="kpi-val"><span className="kpi-num">{wConv.toFixed(1)}</span></div></div>
