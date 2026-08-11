@@ -74,8 +74,11 @@ export default async function ResearchPage() {
     const m = bestModel(t);
     return m != null && m !== "naive";
   });
-  const sharpest = [...fc.metrics].filter(m => m.mae_bps != null)
-    .sort((a, b) => a.mae_bps! - b.mae_bps!)[0] ?? null;
+  // Scored on the RECENT error of the model actually being recommended — not the
+  // lifetime average of whichever model happens to look best in hindsight.
+  const sharpest = headline
+    .filter(h => (h.metric.mae_recent ?? h.metric.mae_bps) != null)
+    .sort((a, b) => (a.metric.mae_recent ?? a.metric.mae_bps!) - (b.metric.mae_recent ?? b.metric.mae_bps!))[0] ?? null;
   const scored = fc.track_record.length;
 
   const empty = fc.run_date == null;
@@ -111,12 +114,16 @@ export default async function ResearchPage() {
           <div className="kpi-sub">{beats.length ? beats.join(" · ") : "on MAE, out-of-sample"}</div>
         </div>
         <div className="kpi">
-          <div className="kpi-top"><span className="kpi-label">Sharpest Tenor</span></div>
+          <div className="kpi-top"><span className="kpi-label">Most Predictable Tenor</span></div>
           <div className="kpi-val">
-            <span className="kpi-num">{sharpest ? sharpest.mae_bps!.toFixed(1) : DASH}</span>
-            <span className="kpi-unit">bps MAE</span>
+            <span className="kpi-num">
+              {sharpest ? (sharpest.metric.mae_recent ?? sharpest.metric.mae_bps!).toFixed(1) : DASH}
+            </span>
+            <span className="kpi-unit">bps typical miss</span>
           </div>
-          <div className="kpi-sub">{sharpest ? `${sharpest.tenor} · ${sharpest.model}` : "no metrics yet"}</div>
+          <div className="kpi-sub">
+            {sharpest ? `${sharpest.row.tenor} · ${MODEL_LABEL[sharpest.model]} · recent period` : "no metrics yet"}
+          </div>
         </div>
         <div className="kpi">
           <div className="kpi-top"><span className="kpi-label">Live Track Record</span></div>
@@ -181,7 +188,8 @@ export default async function ResearchPage() {
         </Panel>
 
         <Panel title="Next Auction — Best Model per Tenor" span={12} pad={false}
-          sub="the model with the lowest out-of-sample MAE on that tenor · the number to actually bid off, with the error it has historically carried"
+          sub={'a challenger is used ONLY where its edge over "same as last time" is statistically established — '
+            + 'otherwise this falls back to the last cutoff · "typical miss" is the RECENT error, not the flattering lifetime average'}
           right={<DownloadButton data={fc.forecasts} filename="auction_forecasts" />}>
           <div className="table-wrap">
             <table className="dt">
