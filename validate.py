@@ -155,6 +155,40 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
         except Exception:
             pass  # table not created yet (first pipeline run makes it)
 
+        # ---- cross-source consistency (the same fact from two feeds must agree) ----
+        # The strongest kind of integrity check: when two independent BB feeds
+        # describe the same rate, a disagreement means one of them is wrong —
+        # exactly the class of bug (a mislabelled/mis-signed SDF, a drifted
+        # corridor) that value-plausibility alone can't catch.
+        try:
+            pol = s.execute(text("SELECT sdf, slf FROM policy_rate_snapshots "
+                                 "ORDER BY first_seen_date DESC, id DESC LIMIT 1")).fetchone()
+            if pol and pol[0] is not None:
+                sdf_floor = float(pol[0])
+                slf_ceil = float(pol[1]) if pol[1] is not None else None
+                # SDF is a FIXED-rate standing facility → its operation rate must
+                # equal the corridor floor. (This would have flagged the SDF
+                # mislabel had the rate also been off.)
+                r = s.execute(text("SELECT transaction_date, rate_pct FROM omo_transactions "
+                                   "WHERE instrument='SDF' AND rate_pct IS NOT NULL "
+                                   "ORDER BY transaction_date DESC LIMIT 1")).fetchone()
+                if r and r[1] is not None and abs(float(r[1]) - sdf_floor) > 0.05:
+                    add("cross-source", f"SDF operation rate {r[1]}% ({r[0]}) != policy SDF floor "
+                                        f"{sdf_floor}% — OMO parse or corridor is wrong")
+                # Call-money O/N WAR should sit within the corridor; a WIDE bound
+                # (±1pp) catches data errors (e.g. a mis-scaled rate) without
+                # false-flagging genuine near-corridor moves.
+                if slf_ceil is not None:
+                    r = s.execute(text("SELECT trade_date, average_rate_pct FROM call_money_rates "
+                                       "WHERE average_rate_pct IS NOT NULL ORDER BY trade_date DESC LIMIT 1")).fetchone()
+                    if r and r[1] is not None:
+                        war = float(r[1])
+                        if war < sdf_floor - 1.0 or war > slf_ceil + 1.0:
+                            add("cross-source", f"call-money WAR {war}% ({r[0]}) far outside corridor "
+                                                f"{sdf_floor}-{slf_ceil}% — data error or extreme dislocation")
+        except Exception:
+            pass  # policy_rate_snapshots not populated yet
+
         # ---- reserves / remittance ----
         for r in q("SELECT month, gross_reserves_usd_mn, net_reserves_bpm6_usd_mn FROM reserves_monthly "
                    "WHERE gross_reserves_usd_mn IS NOT NULL AND (gross_reserves_usd_mn < 0 OR gross_reserves_usd_mn > 60000 "
