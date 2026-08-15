@@ -4,6 +4,8 @@ import { Panel } from "@/components/terminal/ui";
 import ForecastIntervalChart from "@/components/ForecastIntervalChart";
 import BacktestTrackChart from "@/components/BacktestTrackChart";
 import DownloadButton from "@/components/DownloadButton";
+import ResearchIntro from "@/components/ResearchIntro";
+import { ExplainProvider, ExplainToggle, Term } from "@/components/Explain";
 import { fmtDate, fmtPct, bps } from "@/lib/format";
 
 export const revalidate = 300;
@@ -86,7 +88,9 @@ export default async function ResearchPage() {
   const gateBlocked = gate?.conclusion?.startsWith("BLOCKED") ?? false;
 
   return (
-    <>
+    // Provider wraps the whole page: the reading level chosen in the header
+    // also drives every inline term tooltip further down.
+    <ExplainProvider>
       {empty && (
         <div style={{
           border: "1px solid var(--warn)", borderRadius: "var(--radius-sm)",
@@ -134,65 +138,11 @@ export default async function ResearchPage() {
 
       <div className="grid12">
         <Panel title="Start Here — What This Page Says, In Plain Words" span={12}
-          sub="no statistics required · read this first and the rest is detail">
-          <div style={{ fontSize: 13, lineHeight: 1.8, color: "var(--fg-mute)", maxWidth: 980 }}>
-            <p style={{ marginBottom: 10 }}><b style={{ color: "var(--fg)" }}>The question this page answers:</b>{" "}
-            what rate will the next auction clear at, and how much should you trust that number?</p>
-
-            <ol style={{ paddingLeft: 20, margin: 0 }}>
-              <li style={{ marginBottom: 10 }}>
-                <b style={{ color: "var(--fg)" }}>The thing to beat is &quot;same as last time&quot;.</b>{" "}
-                Guessing that the next cutoff equals the last one is surprisingly hard to improve on,
-                because rates only move when genuinely new information arrives. We call that guess
-                <span className="mono"> naive</span>. Every other model has to prove it is better than that,
-                or it is not worth using.
-              </li>
-              <li style={{ marginBottom: 10 }}>
-                <b style={{ color: "var(--fg)" }}>On BONDS, we found something that genuinely works.</b>{" "}
-                Bonds auction about monthly, but T-bills auction every week. So by the time a bond is bid,
-                the bill market has already moved — and &quot;same as last time&quot; ignores that.
-                Following the bill curve cuts the average error on 2Y, 5Y and 10Y roughly in half.
-                This is <b style={{ color: "var(--pos)" }}>statistically established</b>, not a hunch.
-              </li>
-              <li style={{ marginBottom: 10 }}>
-                <b style={{ color: "var(--fg)" }}>That now includes the 20Y.</b>{" "}
-                It previously showed no edge — but that was because three years of monthly auctions is
-                only ~20 examples, too few to detect anything. Given five years it clears the bar
-                comfortably. Not finding an effect and showing there isn&apos;t one are different things.
-              </li>
-              <li style={{ marginBottom: 10 }}>
-                <b style={{ color: "var(--fg)" }}>On BILLS, nothing beats &quot;same as last time&quot;.</b>{" "}
-                Some models look slightly better, by one or two basis points. When we tested whether that
-                could just be luck, it could. So for 91D / 182D / 364D the honest answer is: use the last
-                cutoff, and treat any model tilt as a mild lean at most.
-              </li>
-              <li style={{ marginBottom: 10 }}>
-                <b style={{ color: "var(--fg)" }}>The market got choppier, so use the RECENT error.</b>{" "}
-                Average error over the whole history flatters the present. On 91D the error was about
-                5 bps in the earlier period and about 14 bps recently. The
-                <span className="mono"> recent error</span> column is the one to size positions against.
-              </li>
-              <li>
-                <b style={{ color: "var(--fg)" }}>Read the range, not just the number.</b>{" "}
-                Every forecast comes with a band, measured from how wrong this model has recently been —
-                not from a lifetime average that includes calmer years. Real outcomes land inside it about
-                90–95% of the time, as advertised. A wide band is the model telling you it does not know.
-              </li>
-              <li style={{ marginTop: 10 }}>
-                <b style={{ color: "var(--fg)" }}>Bonds are judged on more history than bills.</b>{" "}
-                Bills auction weekly, so three years gives 150+ examples — plenty. Bonds auction monthly,
-                so three years is only about 20, which is too few to tell a real edge from luck. Bonds are
-                therefore tested on five years. The band still comes from recent data either way.
-              </li>
-            </ol>
-
-            <p style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid var(--border-soft)" }}>
-              <b style={{ color: "var(--fg)" }}>The one-line summary:</b> trust the bond forecasts, bid the
-              bills off the last print, and size everything off the recent error and the band — not the
-              headline average.
-            </p>
-          </div>
+          sub="hover any underlined word for a definition · switch to “Explain simply” for a no-jargon version"
+          right={<ExplainToggle />}>
+          <ResearchIntro />
         </Panel>
+
 
         <Panel title="Next Auction — Forecast Change per Tenor" span={12}
           sub="change from the last cutoff, in bps · bar = 95% band from the model's own out-of-sample error">
@@ -206,9 +156,11 @@ export default async function ResearchPage() {
           <div className="table-wrap">
             <table className="dt">
               <thead><tr>
-                <th>Tenor</th><th>Model</th><th>Target Auction</th>
-                <th className="r">Last Print</th><th className="r">Forecast</th>
-                <th className="r">Change</th><th className="r">95% Low</th><th className="r">95% High</th>
+                <th><Term t="Tenor" /></th><th>Model</th><th>Target Auction</th>
+                <th className="r"><Term t="Cutoff Yield">Last Print</Term></th><th className="r">Forecast</th>
+                <th className="r">Change</th>
+                <th className="r"><Term t="Coverage">95% Low</Term></th>
+                <th className="r"><Term t="Coverage">95% High</Term></th>
                 <th className="r">Typical miss<br /><span style={{ fontWeight: 400, color: "var(--fg-mute)" }}>recent, bps</span></th>
                 <th className="r">Right direction</th>
                 <th>Verdict</th>
@@ -269,13 +221,17 @@ export default async function ResearchPage() {
           <div className="table-wrap">
             <table className="dt">
               <thead><tr>
-                <th>Tenor</th><th>Model</th>
-                <th className="r">Typical miss<br /><span style={{ fontWeight: 400 }}>bps (early → recent)</span></th>
-                <th className="r">Better than naive by<br /><span style={{ fontWeight: 400 }}>bps, 95% range</span></th>
-                <th className="r">Could it be luck?<br /><span style={{ fontWeight: 400 }}>p-value</span></th>
-                <th>Verdict</th>
-                <th className="r">Right direction</th>
-                <th className="r">Band holds</th><th className="r">n</th>
+                <th><Term t="Tenor" /></th><th>Model</th>
+                <th className="r"><Term t="MAE">Typical miss</Term><br />
+                  <span style={{ fontWeight: 400 }}><Term t="Basis Point">bps</Term> (early → recent)</span></th>
+                <th className="r"><Term t="Confidence Interval">Better than naive by</Term><br />
+                  <span style={{ fontWeight: 400 }}>bps, 95% range</span></th>
+                <th className="r"><Term t="Diebold-Mariano">Could it be luck?</Term><br />
+                  <span style={{ fontWeight: 400 }}><Term t="p-value" /></span></th>
+                <th><Term t="Selection Bias">Verdict</Term></th>
+                <th className="r"><Term t="Directional Accuracy">Right direction</Term></th>
+                <th className="r"><Term t="Coverage">Band holds</Term></th>
+                <th className="r"><Term t="Out-of-sample">n</Term></th>
               </tr></thead>
               <tbody>
                 {tenors.flatMap(t => {
@@ -588,6 +544,6 @@ export default async function ResearchPage() {
         { href: "/callmoney", label: "Call Money", why: "the liquidity signal that leads auction demand" },
         { href: "/explore", label: "Explore", why: "test a driver against yields before it becomes a model" },
       ]} />
-    </>
+    </ExplainProvider>
   );
 }
