@@ -437,7 +437,10 @@ def run_omo_fetch(days_back: int = 28, max_files: int = 20) -> dict:
         session.commit()
         log.info("OMO fetch: %d rows stored, %d date(s) superseded by corrections, from %d PDFs",
                  saved, superseded, len(txns))
-        return {"rows": saved, "pdfs": max_files, "errors": []}
+        # Grand-total reconciliation failures (set by the parser) → run errors, so
+        # they surface on the dashboard's last_run_errors and to the watchdog.
+        recon = sorted({t["recon_mismatch"] for t in txns if t.get("recon_mismatch")})
+        return {"rows": saved, "pdfs": max_files, "errors": recon}
     except Exception as exc:
         session.rollback()
         log.exception("OMO fetch failed")

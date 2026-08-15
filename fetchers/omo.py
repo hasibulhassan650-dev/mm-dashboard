@@ -108,6 +108,26 @@ def _extract_label(line: str) -> Optional[str]:
     return label
 
 
+def _extract_grand_total(text: str):
+    """
+    BB's own printed totals: (accepted_total, net_liquidity) or (None, None).
+    'Grand Total  <offered> <accepted> <maturity> <net>' — accepted is 2nd num.
+    'Net Liquidity Absorption/Injection was Taka X Crore' gives the signed net.
+    Used to reconcile our parse against BB — a mismatch = a parse error.
+    """
+    accepted = None
+    m = re.search(r'grand\s+total\s+(-?[\d,]+\.?\d*)\s+(-?[\d,]+\.?\d*)', text, re.I)
+    if m:
+        accepted = _clean_num(m.group(2))
+    net = None
+    m = re.search(r'net\s+liquidity\s+(injection|absorption)\s+was\s+taka\s+(-?[\d,]+\.?\d*)', text, re.I)
+    if m:
+        v = _clean_num(m.group(2))
+        if v is not None:
+            net = v if m.group(1).lower().startswith("inj") else -v
+    return accepted, net
+
+
 def _resolve_instrument(label: Optional[str], accepted_negative: bool):
     """
     → (name, direction, known:bool) or None when there is no label.
@@ -260,10 +280,28 @@ def parse_omo_pdf(pdf_bytes: bytes, hint_date: Optional[datetime.date], pdf_url:
         log.warning("OMO date anomaly: 'as on' %s but PUBLISHED %s (serial %s) — no lag; "
                     "PROVISIONAL, expect a correction to supersede this", txn_date, pub_date, serial)
 
+    gt_accepted, gt_net = _extract_grand_total(full_text)
+
     def _annotate(rows: List[Dict]) -> List[Dict]:
         for r in rows:
             r["source_pub_date"] = pub_date
             r["source_serial"] = serial
+        # Reconcile our parsed rows against BB's own printed Grand Total. Signed
+        # accepted (injection +, absorption −) must equal BB's accepted total; a
+        # mismatch means a dropped row, a wrong sign, or a mislabel — the exact
+        # class of error that hid MLS/SDF inside IBLF. Flag it LOUD so it reaches
+        # the run errors / dashboard / watchdog instead of shipping silently.
+        if gt_accepted is not None and rows:
+            ours = sum((r["accepted_bdt_crore"] if r["direction"] == "INJECTION"
+                        else -r["accepted_bdt_crore"]) for r in rows)
+            tol = max(1.0, abs(gt_accepted) * 0.002)
+            if abs(ours - gt_accepted) > tol:
+                msg = (f"OMO GRAND-TOTAL MISMATCH {txn_date}: BB accepted total "
+                       f"{gt_accepted:,.2f} vs parsed {ours:,.2f} (diff {ours - gt_accepted:,.2f}) "
+                       f"[{Path(pdf_url).name}]")
+                log.error(msg)
+                for r in rows:
+                    r["recon_mismatch"] = msg
         return rows
 
     transactions = _parse_via_text(full_text, txn_date, pdf_url)
