@@ -80,7 +80,8 @@ export const GLOSSARY: GlossaryEntry[] = [
   },
   {
     term: "Cutoff yield", category: "Metrics",
-    def: "The highest accepted yield (lowest accepted price) at a primary auction — the marginal clearing level.",
+    def: "The highest accepted yield (lowest accepted price) at a primary auction — the marginal clearing level. This is the number the /research models forecast.",
+    eli10: "An auction where banks say what interest rate they want. The government takes the cheapest offers and stops once it has borrowed enough. The rate where it stops is the cutoff — that's the number we try to guess before it happens.",
   },
   {
     term: "Weighted-avg yield", category: "Metrics",
@@ -92,7 +93,8 @@ export const GLOSSARY: GlossaryEntry[] = [
   },
   {
     term: "Devolvement", category: "Metrics",
-    def: "When bids fall short of the amount on offer and primary dealers are obliged to absorb the shortfall. A sign of weak auction demand or rich pricing.",
+    def: "When bids fall short of the amount on offer and primary dealers are obliged to absorb the shortfall. A sign of weak auction demand or rich pricing — and the resulting cutoff may be administratively set rather than market-determined.",
+    eli10: "When not enough people bid at the auction, so the organisers have to buy the leftovers themselves. The price that comes out then isn't really a market price.",
   },
   {
     term: "Yield-curve slope (2s10s)", category: "Metrics",
@@ -156,11 +158,6 @@ export const GLOSSARY: GlossaryEntry[] = [
   },
 
   // ── Forecasting & statistics (the /research tab) ──────────────────────────
-  {
-    term: "Cutoff Yield", category: "Forecasting",
-    def: "The highest yield Bangladesh Bank accepts at an auction — the rate at which the last successful bid clears. This is the number the /research models forecast.",
-    eli10: "An auction where banks say what interest rate they want. The government picks the cheapest offers and stops when it has borrowed enough. The rate where it stops is the cutoff. That's the number we try to guess before it happens.",
-  },
   {
     term: "Tenor", category: "Forecasting",
     def: "How long the security lasts before it is repaid — 91D means 91 days, 10Y means 10 years. Each tenor is forecast separately because they behave differently.",
@@ -280,10 +277,5 @@ export const GLOSSARY: GlossaryEntry[] = [
     term: "Lookback Window", category: "Forecasting",
     def: "How much history a model is fitted and judged on. Split here: bills use 3 years (they auction weekly), bonds 5 years (they auction monthly and need more examples), while the band always uses only recent data.",
     eli10: "How far back we look when learning. Look back too little and you don't have enough examples; look back too far and you're learning from a world that no longer exists.",
-  },
-  {
-    term: "Devolvement", category: "Forecasting",
-    def: "When an auction is undersubscribed and Bangladesh Bank or the primary dealers absorb the shortfall. The resulting cutoff may be administratively set rather than market-determined.",
-    eli10: "When not enough people bid at the auction, so the organisers have to buy the leftovers themselves. The price then isn't really a market price.",
   },
 ];
