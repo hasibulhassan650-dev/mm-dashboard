@@ -49,6 +49,25 @@ function priceBond(couponRate: number | null, freq: number, maturity: Date, issu
   return { dirty, clean: dirty - accrued, accrued };
 }
 
+/** Floating-rate note (FRTB): the coupon resets each period, so it prices ~par
+ *  at the next reset and its rate risk spans only to that reset. Value the
+ *  current (already-fixed) coupon + par redemption AT the next reset date,
+ *  discounted at the reference yield → duration ≈ time-to-reset, not to
+ *  maturity. Pricing a floater as a fixed bond overstates its duration/DV01. */
+function priceFloater(couponRate: number | null, freq: number, maturity: Date, issue: Date, yieldPct: number, settle: Date): Priced {
+  const dates = couponDates(maturity, freq, issue);
+  const nextReset = dates.find((d) => d.getTime() > settle.getTime()) ?? maturity;
+  const t = yearsBetween(settle, nextReset);
+  if (t <= 0) return { dirty: 100, clean: 100, accrued: 0 };
+  const cpn = (couponRate ?? 0) / freq;
+  const df = Math.pow(1 + (yieldPct / 100) / freq, -t * freq);
+  const dirty = (100 + cpn) * df;
+  const prevC = [...dates].reverse().find((d) => d.getTime() <= settle.getTime()) ?? issue;
+  const period = (nextReset.getTime() - prevC.getTime()) / DAY;
+  const accrued = period > 0 ? cpn * Math.max(0, Math.min(1, (settle.getTime() - prevC.getTime()) / DAY / period)) : 0;
+  return { dirty, clean: dirty - accrued, accrued };
+}
+
 function interpYield(points: { x: number; y: number }[], t: number): number | null {
   if (!points.length) return null;
   if (t <= points[0].x) return points[0].y;
@@ -165,14 +184,20 @@ export default function PortfolioTool({ secondary, securities, repoDefault }: Pr
     const blank: Analytics = { isin: h.isin, name, type, years, couponPct, yieldPct, source, dirty: null, clean: null, accrued: null, faceMn: h.faceMn, valueMn: null, costMn: null, pnlMn: null, modDur: null, convexity: null, dv01Mn: null, carryRollMn: null, carryRollAnnPct: null, breakevenBp: null };
     if (years == null || years <= 0 || yieldPct == null || maturity == null || issue == null) return blank;
 
-    const p0 = priceBond(couponPct, freq, maturity, issue, yieldPct, today);
+    // FRTBs are floaters — price/risk to the next reset, not to maturity.
+    const isFRTB = type === "FRTB";
+    const px = (yp: number, settle: Date): Priced =>
+      isFRTB ? priceFloater(couponPct, freq, maturity, issue, yp, settle)
+             : priceBond(couponPct, freq, maturity, issue, yp, settle);
+
+    const p0 = px(yieldPct, today);
     const valueMn = h.faceMn * p0.dirty / 100;
     const costMn = h.costPx != null ? h.faceMn * h.costPx / 100 : null;
     const pnlMn = costMn != null ? valueMn - costMn : null;
 
     // duration & convexity — 25bp central difference
-    const pu = priceBond(couponPct, freq, maturity, issue, yieldPct + 0.25, today).dirty;
-    const pd = priceBond(couponPct, freq, maturity, issue, yieldPct - 0.25, today).dirty;
+    const pu = px(yieldPct + 0.25, today).dirty;
+    const pd = px(yieldPct - 0.25, today).dirty;
     const modDur = (pd - pu) / (2 * 0.0025 * p0.dirty);
     const convexity = (pu + pd - 2 * p0.dirty) / (p0.dirty * 0.0025 * 0.0025);
     const dv01Mn = modDur * valueMn * 0.0001;
@@ -183,7 +208,7 @@ export default function PortfolioTool({ secondary, securities, repoDefault }: Pr
     let carryRollMn: number | null = null, carryRollAnnPct: number | null = null, breakevenBp: number | null = null;
     if (yearsEnd > 0) {
       const yEnd = interpYield(curve, yearsEnd) ?? yieldPct;
-      const end = priceBond(couponPct, freq, maturity, issue, yEnd, settleEnd);
+      const end = px(yEnd, settleEnd);
       const cpn = (couponPct && couponPct > 0) ? couponPct / freq : 0;
       const dates = maturity && issue ? couponDates(maturity, freq, issue) : [];
       const couponsRecv = dates.filter((d) => d.getTime() > today.getTime() && d.getTime() <= settleEnd.getTime()).length * cpn;
@@ -219,7 +244,10 @@ export default function PortfolioTool({ secondary, securities, repoDefault }: Pr
     const maturity = sec?.maturity_date ? new Date(sec.maturity_date) : (sy?.maturity_date ? new Date(sy.maturity_date) : null);
     const issue = sec?.issue_date ? new Date(sec.issue_date) : (maturity ? addMonths(maturity, -120) : null);
     if (!maturity || !issue) return s + (p.valueMn ?? 0);
-    const pr = priceBond(p.couponPct, freqOf(sec?.security_type), maturity, issue, p.yieldPct + bp / 100, today).dirty;
+    const f = freqOf(sec?.security_type);
+    const pr = (p.type === "FRTB"
+      ? priceFloater(p.couponPct, f, maturity, issue, p.yieldPct + bp / 100, today)
+      : priceBond(p.couponPct, f, maturity, issue, p.yieldPct + bp / 100, today)).dirty;
     return s + p.faceMn * pr / 100;
   }, 0);
 
