@@ -299,9 +299,18 @@ def parse_omo_pdf(pdf_bytes: bytes, hint_date: Optional[datetime.date], pdf_url:
                 msg = (f"OMO GRAND-TOTAL MISMATCH {txn_date}: BB accepted total "
                        f"{gt_accepted:,.2f} vs parsed {ours:,.2f} (diff {ours - gt_accepted:,.2f}) "
                        f"[{Path(pdf_url).name}]")
-                log.error(msg)
-                for r in rows:
-                    r["recon_mismatch"] = msg
+                # Only ROUTE recent mismatches to the run errors — that's where a
+                # real parse bug in newly-published data is actionable. Older dates
+                # that mismatch are typically BB's own internal inconsistency (a
+                # sub-total that doesn't equal its displayed rows, e.g. 2026-07-15),
+                # which we can't fix and shouldn't re-flag on every backfill run.
+                recent = (datetime.date.today() - txn_date).days <= 14
+                if recent:
+                    log.error(msg)
+                    for r in rows:
+                        r["recon_mismatch"] = msg
+                else:
+                    log.info("%s (old date — likely BB-side, not routed to alerts)", msg)
         return rows
 
     transactions = _parse_via_text(full_text, txn_date, pdf_url)
