@@ -37,7 +37,11 @@ function corrColor(r: number | null): string {
   return `rgba(${pole[0]},${pole[1]},${pole[2]},${(0.1 + 0.82 * a).toFixed(2)})`;
 }
 
-const DEFAULT = ["omo_net", "call_war", "call_vol", "dommr", "y91", "y364", "y10y", "fx"];
+// Opens on a G-sec-centric spread of the curve plus the liquidity and FX
+// links, rather than every series at once — a 32x32 grid is unreadable.
+// Everything else is one click away in the picker.
+const DEFAULT = ["y91", "y364", "y2y", "y10y", "y20y", "s_2s10s",
+                 "cover_bill", "call_war", "omo_net", "fx"];
 
 export default function ExploreTool({ variables, min, max }: { variables: SeriesDef[]; min: string; max: string }) {
   const byKey = React.useMemo(() => Object.fromEntries(variables.map((v) => [v.key, v])), [variables]);

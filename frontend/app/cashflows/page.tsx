@@ -30,6 +30,35 @@ export default async function CashFlowsPage({ searchParams }: { searchParams: Pr
         <DateRangeControl min={range.min} max={range.max} from={range.from} to={range.to} />
       </div>
 
+      {/* Dated, visible record of the settlement-dating correction. Kept on the
+          page rather than only in git, because anyone reading a number here
+          needs to know the basis changed on 2026-08-21. */}
+      <Panel title="Data Integrity — Cash Is Dated by Settlement" span={12}>
+        <div style={{ fontSize: 12.5, lineHeight: 1.75, color: "var(--fg-mute)", maxWidth: 980 }}>
+          <p style={{ marginTop: 0 }}>
+            <b style={{ color: "var(--fg)" }}>Every figure on this page is dated to the day the cash
+            actually settles</b>, not the contractual due date. When a coupon or maturity falls on a
+            Friday or Saturday — the Bangladesh weekend — or on a holiday, Bangladesh Bank pays on the
+            next working day, and that is the day it appears here.
+          </p>
+          <p>
+            <b style={{ color: "var(--warn)" }}>Corrected 21 Aug 2026.</b> Until that date this ladder
+            bucketed coupons and maturities on their scheduled due date, so cash was shown up to three
+            days early — including on Fridays and Saturdays, when nothing settles.
+            <b style={{ color: "var(--fg)" }}> 2,148 of 6,744 coupon events (31.9%, BDT 2.0tn)</b> and
+            19 of 375 maturities were affected. On 26 Jul 2026, BDT 3,632mn was received across eight
+            coupons while this page showed BDT 72mn.
+          </p>
+          <p style={{ marginBottom: 0 }}>
+            The full history has been rebuilt and reconciled against the underlying coupon and maturity
+            events: <b style={{ color: "var(--pos)" }}>zero mismatched days</b> across Jul 2025 – Jul
+            2027, totals tie exactly, and no cash is dated to a non-working day. The contractual due
+            date is still recorded on every event and shown in the day drill-down. A regression test
+            now fails if the basis is ever changed back.
+          </p>
+        </div>
+      </Panel>
+
       {todayRow && (
         <div className="kpi-strip" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
           <div className="kpi"><div className="kpi-top"><span className="kpi-label">Today Inflow</span></div><div className="kpi-val"><span className="kpi-num pos">{k(todayRow.total_inflow_bdt_mill)}k</span><span className="kpi-unit">mn</span></div><div className="kpi-sub">{fmtDate(todayRow.flow_date)}</div></div>
