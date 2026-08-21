@@ -81,6 +81,66 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
             if abs((r[2] or 0) - expected) > max(0.5, expected * 0.001):
                 add("coupons", f"{r[0]} {r[1]} amount {r[2]:.2f} != face×rate/{div} ({expected:.2f})")
 
+        today = datetime.date.today()
+
+        # ---- maturity principal must equal the security's outstanding face ----
+        # A G-sec redeems its FULL outstanding at maturity. If a maturity event's
+        # principal differs from the security's outstanding, the event was built
+        # from a stale/wrong face (the id-collision class) and the redemption
+        # inflow shown to the desk is wrong. Forward maturities only — past faces
+        # are frozen and may predate an outstanding revision.
+        for r in q("SELECT m.isin, m.scheduled_date, m.principal_bdt_mill, s.outstanding_bdt_mill "
+                   "FROM maturity_events m JOIN securities s ON m.isin = s.isin "
+                   "WHERE s.outstanding_bdt_mill > 0 AND m.principal_bdt_mill > 0 "
+                   "AND m.payment_date >= :today", today=today):
+            if abs((r[2] or 0) - (r[3] or 0)) > max(1.0, (r[3] or 0) * 0.001):
+                add("maturities", f"{r[0]} {r[1]} principal {r[2]:.0f} != outstanding face {r[3]:.0f}")
+
+        # ---- liquidity ladder must reconcile to its source events ----
+        # daily_net_flow is a *materialised* aggregate that the forecast/ladder
+        # trades off. If it is rebuilt from a different event snapshot than the
+        # live coupon/maturity/auction rows — or bucketed on a different date key
+        # — the ladder silently diverges from the drilldown the desk clicks into
+        # (Aug 2026: the ladder showed a 49bn maturity and weekend-dated coupons
+        # that no live event supported). Reconcile every row inside the forecast
+        # window against the events bucketed by payment/settlement date — exactly
+        # what build_daily_flows buckets on — so a stale ladder fails loud.
+        horizon = today + datetime.timedelta(days=60)
+
+        def _by_date(sql) -> dict:
+            out: dict[str, float] = {}
+            for row in q(sql, today=today, horizon=horizon):
+                k = row[0]
+                k = k[:10] if isinstance(k, str) else str(k)
+                out[k] = out.get(k, 0.0) + (row[1] or 0.0)
+            return out
+
+        recon = (
+            ("coupon",
+             "SELECT flow_date, coupon_inflow_bdt_mill FROM daily_net_flow "
+             "WHERE flow_date > :today AND flow_date <= :horizon",
+             "SELECT payment_date, amount_bdt_mill FROM coupon_events "
+             "WHERE payment_date > :today AND payment_date <= :horizon"),
+            ("principal",
+             "SELECT flow_date, principal_inflow_bdt_mill FROM daily_net_flow "
+             "WHERE flow_date > :today AND flow_date <= :horizon",
+             "SELECT payment_date, principal_bdt_mill FROM maturity_events "
+             "WHERE payment_date > :today AND payment_date <= :horizon"),
+            ("auction",
+             "SELECT flow_date, auction_outflow_planned_mill FROM daily_net_flow "
+             "WHERE flow_date > :today AND flow_date <= :horizon",
+             "SELECT settlement_date, offered_amount_bdt_mill FROM auction_events "
+             "WHERE settlement_date > :today AND settlement_date <= :horizon"),
+        )
+        for label, ladder_sql, event_sql in recon:
+            ladder = _by_date(ladder_sql)
+            evt = _by_date(event_sql)
+            for d in sorted(set(ladder) | set(evt)):
+                a, e = ladder.get(d, 0.0), evt.get(d, 0.0)
+                if abs(a - e) > max(5.0, e * 0.005):
+                    add("ladder-recon", f"{d} {label}: ladder {a:.0f} != events {e:.0f} mill "
+                                        f"— daily_net_flow stale vs live rows; rebuild the flow pipeline")
+
         # ---- call money / ref rates ----
         for r in q("SELECT trade_date, average_rate_pct FROM call_money_rates "
                    "WHERE average_rate_pct IS NOT NULL AND (average_rate_pct <= 0 OR average_rate_pct > 50)"):
@@ -101,8 +161,6 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
         # A fetch that "succeeds" but stores nothing new must FAIL here, not
         # pass unnoticed (July 2026: FY-rollover left the auction calendar
         # seed stale → "no auctions next month" presented as fact).
-        today = datetime.date.today()
-
         def _max_date(sql) -> datetime.date | None:
             v = s.execute(text(sql)).scalar()
             if isinstance(v, str):
