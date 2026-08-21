@@ -83,6 +83,44 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
 
         today = datetime.date.today()
 
+        # ---- OMO operational cadence (catch a missing / mislabeled BB release) ----
+        # BB runs an OMO every working day, and CB Repo is the Tuesday operation.
+        # A working day with NO operation — or a working Tuesday with NO CB Repo —
+        # is almost always a BB press-release mistake: a duplicate 'as on' date
+        # that superseded a real operation (Aug-2026: two "as on 06 August" files,
+        # the earlier one really the 04-Aug Tuesday CB Repo, got dropped), or a
+        # mislabel. We surface it and — because the holiday calendar can lag the
+        # FY rollover and may not know the day — ASK whether it was a holiday
+        # rather than asserting. Skip the last 2 days: results publish with a lag,
+        # so "missing" there is not-yet-published, not a real gap.
+        from calendar_utils import is_working_day
+        hol = {r[0] for r in q("SELECT calendar_date FROM holiday_calendar")}
+        _lo = today - datetime.timedelta(days=21)
+        _hi = today - datetime.timedelta(days=2)
+        omo_dates = {r[0] for r in q(
+            "SELECT DISTINCT transaction_date FROM omo_transactions "
+            "WHERE transaction_date >= :lo AND transaction_date <= :hi", lo=_lo, hi=today)}
+        cbrepo_dates = {r[0] for r in q(
+            "SELECT DISTINCT transaction_date FROM omo_transactions "
+            "WHERE instrument = 'CB_REPO' AND transaction_date >= :lo AND transaction_date <= :hi",
+            lo=_lo, hi=today)}
+        # Only flag a gap we can PROVE is real: one we hold later data past. A
+        # missing day at the tail is just not-yet-published (results lag, more so
+        # over the Fri–Sat weekend), not a genuine hole.
+        max_omo = max(omo_dates) if omo_dates else None
+        d = _lo
+        while d <= _hi:
+            if max_omo is not None and d < max_omo and is_working_day(d, hol):  # Mon–Thu + Sun, minus known holidays
+                if d not in omo_dates:
+                    add("omo", f"no OMO operation on working day {d} ({d:%a}) — BB operates "
+                               f"every working day; a BB press release is likely missing or "
+                               f"duplicate-dated. Confirm {d} was not a bank holiday.")
+                elif d.weekday() == 1 and d not in cbrepo_dates:   # Tuesday, ops but no CB Repo
+                    add("omo", f"no CB_REPO on working Tuesday {d} — CB Repo is the Tuesday "
+                               f"operation; likely a mislabeled/duplicate BB release swallowed "
+                               f"it. Confirm {d} was a working day (not a bank holiday).")
+            d += datetime.timedelta(days=1)
+
         # ---- maturity principal must equal the security's outstanding face ----
         # A G-sec redeems its FULL outstanding at maturity. If a maturity event's
         # principal differs from the security's outstanding, the event was built

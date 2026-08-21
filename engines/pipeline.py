@@ -332,15 +332,38 @@ def _fetch_all_gsom_pages() -> list:
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN PIPELINE
 
+def _prior_free_tuesday(session, d: datetime.date, max_back: int = 10):
+    """The most recent working Tuesday strictly before `d` that holds NO OMO
+    rows — where a CB Repo mislabelled onto a later 'as on' date really belongs
+    (CB Repo is the Tuesday operation). Returns None if the nearest prior Tuesday
+    is a holiday or already has data (don't guess when it isn't clean)."""
+    import calendar_utils
+    t = d - datetime.timedelta(days=1)
+    for _ in range(max_back):
+        if t.weekday() == 1:                       # Tuesday
+            if not calendar_utils.is_working_day(t):
+                return None                        # Tuesday was a holiday — don't guess
+            has = session.query(OMOTransaction).filter_by(transaction_date=t).first()
+            return t if has is None else None      # only if that Tuesday is empty
+        t -= datetime.timedelta(days=1)
+    return None
+
+
 def _store_omo_txns(session, txns: list, now: datetime.datetime) -> tuple:
     """
     Store OMO rows with correction-aware supersession, returning (saved,
     superseded). For each operation ('as on') date, only the LATEST-published
-    release is authoritative — this is how BB's corrections work: a later press
-    release re-states the same operation date with the right figures (serial
-    345 published 09-Aug supersedes the mislabelled 343 published 06-Aug, both
-    claiming 'as on 06 August'). Naively keying on date alone would pile both
-    onto one day. Extracted from run_omo_fetch so it is unit-testable.
+    release is authoritative — this is how BB's GENUINE corrections work: a later
+    press release re-states the SAME operation with the right figures. Naively
+    keying on date alone would pile both onto one day.
+
+    But two releases sharing an 'as on' date are NOT always a correction. When
+    one carries CB_REPO and the other does not, they are DIFFERENT operations BB
+    double-dated — the Aug-2026 case where the 04-Aug (Tuesday) CB Repo, stamped
+    'as on 06 August' like the genuine 06-Aug operation, was silently deleted by
+    supersession. The mislabel guard below re-homes the CB_REPO operation to the
+    Tuesday it belongs to (on either fetch order / within one batch) instead of
+    dropping it. Extracted from run_omo_fetch so it is unit-testable.
     """
     from collections import defaultdict
 
@@ -376,9 +399,64 @@ def _store_omo_txns(session, txns: list, now: datetime.datetime) -> tuple:
         if not keep:
             continue
 
+        # Within-batch mislabel: if this one fetch pulled BOTH releases for date d
+        # and the OLDER one carries a CB Repo the latest lacks, the keep-filter
+        # above would silently drop it. That CB Repo is a different (Tuesday)
+        # operation BB double-dated — re-home the whole older release to its
+        # Tuesday instead of losing it. (Cross-run duplicates are caught below.)
+        if not any(k["instrument"] == "CB_REPO" for k in keep):
+            older_cb_pub = max((_pub(x) for x in rows
+                                if _pub(x) != latest_pub and x["instrument"] == "CB_REPO"),
+                               default=datetime.date.min)
+            if older_cb_pub != datetime.date.min:
+                target = _prior_free_tuesday(session, d)
+                if target is not None:
+                    for x in (r for r in rows if _pub(r) == older_cb_pub):
+                        x2 = dict(x)
+                        x2["transaction_date"] = target
+                        x2["maturity_date"]    = target + datetime.timedelta(days=(x.get("tenor_days") or 0))
+                        _insert(x2); saved += 1
+                    log.error("OMO mislabel guard (batch): CB_REPO operation re-homed from 'as on "
+                              "%s' to Tuesday %s — BB double-dated two operations. CONFIRM %s was a "
+                              "working day (not a bank holiday).", d, target, target)
+
         existing = session.query(OMOTransaction).filter_by(transaction_date=d).all()
         stored_pub = max((e.source_pub_date for e in existing if e.source_pub_date), default=None)
         inc_pub = None if latest_pub == datetime.date.min else latest_pub
+
+        # ── OMO mislabel guard: two operations stamped with one 'as on' date ──
+        # A genuine BB correction re-states the SAME operation (it keeps CB_REPO).
+        # When one release for this date carries CB_REPO and the other does NOT,
+        # they are DIFFERENT operations BB gave the same 'as on' date — the
+        # Aug-2026 bug where the 04-Aug Tuesday CB Repo, mislabelled 'as on 06
+        # August', was silently deleted by the genuine 06-Aug release. Re-home the
+        # CB_REPO release to the Tuesday it belongs to, on EITHER fetch order,
+        # instead of one side deleting or regressing the other. Tight + reversible:
+        # only fires when exactly one side has CB Repo and the prior Tuesday is a
+        # clean, empty working day. Loud, so the desk can confirm the date.
+        if existing and inc_pub is not None and stored_pub is not None and inc_pub != stored_pub:
+            stored_has_cb = any(e.instrument == "CB_REPO" for e in existing)
+            inc_has_cb    = any(r["instrument"] == "CB_REPO" for r in keep)
+            if stored_has_cb != inc_has_cb:
+                target = _prior_free_tuesday(session, d)
+                if target is not None:
+                    if stored_has_cb:      # keep incoming on d, move stored CB Repo op to its Tuesday
+                        for e in existing:
+                            e.transaction_date = target
+                            e.maturity_date    = target + datetime.timedelta(days=e.tenor_days or 0)
+                        session.flush()
+                        for r in keep:
+                            _insert(r); saved += 1
+                    else:                  # keep stored on d, store incoming CB Repo op on its Tuesday
+                        for r in keep:
+                            r2 = dict(r)
+                            r2["transaction_date"] = target
+                            r2["maturity_date"]    = target + datetime.timedelta(days=(r.get("tenor_days") or 0))
+                            _insert(r2); saved += 1
+                    log.error("OMO mislabel guard: CB_REPO operation re-homed from 'as on %s' to "
+                              "Tuesday %s — BB double-dated two operations. CONFIRM %s was a "
+                              "working day (not a bank holiday).", d, target, target)
+                    continue
 
         # Replace the date's rows when the incoming release is NEWER (a
         # correction supersedes), or SAME publication but re-parsed into at least

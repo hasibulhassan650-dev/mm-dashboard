@@ -59,39 +59,44 @@ def _row(instr, tenor, acc, direction, pub, serial, ason=datetime.date(2026, 8, 
 
 
 class TestSupersession:
-    def test_later_release_replaces_mislabelled_one(self):
+    def test_genuine_correction_restates_same_operation(self):
+        # A REAL correction re-states the SAME operation (CB_REPO stays present)
+        # with the right figures → the later release supersedes on its own date.
+        # Contrast with TestMislabelGuard, where the later release DROPS CB_REPO.
         from engines.pipeline import _store_omo_txns
         from db import OMOTransaction
         sess = _mem_session()
 
         wrong = [_row("CB_REPO", 7, 17307.41, "INJECTION", datetime.date(2026, 8, 6), "05/2026-343"),
-                 _row("IBLF", 7, 4586.08, "INJECTION", datetime.date(2026, 8, 6), "05/2026-343"),
-                 _row("SDF", 1, 2988.0, "ABSORPTION", datetime.date(2026, 8, 6), "05/2026-343")]
+                 _row("IBLF", 7, 4586.08, "INJECTION", datetime.date(2026, 8, 6), "05/2026-343")]
         _store_omo_txns(sess, wrong, datetime.datetime.utcnow()); sess.commit()
 
-        correct = [_row("IBLF", 7, 1945.80, "INJECTION", datetime.date(2026, 8, 9), "05/2026-345"),
-                   _row("SDF", 1, 3102.0, "ABSORPTION", datetime.date(2026, 8, 9), "05/2026-345")]
+        correct = [_row("CB_REPO", 7, 15000.00, "INJECTION", datetime.date(2026, 8, 9), "05/2026-345"),
+                   _row("IBLF", 7, 1945.80, "INJECTION", datetime.date(2026, 8, 9), "05/2026-345")]
         saved, superseded = _store_omo_txns(sess, correct, datetime.datetime.utcnow()); sess.commit()
 
         got = sess.query(OMOTransaction).filter_by(transaction_date=datetime.date(2026, 8, 6)).all()
-        insts = sorted(g.instrument for g in got)
         assert superseded == 1
-        assert insts == ["IBLF", "SDF"], f"expected only the correction's rows, got {insts}"
-        # the wrong release's figures must be gone, not piled on
-        assert all(g.instrument != "CB_REPO" for g in got)
-        iblf = next(g for g in got if g.instrument == "IBLF")
-        assert abs(iblf.accepted_bdt_crore - 1945.80) < 1e-6
+        assert sorted(g.instrument for g in got) == ["CB_REPO", "IBLF"], "latest correction's rows only"
+        cb = next(g for g in got if g.instrument == "CB_REPO")
+        assert abs(cb.accepted_bdt_crore - 15000.00) < 1e-6, "corrected figure, not the old one"
+        # a genuine correction is NOT re-homed to a Tuesday
+        assert sess.query(OMOTransaction).filter_by(transaction_date=datetime.date(2026, 8, 4)).count() == 0
 
-    def test_both_releases_in_one_batch_keeps_latest(self):
-        # if a single fetch pulls both 343 and 345, only 345 (latest pub) is kept
+    def test_both_releases_in_one_batch_rehomes_cbrepo(self):
+        # if a single fetch pulls both 343 (CB Repo, older) and 345 (no CB Repo),
+        # the genuine 345 stays on its date AND the CB Repo is re-homed to its
+        # Tuesday — never silently dropped by the keep-latest filter.
         from engines.pipeline import _store_omo_txns
         from db import OMOTransaction
         sess = _mem_session()
         batch = [_row("CB_REPO", 7, 17307.41, "INJECTION", datetime.date(2026, 8, 6), "05/2026-343"),
                  _row("IBLF", 7, 1945.80, "INJECTION", datetime.date(2026, 8, 9), "05/2026-345")]
         _store_omo_txns(sess, batch, datetime.datetime.utcnow()); sess.commit()
-        got = sess.query(OMOTransaction).filter_by(transaction_date=datetime.date(2026, 8, 6)).all()
-        assert sorted(g.instrument for g in got) == ["IBLF"]
+        thu = sess.query(OMOTransaction).filter_by(transaction_date=datetime.date(2026, 8, 6)).all()
+        tue = sess.query(OMOTransaction).filter_by(transaction_date=datetime.date(2026, 8, 4)).all()
+        assert sorted(g.instrument for g in thu) == ["IBLF"], "genuine 06-Aug op kept on its date"
+        assert any(g.instrument == "CB_REPO" for g in tue), "CB Repo re-homed to its Tuesday, not lost"
 
     def test_older_release_never_regresses_a_correction(self):
         # if the correction is already stored, re-seeing the old release must not undo it
@@ -146,3 +151,63 @@ class TestInstrumentParsing:
         insts = {r["instrument"] for r in rows}
         assert "NEWFAC" in insts, "unknown instrument lost / mislabelled"
         assert ("CB_REPO", 30) not in {(r["instrument"], r["tenor_days"]) for r in rows}
+
+
+class TestMislabelGuard:
+    """Aug-2026: BB stamped the 04-Aug (Tuesday) CB Repo operation with the
+    header 'as on 06 August' — the same date as the genuine 06-Aug operation.
+    Superseding by date silently DELETED the Tuesday CB Repo. The guard re-homes
+    the CB_REPO-bearing release to the Tuesday it belongs to, on either fetch
+    order; a genuine correction (same op, keeps CB_REPO) still supersedes."""
+
+    THU = datetime.date(2026, 8, 6)   # Thursday — the contested 'as on' date
+    TUE = datetime.date(2026, 8, 4)   # the Tuesday the CB Repo really belongs to
+
+    def _mislabel(self):   # 04-Aug op, has CB Repo, published 06-Aug, mis-stamped as-on 06-Aug
+        return [_row("CB_REPO", 7, 14571.0, "INJECTION", datetime.date(2026, 8, 6), "05/2026-343", ason=self.THU),
+                _row("SDF", 1, 3000.0, "ABSORPTION", datetime.date(2026, 8, 6), "05/2026-343", ason=self.THU)]
+
+    def _genuine(self):    # real 06-Aug op, NO CB Repo, published later 09-Aug
+        return [_row("IBLF", 7, 1945.8, "INJECTION", datetime.date(2026, 8, 9), "05/2026-345", ason=self.THU),
+                _row("SDF", 1, 3102.0, "ABSORPTION", datetime.date(2026, 8, 9), "05/2026-345", ason=self.THU)]
+
+    def _assert_split(self, sess):
+        from db import OMOTransaction
+        tue = sess.query(OMOTransaction).filter_by(transaction_date=self.TUE).all()
+        thu = sess.query(OMOTransaction).filter_by(transaction_date=self.THU).all()
+        assert any(r.instrument == "CB_REPO" and abs(r.accepted_bdt_crore - 14571.0) < 1e-6 for r in tue), \
+            "CB Repo must be preserved on its Tuesday, never deleted by supersession"
+        assert not any(r.instrument == "CB_REPO" for r in thu), "no CB Repo on the genuine 06-Aug date"
+        assert any(r.instrument == "IBLF" for r in thu), "genuine 06-Aug operation kept on its own date"
+
+    def test_cbrepo_preserved_when_genuine_release_arrives_later(self):
+        from engines.pipeline import _store_omo_txns
+        sess = _mem_session()
+        _store_omo_txns(sess, self._mislabel(), datetime.datetime.utcnow()); sess.commit()
+        _store_omo_txns(sess, self._genuine(),  datetime.datetime.utcnow()); sess.commit()
+        self._assert_split(sess)
+
+    def test_cbrepo_preserved_when_it_arrives_after_the_genuine_one(self):
+        # reverse fetch order: the older CB_REPO release must NOT be dropped as a
+        # regression — it re-homes to the Tuesday just the same.
+        from engines.pipeline import _store_omo_txns
+        sess = _mem_session()
+        _store_omo_txns(sess, self._genuine(),  datetime.datetime.utcnow()); sess.commit()
+        _store_omo_txns(sess, self._mislabel(), datetime.datetime.utcnow()); sess.commit()
+        self._assert_split(sess)
+
+    def test_genuine_correction_with_cbrepo_still_supersedes(self):
+        # both releases carry CB Repo (same operation, corrected figures) → normal
+        # supersession, latest wins on its own date, nothing re-homed to Tuesday.
+        from engines.pipeline import _store_omo_txns
+        from db import OMOTransaction
+        sess = _mem_session()
+        _store_omo_txns(sess, [_row("CB_REPO", 7, 17307.41, "INJECTION", datetime.date(2026, 8, 6), "05/2026-343", ason=self.THU)],
+                        datetime.datetime.utcnow()); sess.commit()
+        _store_omo_txns(sess, [_row("CB_REPO", 7, 1945.80, "INJECTION", datetime.date(2026, 8, 9), "05/2026-345", ason=self.THU)],
+                        datetime.datetime.utcnow()); sess.commit()
+        assert sess.query(OMOTransaction).filter_by(transaction_date=self.TUE).count() == 0, \
+            "a genuine correction must not be re-homed to a Tuesday"
+        thu = sess.query(OMOTransaction).filter_by(transaction_date=self.THU).all()
+        assert len(thu) == 1 and abs(thu[0].accepted_bdt_crore - 1945.80) < 1e-6, \
+            "latest correction wins on its own date"
