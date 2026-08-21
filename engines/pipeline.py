@@ -581,16 +581,17 @@ def run_pipeline(
         # ── 8. Re-query ALL events from DB for the range ──────────────────────
         # Use DB as the source of truth, not the in-memory lists.
         # This ensures any events from previous runs are included too.
-        # Filter by SCHEDULED date — coupons/maturities are shown (and counted in
-        # daily_net_flow) on their real due date, never dragged to the rolled
-        # working-day payment_date. Keep payment_date in the dict for reference.
+        # Filter by PAYMENT date, matching what build_daily_flows buckets on.
+        # Filtering on scheduled_date while bucketing on payment_date would drop
+        # an event scheduled just before the window but paid inside it, and vice
+        # versa at the far end — a silent off-by-one at both range edges.
         db_coupons = session.query(CouponEvent).filter(
-            CouponEvent.scheduled_date >= date_from,
-            CouponEvent.scheduled_date <= date_to,
+            CouponEvent.payment_date >= date_from,
+            CouponEvent.payment_date <= date_to,
         ).all()
         db_maturities = session.query(MaturityEvent).filter(
-            MaturityEvent.scheduled_date >= date_from,
-            MaturityEvent.scheduled_date <= date_to,
+            MaturityEvent.payment_date >= date_from,
+            MaturityEvent.payment_date <= date_to,
         ).all()
         db_auctions = session.query(AuctionEvent).filter(
             AuctionEvent.settlement_date >= date_from,

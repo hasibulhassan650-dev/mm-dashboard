@@ -123,7 +123,7 @@ def get_drilldown(date: str = Query(..., description="YYYY-MM-DD")):
                    m.scheduled_date, m.payment_date, m.principal_bdt_mill, m.roll_days
             FROM maturity_events m
             LEFT JOIN securities s ON m.isin = s.isin
-            WHERE m.scheduled_date = :date
+            WHERE m.payment_date = :date
             ORDER BY m.principal_bdt_mill DESC
         """), {"date": date}).fetchall()
 
@@ -133,7 +133,7 @@ def get_drilldown(date: str = Query(..., description="YYYY-MM-DD")):
                    c.coupon_rate_used_pct, c.formula_string
             FROM coupon_events c
             LEFT JOIN securities s ON c.isin = s.isin
-            WHERE c.scheduled_date = :date
+            WHERE c.payment_date = :date
             ORDER BY c.amount_bdt_mill DESC
         """), {"date": date}).fetchall()
 
