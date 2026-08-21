@@ -88,8 +88,8 @@ export default async function ResearchPage() {
   const gateBlocked = gate?.conclusion?.startsWith("BLOCKED") ?? false;
 
   return (
-    // Provider wraps the whole page: the reading level chosen in the header
-    // also drives every inline term tooltip further down.
+    // Fragment: the page needs no client state at the top level — each Term
+    // manages its own tooltip and concept reader.
     <>
       {empty && (
         <div style={{
@@ -217,6 +217,15 @@ export default async function ResearchPage() {
           sub={'every model tested against "same as last time" on auctions it never saw · '
             + '"better than naive by" is a 95% range from 2,000 bootstrap resamples — if it straddles 0, the edge is not proven'}
           right={<DownloadButton data={fc.metrics} filename="backtest_metrics" />}>
+          <div style={{
+            padding: "10px 14px", fontSize: 12, color: "var(--fg-mute)",
+            borderBottom: "1px solid var(--border-soft)",
+          }}>
+            How a verdict is decided — click any for the full explanation:{" "}
+            <Term t="Bootstrap" /> resampling gives the range, the{" "}
+            <Term t="Diebold-Mariano" /> test checks it is not luck, and{" "}
+            <Term t="Selection Bias">a rule fixed in advance</Term> decides which model is used.
+          </div>
           <div className="table-wrap">
             <table className="dt">
               <thead><tr>
@@ -288,6 +297,14 @@ export default async function ResearchPage() {
           <Panel title="Statistical Diagnostics" span={12} pad={false}
             sub="guide Phase 4 · ADF/KPSS stationarity, Granger causality, Newey-West OLS inference, VIF, Ljung-Box · fitted in CI with statsmodels"
             right={<DownloadButton data={diags} filename="research_diagnostics" />}>
+            <div style={{
+              padding: "10px 14px", fontSize: 12, color: "var(--fg-mute)",
+              borderBottom: "1px solid var(--border-soft)",
+            }}>
+              Tests used here — click any for the full explanation:{" "}
+              <Term t="Stationarity" />, <Term t="Granger Causality" />,{" "}
+              <Term t="Cointegration" />.
+            </div>
             <div className="table-wrap" style={{ maxHeight: 420, overflowY: "auto" }}>
               <table className="dt">
                 <thead><tr>
@@ -336,8 +353,8 @@ export default async function ResearchPage() {
               <p>The ECM is the most theoretically honest model for a corridor regime: it says a cutoff
               sitting well above the policy rate should get <i>pulled back</i> toward it, at a speed α that
               the data estimates. Everything for it is built and wired — the effective-dated corridor table,
-              the step-function lookup, the spread and policy-change terms, the Engle-Granger cointegration
-              test, and a sign check that withholds the forecast if α comes out positive (which would mean
+              the step-function lookup, the spread and policy-change terms, the Engle-Granger{" "}
+              <Term t="Cointegration">cointegration</Term> test, and a sign check that withholds the forecast if α comes out positive (which would mean
               the spread is explosive, not error-correcting).</p>
 
               <p><b style={{ color: "var(--fg)" }}>What it is waiting on is data, not code.</b> The model

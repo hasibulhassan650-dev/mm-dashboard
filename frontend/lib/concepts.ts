@@ -26,6 +26,38 @@ export interface Concept {
 
 export const CONCEPTS: Concept[] = [
   {
+    term: "Cutoff yield",
+    oneLine: "The rate the auction actually clears at — the single number every model on this page is trying to predict.",
+    intuition:
+      "Imagine selling 100 concert tickets by asking everyone to write down what they will pay. You sort the offers from highest to lowest and work down the list until all 100 are gone. The price of the very last ticket you sold is the cutoff — everyone pays that. The government does the same thing in reverse: it is buying money, so it takes the cheapest offers first.",
+    mechanics: [
+      "Bangladesh Bank announces it wants to borrow, say, 3,000 crore for 91 days. Banks submit bids saying how much they will lend and at what yield. BB sorts them from the cheapest yield upward and accepts until it has raised what it needs. The yield of the last accepted bid is the cutoff yield — the marginal clearing level.",
+      "Because it is the marginal bid rather than the average, the cutoff is the most informative single number from an auction: it is the worst price the government was willing to accept, which is exactly where supply met demand.",
+      "A related number, the weighted-average yield, averages all accepted bids and sits slightly below the cutoff. This dashboard forecasts the cutoff because that is the level a bidder needs to clear.",
+      "Worked example. If the 91-day bill clears at 9.1888%, that means the last accepted lender demanded 9.1888% annualised. A bank that had bid 9.30% would have been left out — too expensive — and one that bid 9.10% would have been filled.",
+    ],
+    onThisPage:
+      "Every 'Last Print' figure is a realised cutoff yield, and every 'Forecast' is a prediction of the next one. All errors are measured as the gap between the two.",
+    pitfall:
+      "Assuming the cutoff is always a clean market price. When an auction is undersubscribed, the shortfall is absorbed through devolvement and the resulting cutoff may be set administratively rather than by competitive bidding.",
+  },
+  {
+    term: "Tenor",
+    oneLine: "How long the borrowing lasts before it must be repaid — and the single biggest reason two auctions behave differently.",
+    intuition:
+      "Lending someone money until Friday and lending it until 2036 are completely different decisions. Over three days almost nothing can go wrong. Over ten years, inflation, politics and the currency all get a chance to move. So the two demand different compensation, and their rates move for different reasons.",
+    mechanics: [
+      "Here 91D means 91 days, 364D means one year, and 10Y means ten years. Anything one year or under is a Treasury bill, sold at a discount with no coupon; anything longer is a Treasury bond that pays interest along the way.",
+      "Plotting the rate for each tenor against its length gives the yield curve. Normally it slopes upward, because lenders want more for tying money up longer.",
+      "For this page, the practical consequence is auction frequency, and it drives almost every conclusion. Bills auction weekly, so three years of history gives 150+ examples. Bonds auction roughly monthly, so the same three years gives only about 20 — which is why bonds are judged on a longer window, and why the bond forecasts have much wider bands.",
+      "Bonds also move more per auction. A typical bill miss is around 10-15 bps; a typical bond miss is 20-35. That is not the model being worse at bonds — bond rates simply travel further between auctions, because a month of news has accumulated instead of a week.",
+    ],
+    onThisPage:
+      "Every table is organised by tenor, sorted short to long so it reads like the yield curve. Never compare a model's error across tenors — only against naive on the same tenor.",
+    pitfall:
+      "Reading the bond tenors as 'the models are bad here'. Wider bands on longer tenors are mostly the honest consequence of monthly auctions and larger moves, not model failure.",
+  },
+  {
     term: "Naive Benchmark",
     oneLine: "The forecast that says the next auction rate equals the last one — the bar every model must clear.",
     intuition:
