@@ -5,13 +5,17 @@ import { fmtDate, fmtCrore, fmtRate } from "@/lib/format";
 import { Panel } from "@/components/terminal/ui";
 import LiquidityLadderChart from "@/components/LiquidityLadderChart";
 import DownloadButton from "@/components/DownloadButton";
+import PeriodSelector from "@/components/PeriodSelector";
 import Freshness from "@/components/Freshness";
 
 export const revalidate = 300;
 
-export default async function ForecastPage() {
+const HORIZONS = [{ label: "2W", days: 14 }, { label: "4W", days: 28 }, { label: "8W", days: 56 }];
+
+export default async function ForecastPage({ searchParams }: { searchParams: Promise<{ days?: string }> }) {
+  const daysAhead = Math.min(60, Math.max(7, parseInt((await searchParams).days ?? "28", 10) || 28));
   const [forecast, cm, policy, fresh] = await Promise.all([
-    api.flowsForecast(28),
+    api.flowsForecast(daysAhead),
     api.callmoney(14).catch(() => null),
     api.policy(),
     api.freshness(),
@@ -43,7 +47,13 @@ export default async function ForecastPage() {
 
   return (
     <>
-      <div style={{ marginBottom: "var(--gap)" }}><Freshness updated={fresh.flows} /></div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: "var(--gap)", flexWrap: "wrap" }}>
+        <Freshness updated={fresh.flows} />
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 12, color: "var(--fg-mute)" }}>Horizon</span>
+          <PeriodSelector periods={HORIZONS} current={daysAhead} />
+        </div>
+      </div>
 
       {auctionsBlind && (
         <div style={{
