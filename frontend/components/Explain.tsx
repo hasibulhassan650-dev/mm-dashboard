@@ -2,121 +2,172 @@
 import * as React from "react";
 import Link from "next/link";
 import { lookup, slug } from "@/lib/glossary";
+import { concept } from "@/lib/concepts";
 
 /**
- * Two reading levels for the same page.
+ * Inline jargon terms that teach on demand.
  *
- * "desk"   — the normal register, for someone who works the money market.
- * "simple" — the same ideas with no jargon and no assumed statistics, for
- *            someone learning. Every glossary term carries both, so switching
- *            mode swaps definitions AND the surrounding narrative rather than
- *            just hiding words.
- *
- * The choice is remembered in localStorage: a reader who needs plain language
- * needs it on every visit, and should not have to re-select it each time.
+ * The technical term always STAYS on the page — the page is written for the
+ * desk and reads in the desk's language. What changes is that any term can be
+ * opened to a full explanation of the concept: intuition, mechanics with a
+ * worked example on this dashboard's real numbers, how to read it here, and the
+ * usual misunderstanding. Deep enough to actually learn from, rather than a
+ * dictionary line.
  */
-export type Mode = "desk" | "simple";
 
-const Ctx = React.createContext<{ mode: Mode; setMode: (m: Mode) => void }>({
-  mode: "desk", setMode: () => {},
-});
+/** Hover = short definition. Click = the whole concept. */
+export function Term({ t, children }: { t: string; children?: React.ReactNode }) {
+  const [hover, setHover] = React.useState(false);
+  const [open, setOpen] = React.useState(false);
+  const entry = lookup(t);
+  const full = concept(t);
+  const label = children ?? t;
 
-export function useExplain() {
-  return React.useContext(Ctx);
-}
+  // Unknown term: render plain text rather than a dead affordance, so a typo
+  // degrades to ordinary copy instead of an underline that does nothing.
+  if (!entry && !full) return <>{label}</>;
 
-const STORAGE_KEY = "mm.explainMode";
+  const short = entry?.eli10 ?? entry?.def ?? full?.oneLine ?? "";
+  const title = entry?.term ?? full?.term ?? t;
 
-export function ExplainProvider({ children }: { children: React.ReactNode }) {
-  const [mode, setModeState] = React.useState<Mode>("desk");
-
-  // Read after mount, not during render — the server has no localStorage, and
-  // reading it during render would desync the first client paint from the HTML.
-  React.useEffect(() => {
-    try {
-      const saved = window.localStorage.getItem(STORAGE_KEY);
-      if (saved === "simple" || saved === "desk") setModeState(saved);
-    } catch { /* private mode / storage disabled — stay on the default */ }
-  }, []);
-
-  const setMode = React.useCallback((m: Mode) => {
-    setModeState(m);
-    try { window.localStorage.setItem(STORAGE_KEY, m); } catch { /* ignore */ }
-  }, []);
-
-  return <Ctx.Provider value={{ mode, setMode }}>{children}</Ctx.Provider>;
-}
-
-/** Segmented control that switches the whole page's reading level. */
-export function ExplainToggle() {
-  const { mode, setMode } = useExplain();
   return (
-    <div className="seg" role="group" aria-label="Explanation level">
-      <button className={"seg-b" + (mode === "desk" ? " on" : "")}
-        onClick={() => setMode("desk")} aria-pressed={mode === "desk"}>
-        Desk
-      </button>
-      <button className={"seg-b" + (mode === "simple" ? " on" : "")}
-        onClick={() => setMode("simple")} aria-pressed={mode === "simple"}
-        title="Plain language — no jargon, no statistics assumed">
-        Explain simply
-      </button>
+    <>
+      <span style={{ position: "relative", display: "inline-block" }}
+        onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
+        <button
+          type="button"
+          onClick={() => { setOpen(true); setHover(false); }}
+          aria-label={`Explain ${title}`}
+          style={{
+            font: "inherit", color: "inherit", background: "none", border: "none",
+            padding: 0, cursor: "pointer", textAlign: "left",
+            borderBottom: "1px dotted var(--accent)",
+          }}>
+          {label}
+        </button>
+        {hover && (
+          <span role="tooltip" style={{
+            position: "absolute", left: 0, top: "1.6em", zIndex: 60, width: 300,
+            background: "var(--panel-2)", border: "1px solid var(--border)",
+            borderRadius: "var(--radius-sm)", padding: "9px 11px",
+            fontSize: 11.5, lineHeight: 1.6, color: "var(--fg-dim)",
+            boxShadow: "0 10px 30px rgba(0,0,0,.45)", fontWeight: 400,
+            whiteSpace: "normal", textTransform: "none", letterSpacing: 0,
+          }}>
+            <span style={{ display: "block", fontWeight: 600, color: "var(--accent)", marginBottom: 3 }}>
+              {title}{entry?.full ? ` — ${entry.full}` : ""}
+            </span>
+            {short}
+            <span style={{ display: "block", marginTop: 5, fontSize: 10.5, color: "var(--fg-mute)" }}>
+              {full ? "click to learn the whole concept" : "click for the glossary entry"}
+            </span>
+          </span>
+        )}
+      </span>
+      {open && <ConceptModal term={t} onClose={() => setOpen(false)} />}
+    </>
+  );
+}
+
+/** Full-concept reader. Falls back to the glossary definition if no long-form
+ *  explanation has been written for this term yet. */
+function ConceptModal({ term, onClose }: { term: string; onClose: () => void }) {
+  const c = concept(term);
+  const entry = lookup(term);
+  const title = c?.term ?? entry?.term ?? term;
+
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    // Stop the page behind the reader from scrolling under it.
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [onClose]);
+
+  return (
+    <div onClick={onClose} role="dialog" aria-modal="true" aria-label={`${title} explained`}
+      style={{
+        position: "fixed", inset: 0, zIndex: 200, background: "rgba(0,0,0,.62)",
+        display: "grid", placeItems: "center", padding: 20,
+        animation: "overlayIn .12s ease",
+      }}>
+      <div onClick={(e) => e.stopPropagation()} style={{
+        width: 760, maxWidth: "100%", maxHeight: "86vh", overflowY: "auto",
+        background: "var(--panel)", border: "1px solid var(--border)",
+        borderRadius: "var(--radius)", boxShadow: "0 24px 70px rgba(0,0,0,.55)",
+      }}>
+        <header className="panel-head" style={{
+          position: "sticky", top: 0, background: "var(--panel)", zIndex: 1,
+          borderBottom: "1px solid var(--border)",
+        }}>
+          <div className="panel-titles">
+            <h3 className="panel-title">{title}{entry?.full ? ` — ${entry.full}` : ""}</h3>
+            <span className="panel-sub">the whole concept, from scratch</span>
+          </div>
+          <button className="icon-btn" onClick={onClose} aria-label="Close"
+            style={{ width: 30, height: 30 }}>✕</button>
+        </header>
+
+        <div className="panel-body" style={{ fontSize: 13, lineHeight: 1.8, color: "var(--fg-dim)" }}>
+          {c ? (
+            <>
+              <p style={{ fontSize: 14, color: "var(--fg)", fontWeight: 500, marginBottom: 16 }}>
+                {c.oneLine}
+              </p>
+
+              <Section title="The intuition">{c.intuition}</Section>
+
+              <Section title="How it actually works">
+                {c.mechanics.map((p, i) => (
+                  <p key={i} style={{ marginBottom: i === c.mechanics.length - 1 ? 0 : 10 }}>{p}</p>
+                ))}
+              </Section>
+
+              <Section title="How to read it on this page">{c.onThisPage}</Section>
+
+              <Section title="The usual mistake" tone="warn">{c.pitfall}</Section>
+            </>
+          ) : (
+            <>
+              <p style={{ color: "var(--fg)" }}>{entry?.def}</p>
+              {entry?.eli10 && (
+                <p style={{ marginTop: 10 }}>
+                  <b style={{ color: "var(--accent)" }}>In plain words: </b>{entry.eli10}
+                </p>
+              )}
+              <p style={{ marginTop: 12, fontSize: 12, color: "var(--fg-mute)" }}>
+                A full walkthrough has not been written for this term yet.
+              </p>
+            </>
+          )}
+
+          <div style={{ marginTop: 20, paddingTop: 12, borderTop: "1px solid var(--border-soft)" }}>
+            <Link href={`/glossary#${slug(title)}`} onClick={onClose}
+              style={{ color: "var(--accent)", fontSize: 12 }}>
+              See this in the full glossary →
+            </Link>
+            <span style={{ float: "right", fontSize: 11.5, color: "var(--fg-mute)" }}>Esc to close</span>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
 
-/**
- * An inline jargon term: hover for the definition, click through to the full
- * glossary entry. The definition shown follows the current reading level.
- */
-export function Term({ t, children }: { t: string; children?: React.ReactNode }) {
-  const { mode } = useExplain();
-  const [open, setOpen] = React.useState(false);
-  const entry = lookup(t);
-  const label = children ?? t;
-
-  if (!entry) {
-    // Unknown term — render plain text rather than a dead link, so a typo
-    // degrades to normal copy instead of a broken affordance.
-    return <>{label}</>;
-  }
-  const body = mode === "simple" ? (entry.eli10 ?? entry.def) : entry.def;
-
+function Section({ title, children, tone }: {
+  title: string; children: React.ReactNode; tone?: "warn";
+}) {
   return (
-    <span style={{ position: "relative", display: "inline-block" }}
-      onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
-      <Link href={`/glossary#${slug(entry.term)}`}
-        onClick={() => setOpen(false)}
-        style={{
-          color: "inherit", textDecoration: "none",
-          borderBottom: "1px dotted var(--accent)", cursor: "help",
-        }}>
-        {label}
-      </Link>
-      {open && (
-        <span role="tooltip" style={{
-          position: "absolute", left: 0, top: "1.5em", zIndex: 60, width: 300,
-          background: "var(--panel-2)", border: "1px solid var(--border)",
-          borderRadius: "var(--radius-sm)", padding: "9px 11px",
-          fontSize: 11.5, lineHeight: 1.6, color: "var(--fg-dim)",
-          boxShadow: "0 10px 30px rgba(0,0,0,.45)", fontWeight: 400,
-          whiteSpace: "normal", textTransform: "none", letterSpacing: 0,
-        }}>
-          <span style={{ display: "block", fontWeight: 600, color: "var(--accent)", marginBottom: 3 }}>
-            {entry.term}{entry.full ? ` — ${entry.full}` : ""}
-          </span>
-          {body}
-          <span style={{ display: "block", marginTop: 5, fontSize: 10.5, color: "var(--fg-mute)" }}>
-            click for the full glossary entry
-          </span>
-        </span>
-      )}
-    </span>
+    <section style={{ marginBottom: 16 }}>
+      <h4 style={{
+        fontSize: 11, fontWeight: 700, letterSpacing: ".6px", textTransform: "uppercase",
+        color: tone === "warn" ? "var(--warn)" : "var(--accent)", margin: "0 0 5px",
+      }}>{title}</h4>
+      {typeof children === "string" ? <p style={{ margin: 0 }}>{children}</p> : children}
+    </section>
   );
-}
-
-/** Renders one of two texts depending on the reading level. */
-export function Say({ desk, simple }: { desk: React.ReactNode; simple: React.ReactNode }) {
-  const { mode } = useExplain();
-  return <>{mode === "simple" ? simple : desk}</>;
 }

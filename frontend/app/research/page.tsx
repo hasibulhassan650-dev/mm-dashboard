@@ -5,7 +5,7 @@ import ForecastIntervalChart from "@/components/ForecastIntervalChart";
 import BacktestTrackChart from "@/components/BacktestTrackChart";
 import DownloadButton from "@/components/DownloadButton";
 import ResearchIntro from "@/components/ResearchIntro";
-import { ExplainProvider, ExplainToggle, Term } from "@/components/Explain";
+import { Term } from "@/components/Explain";
 import { fmtDate, fmtPct, bps } from "@/lib/format";
 
 export const revalidate = 300;
@@ -90,7 +90,7 @@ export default async function ResearchPage() {
   return (
     // Provider wraps the whole page: the reading level chosen in the header
     // also drives every inline term tooltip further down.
-    <ExplainProvider>
+    <>
       {empty && (
         <div style={{
           border: "1px solid var(--warn)", borderRadius: "var(--radius-sm)",
@@ -138,8 +138,7 @@ export default async function ResearchPage() {
 
       <div className="grid12">
         <Panel title="Start Here — What This Page Says, In Plain Words" span={12}
-          sub="hover any underlined word for a definition · switch to “Explain simply” for a no-jargon version"
-          right={<ExplainToggle />}>
+          sub="hover any underlined term for a definition · click it to open the full concept explained from scratch">
           <ResearchIntro />
         </Panel>
 
@@ -544,6 +543,6 @@ export default async function ResearchPage() {
         { href: "/callmoney", label: "Call Money", why: "the liquidity signal that leads auction demand" },
         { href: "/explore", label: "Explore", why: "test a driver against yields before it becomes a model" },
       ]} />
-    </ExplainProvider>
+    </>
   );
 }
