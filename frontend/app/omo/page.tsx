@@ -1,6 +1,8 @@
 import { api } from "@/lib/api";
 import { fmtDate } from "@/lib/format";
 import RelatedLinks from "@/components/RelatedLinks";
+import DateRangeControl from "@/components/DateRangeControl";
+import { resolveRange, inRange } from "@/lib/daterange";
 import { OMO_CATS, pivotOmo } from "@/lib/terminal";
 import { netLiquiditySeries } from "@/lib/analytics";
 import Freshness from "@/components/Freshness";
@@ -12,12 +14,17 @@ const INST_LABEL: Record<string, string> = {
   CB_REPO: "Repo", AR: "Assured Repo", IBLF: "IBLF", SLF: "SLF", SDF: "SDF",
 };
 
-export default async function OmoPage() {
-  const [outstanding, txns, fresh] = await Promise.all([
-    api.omoOutstanding(90).catch(() => []),
-    api.omoTransactions(60).catch(() => []),
+export default async function OmoPage({ searchParams }: { searchParams: Promise<{ from?: string; to?: string }> }) {
+  const sp = await searchParams;
+  const [outAll, txnAll, fresh] = await Promise.all([
+    api.omoOutstanding(365).catch(() => []),
+    api.omoTransactions(365).catch(() => []),
     api.freshness(),
   ]);
+  const range = resolveRange(sp, outAll.map((r) => r.date), 90);
+  const outstanding = outAll.filter((r) => inRange(r.date, range.from, range.to));
+  const txns = txnAll.filter((t) => inRange(t.transaction_date, range.from, range.to));
+
   const omoSeries = pivotOmo(outstanding);
   const ops: OmoOpRow[] = txns
     .filter((t) => t.accepted_bdt_crore > 0)
@@ -33,15 +40,18 @@ export default async function OmoPage() {
       direction: t.direction,
     }));
 
-  const netSeries = netLiquiditySeries(outstanding);
-  const latestNet = netSeries.at(-1)?.net ?? null;
+  // stance/latest reflect the CURRENT position (full data), not the chart window
+  const latestNet = netLiquiditySeries(outAll).at(-1)?.net ?? null;
   const stance = latestNet == null ? null
     : latestNet > 0 ? { label: "Tight — net-injecting", tone: "tight" as const }
     : { label: "Flush — net-absorbing", tone: "flush" as const };
 
   return (
     <>
-      <div style={{ marginBottom: "var(--gap)" }}><Freshness updated={fresh.omo} /></div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: "var(--gap)", flexWrap: "wrap" }}>
+        <Freshness updated={fresh.omo} />
+        <DateRangeControl min={range.min} max={range.max} from={range.from} to={range.to} />
+      </div>
       <div className="grid12">
         <OmoView d={{ omoSeries, omoCats: OMO_CATS, ops, outstanding, stance, latestNet }} />
       </div>

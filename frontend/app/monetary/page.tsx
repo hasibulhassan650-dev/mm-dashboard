@@ -1,5 +1,7 @@
 import { api } from "@/lib/api";
 import RelatedLinks from "@/components/RelatedLinks";
+import DateRangeControl from "@/components/DateRangeControl";
+import { resolveRange, inRange } from "@/lib/daterange";
 import { fmtMonth, fmtDate, fmtPct } from "@/lib/format";
 import { Panel } from "@/components/terminal/ui";
 import SeriesLineChart from "@/components/SeriesLineChart";
@@ -8,9 +10,11 @@ import InfoTip from "@/components/InfoTip";
 
 export const revalidate = 300;
 
-export default async function MonetaryPage() {
+export default async function MonetaryPage({ searchParams }: { searchParams: Promise<{ from?: string; to?: string }> }) {
+  const sp = await searchParams;
   const data = await api.monetary();
-  const rows = data.monthly;
+  const range = resolveRange(sp, data.monthly.map((r) => r.month + "-15"), 1095);
+  const rows = data.monthly.filter((r) => inRange(r.month + "-15", range.from, range.to));
   const latest = data.latest;
   const rr = data.reserve_requirements.current;
   const cd = rows.map((r) => ({ ...r, m: fmtMonth(r.month) }));
@@ -20,6 +24,9 @@ export default async function MonetaryPage() {
     <>
       <div style={{ marginBottom: "var(--gap)", padding: "10px 14px", borderRadius: "var(--radius-sm)", border: "1px solid color-mix(in oklab, var(--warn) 45%, transparent)", background: "color-mix(in oklab, var(--warn) 12%, transparent)", color: "var(--warn)", fontSize: 12.5 }}>
         ⚠ <b>Illustrative figures.</b> CPI, monetary aggregates, bank rates and CRR/SLR on this page are placeholder values pending wiring to official BBS / Bangladesh Bank releases — do not treat as published data.
+      </div>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "var(--gap)" }}>
+        <DateRangeControl min={range.min} max={range.max} from={range.from} to={range.to} />
       </div>
       <div className="kpi-strip" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
         <div className="kpi"><div className="kpi-top"><span className="kpi-label">CPI p2p<InfoTip term="CPI (point-to-point)" /></span></div><div className="kpi-val"><span className="kpi-num" style={{ color: "var(--warn)" }}>{latest?.cpi_p2p != null ? latest.cpi_p2p.toFixed(2) : "—"}</span><span className="kpi-unit">%</span></div><div className="kpi-sub">12-mo avg {fmtPct(latest?.cpi_12mo_avg)}</div></div>

@@ -1,5 +1,7 @@
 import { api } from "@/lib/api";
 import RelatedLinks from "@/components/RelatedLinks";
+import DateRangeControl from "@/components/DateRangeControl";
+import { resolveRange, inRange } from "@/lib/daterange";
 import { fmtMonth } from "@/lib/format";
 import { Panel } from "@/components/terminal/ui";
 import ReservesChart from "@/components/ReservesChart";
@@ -9,16 +11,21 @@ import InfoTip from "@/components/InfoTip";
 
 export const revalidate = 300;
 
-export default async function MacroPage() {
+export default async function MacroPage({ searchParams }: { searchParams: Promise<{ from?: string; to?: string }> }) {
+  const sp = await searchParams;
   const macro = await api.macro();
-  const rows = macro.series;
+  const range = resolveRange(sp, macro.series.map((r) => r.month + "-15"), 1095);
+  const rows = macro.series.filter((r) => inRange(r.month + "-15", range.from, range.to));
   const latest = macro.latest;
-  const prev = rows.length >= 2 ? rows[rows.length - 2] : null;
+  const prev = macro.series.length >= 2 ? macro.series[macro.series.length - 2] : null;
   const remDelta = latest?.remittance_usd_mn != null && prev?.remittance_usd_mn != null ? latest.remittance_usd_mn - prev.remittance_usd_mn : null;
   const remDeltaPct = remDelta != null && prev?.remittance_usd_mn ? (remDelta / prev.remittance_usd_mn) * 100 : null;
 
   return (
     <>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "var(--gap)" }}>
+        <DateRangeControl min={range.min} max={range.max} from={range.from} to={range.to} />
+      </div>
       <div className="kpi-strip" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
         <div className="kpi"><div className="kpi-top"><span className="kpi-label">Gross Reserves<InfoTip term="Gross reserves" /></span></div><div className="kpi-val"><span className="kpi-num" style={{ color: "var(--info)" }}>{latest?.gross_reserves_usd_bn?.toFixed(2) ?? "—"}</span><span className="kpi-unit">B$</span></div><div className="kpi-sub">{latest ? fmtMonth(latest.month) : ""}</div></div>
         <div className="kpi"><div className="kpi-top"><span className="kpi-label">Net (BPM6)<InfoTip term="Net reserves (BPM6)" /></span></div><div className="kpi-val"><span className="kpi-num" style={{ color: "var(--accent)" }}>{latest?.net_reserves_bpm6_usd_bn?.toFixed(2) ?? "—"}</span><span className="kpi-unit">B$</span></div><div className="kpi-sub">IMF basis</div></div>
