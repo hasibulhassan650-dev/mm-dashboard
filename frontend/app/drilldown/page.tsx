@@ -1,5 +1,6 @@
 import { api } from "@/lib/api";
 import StatCard from "@/components/StatCard";
+import DownloadButton from "@/components/DownloadButton";
 import Link from "next/link";
 
 export const revalidate = 60;
@@ -52,7 +53,10 @@ export default async function DrilldownPage({
       <div className="grid md:grid-cols-3 gap-6">
         {/* Maturities */}
         <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
-          <h2 className="text-sm font-medium text-gray-300 mb-3">Maturities ({data.maturities.length})</h2>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-medium text-gray-300">Maturities ({data.maturities.length})</h2>
+            {data.maturities.length > 0 && <DownloadButton data={data.maturities} filename={`maturities_${date}`} label="Excel" />}
+          </div>
           {data.maturities.length === 0
             ? <p className="text-xs text-gray-500">No maturities on this date</p>
             : <table className="w-full text-xs">
@@ -76,7 +80,10 @@ export default async function DrilldownPage({
 
         {/* Coupons */}
         <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
-          <h2 className="text-sm font-medium text-gray-300 mb-3">Coupons ({data.coupons.length})</h2>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-medium text-gray-300">Coupons ({data.coupons.length})</h2>
+            {data.coupons.length > 0 && <DownloadButton data={data.coupons} filename={`coupons_${date}`} label="Excel" />}
+          </div>
           {data.coupons.length === 0
             ? <p className="text-xs text-gray-500">No coupon payments on this date</p>
             : <table className="w-full text-xs">
@@ -100,7 +107,10 @@ export default async function DrilldownPage({
 
         {/* Auctions */}
         <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
-          <h2 className="text-sm font-medium text-gray-300 mb-3">Auction Settlements ({data.auctions.length})</h2>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-medium text-gray-300">Auction Settlements ({data.auctions.length})</h2>
+            {data.auctions.length > 0 && <DownloadButton data={data.auctions} filename={`auctions_${date}`} label="Excel" />}
+          </div>
           {data.auctions.length === 0
             ? <p className="text-xs text-gray-500">No auction settlements on this date</p>
             : <table className="w-full text-xs">

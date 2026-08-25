@@ -3,6 +3,7 @@ import { useMemo, useState, useRef, useEffect } from "react";
 import { SecondaryYieldRow, Security } from "@/lib/api";
 import { fmtNum, fmtPct } from "@/lib/format";
 import { Panel } from "@/components/terminal/ui";
+import DownloadButton from "@/components/DownloadButton";
 
 interface Props { secondary: SecondaryYieldRow[]; securities: Security[]; repoDefault: number }
 interface Holding { isin: string; faceMn: number; costPx: number | null }
@@ -321,7 +322,8 @@ export default function PortfolioTool({ secondary, securities, repoDefault }: Pr
           </Panel>
 
           {/* Blotter */}
-          <Panel title="Position Blotter" sub="per-holding valuation, risk & relative value" span={12} pad={false}>
+          <Panel title="Position Blotter" sub="per-holding valuation, risk & relative value" span={12} pad={false}
+            right={<DownloadButton data={rowsA} filename="portfolio_blotter" />}>
             <div className="table-wrap">
               <table className="dt">
                 <thead><tr>

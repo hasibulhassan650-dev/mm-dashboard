@@ -80,7 +80,7 @@ export default async function OmoPage({ searchParams }: { searchParams: Promise<
       )}
 
       <div className="grid12">
-        <OmoView d={{ omoSeries, omoCats: OMO_CATS, ops, outstanding, stance, latestNet }} />
+        <OmoView d={{ omoSeries, omoCats: OMO_CATS, ops, outstanding, txns: txnAll, stance, latestNet }} />
       </div>
       <RelatedLinks items={[
         { href: "/forecast", label: "Liquidity Forecast", why: "when these repos mature & drain" },
