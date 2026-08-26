@@ -6,14 +6,47 @@ import type {
 import type { StackCat } from "@/components/terminal/charts";
 import type { ComboRow } from "@/components/terminal/charts";
 
-// ---- OMO instrument categories (colour + description) ----
-export const OMO_CATS: StackCat[] = [
-  { key: "AR", label: "AR", color: "#34d399", desc: "Assured Repo" },
-  { key: "IBLF", label: "IBLF", color: "#a78bfa", desc: "Islamic Banks Liquidity Facility" },
-  { key: "CB_REPO", label: "CB_REPO", color: "#60a5fa", desc: "Repo (7/14/28D)" },
-  { key: "SLF", label: "SLF", color: "#fbbf24", desc: "Standing Lending Facility" },
-  { key: "SDF", label: "SDF", color: "#f87171", desc: "Standing Deposit Facility" },
+// ---- OMO instrument registry — the SINGLE source of truth ----
+// Every OMO facility BB uses, with its market role. Charts, KPIs, legends and
+// the liquidity-support breakdown all derive from THIS list. Directions are
+// confirmed against the parser (fetchers/omo.py _INSTRUMENTS): 8 inject, only
+// SDF absorbs. An instrument present in the data but absent here still appears
+// (never dropped) via omoCatsFromData's fallback — so a new BB facility can
+// never vanish silently. #1 rule: never lose a product.
+export type OmoDirection = "INJECTION" | "ABSORPTION";
+export interface OmoInstrument extends StackCat {
+  full: string;
+  direction: OmoDirection;   // INJECTION adds market liquidity; ABSORPTION mops it up
+}
+export const OMO_INSTRUMENTS: OmoInstrument[] = [
+  { key: "CB_REPO", label: "Repo",         full: "Central Bank Repo",                color: "#60a5fa", direction: "INJECTION",  desc: "BB lends cash to banks against securities (injection)" },
+  { key: "AR",      label: "Assured Repo", full: "Assured Repo",                     color: "#34d399", direction: "INJECTION",  desc: "Term liquidity-support repo, usually longer-dated (injection)" },
+  { key: "IBLF",    label: "IBLF",         full: "Islamic Banks Liquidity Facility", color: "#a78bfa", direction: "INJECTION",  desc: "Short-term funds for Shariah-compliant banks (injection)" },
+  { key: "SLF",     label: "SLF",          full: "Standing Lending Facility",        color: "#fbbf24", direction: "INJECTION",  desc: "Overnight borrowing from BB at the corridor ceiling (injection)" },
+  { key: "MLS",     label: "MLS",          full: "Mudaraba Liquidity Support",       color: "#f472b6", direction: "INJECTION",  desc: "Shariah (Mudaraba) liquidity support for Islamic banks (injection)" },
+  { key: "SLS",     label: "SLS",          full: "Special Liquidity Support",        color: "#22d3ee", direction: "INJECTION",  desc: "Ad-hoc special liquidity support beyond standing facilities (injection)" },
+  { key: "SRF",     label: "SRF",          full: "Special Repo Facility",            color: "#fb923c", direction: "INJECTION",  desc: "Special repo outside the regular CB repo line (injection)" },
+  { key: "CM_REPO", label: "CM Repo",      full: "Capital Market Repo",              color: "#a3e635", direction: "INJECTION",  desc: "Repo supporting banks' capital-market liquidity (injection)" },
+  { key: "SDF",     label: "SDF",          full: "Standing Deposit Facility",        color: "#f87171", direction: "ABSORPTION", desc: "Banks park surplus at BB at the corridor floor (mop-up)" },
 ];
+export const OMO_ABSORPTION_KEYS = new Set(OMO_INSTRUMENTS.filter((i) => i.direction === "ABSORPTION").map((i) => i.key));
+const OMO_META = new Map(OMO_INSTRUMENTS.map((i) => [i.key, i]));
+const OMO_FALLBACK_COLORS = ["#818cf8", "#2dd4bf", "#facc15", "#c084fc", "#fb7185", "#38bdf8"];
+
+// Back-compat: the full category list (all instruments), StackCat-shaped.
+export const OMO_CATS: StackCat[] = OMO_INSTRUMENTS.map(({ key, label, color, desc }) => ({ key, label, color, desc }));
+
+/** Chart categories for exactly the instruments PRESENT in these rows — registry
+ *  order first, then any unknown instrument appended with a fallback colour so a
+ *  new BB facility is shown, never dropped. */
+export function omoCatsFromData(rows: OmoOutstandingRow[]): StackCat[] {
+  const present = new Set(rows.map((r) => r.instrument));
+  const cats: StackCat[] = [];
+  for (const i of OMO_INSTRUMENTS) if (present.has(i.key)) cats.push({ key: i.key, label: i.label, color: i.color, desc: i.desc });
+  let f = 0;
+  for (const k of [...present].sort()) if (!OMO_META.has(k)) cats.push({ key: k, label: k, color: OMO_FALLBACK_COLORS[f++ % OMO_FALLBACK_COLORS.length], desc: "OMO facility (unclassified)" });
+  return cats;
+}
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 function shortDay(iso: string): string {
@@ -36,27 +69,36 @@ export function shortMonth(s: string): string {
   return s;
 }
 
-/** Pivot OMO outstanding rows into per-date stacked series in ৳ thousand-crore. */
+/** Pivot OMO outstanding rows into per-date stacked series in ৳ thousand-crore.
+ *  Includes EVERY instrument present in the data (via omoCatsFromData) so the
+ *  stacked total always equals the true outstanding — no product is ever
+ *  dropped, and a new BB facility appears automatically. */
 export function pivotOmo(rows: OmoOutstandingRow[]): Record<string, number | string>[] {
+  const keys = new Set(omoCatsFromData(rows).map((c) => c.key));
   const byDate = new Map<string, Record<string, number>>();
   for (const r of rows) {
+    if (!keys.has(r.instrument)) continue;   // keys covers all present → nothing dropped
     const slot = byDate.get(r.date) || {};
-    const key = OMO_CATS.some((c) => c.key === r.instrument) ? r.instrument : null;
-    if (key) slot[key] = (slot[key] || 0) + r.outstanding_bdt_crore / 1000; // → k-crore
+    slot[r.instrument] = (slot[r.instrument] || 0) + r.outstanding_bdt_crore / 1000; // → k-crore
     byDate.set(r.date, slot);
   }
   return [...byDate.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([date, vals]) => {
       const row: Record<string, number | string> = { label: shortDay(date), date };
-      for (const c of OMO_CATS) row[c.key] = +(vals[c.key] || 0).toFixed(2);
+      for (const k of keys) row[k] = +(vals[k] || 0).toFixed(2);
       return row;
     });
 }
 
-/** Net OMO injection per day (k-crore) for a sparkline / KPI. */
+/** Net OMO liquidity per day (k-crore): Σ injection − Σ absorption across ALL
+ *  instruments present. Positive = BB net-injecting. */
 export function omoNetSeries(pivot: Record<string, number | string>[]): number[] {
-  return pivot.map((d) => OMO_CATS.reduce((s, c) => s + (Number(d[c.key]) || 0), 0));
+  return pivot.map((d) => Object.keys(d).reduce((s, k) => {
+    if (k === "label" || k === "date") return s;
+    const v = Number(d[k]) || 0;
+    return s + (OMO_ABSORPTION_KEYS.has(k) ? -v : v);
+  }, 0));
 }
 
 export interface CurveBuild {

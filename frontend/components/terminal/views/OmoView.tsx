@@ -5,7 +5,11 @@ import { StackedArea, type StackCat } from "@/components/terminal/charts";
 import { omoDayDrill } from "@/components/terminal/views/OverviewView";
 import OmoNetLiquidityChart from "@/components/OmoNetLiquidityChart";
 import DownloadButton from "@/components/DownloadButton";
+import { OMO_INSTRUMENTS, OMO_ABSORPTION_KEYS } from "@/lib/terminal";
 import type { OmoOutstandingRow, OmoTxnRow } from "@/lib/api";
+
+const OMO_META = new Map(OMO_INSTRUMENTS.map((i) => [i.key, i]));
+const isAbsorb = (inst: string) => OMO_ABSORPTION_KEYS.has(inst);
 
 export interface OmoOpRow { date: string; inst: string; tenor: string; accepted: number; rate: number | null; rateRange?: string | null; direction: string; maturity: string }
 
@@ -50,18 +54,45 @@ export default function OmoView({ d }: { d: OmoData }) {
       slot[r.instrument] = (slot[r.instrument] || 0) + r.outstanding_bdt_crore;
       byDate.set(r.date, slot);
     }
-    const instList = [...insts].sort();
+    // injections first (in registry order), then any absorption (SDF), then unknowns
+    const order = new Map(OMO_INSTRUMENTS.map((x, k) => [x.key, k]));
+    const instList = [...insts].sort((a, b) => {
+      const aa = isAbsorb(a) ? 1 : 0, ba = isAbsorb(b) ? 1 : 0;   // injections before absorptions
+      if (aa !== ba) return aa - ba;
+      return (order.get(a) ?? 99) - (order.get(b) ?? 99) || a.localeCompare(b);
+    });
     const rows = [...byDate.entries()]
       .sort((a, b) => b[0].localeCompare(a[0]))   // latest first
       .map(([date, vals]) => {
         const row: Record<string, number | string> = { date };
-        let total = 0;
-        for (const i of instList) { const v = Math.round(vals[i] || 0); row[i] = v; total += v; }
-        row.Total = total;
+        let inj = 0, mop = 0;
+        for (const i of instList) {
+          const v = Math.round(vals[i] || 0);
+          row[i] = v;
+          if (isAbsorb(i)) mop += v; else inj += v;
+        }
+        // liquidity support the govt/BB is providing: injection outstanding across
+        // all inject facilities, vs SDF mop-up, and the net.
+        row["Injection (support)"] = inj;
+        row["Mop-up (SDF)"] = mop;
+        row["Net liquidity"] = inj - mop;
+        row["Total (gross)"] = inj + mop;
         return row;
       });
     return { instList, rows };
   }, [d.outstanding]);
+
+  // instruments actually present, with their meaning + market role (for the legend)
+  const legend = React.useMemo(() =>
+    outPivot.instList.map((k) => {
+      const m = OMO_META.get(k);
+      return {
+        key: k,
+        full: m?.full ?? k,
+        role: isAbsorb(k) ? "mop-up" as const : "inject" as const,
+        color: m?.color ?? "#6b7280",
+      };
+    }), [outPivot.instList]);
 
   // ── Forward maturity ladder: each live operation and when it drains/returns ──
   // An injection (repo/AR/IBLF/SLF) drains when it matures — banks repay BB; an
@@ -124,13 +155,30 @@ export default function OmoView({ d }: { d: OmoData }) {
           right={d.stance ? <span className={"delta " + (d.stance.tone === "tight" ? "neg" : "pos")}>{d.stance.label}{d.latestNet != null ? ` · ${Math.round(d.latestNet).toLocaleString()} cr` : ""}</span> : null}>
           <OmoNetLiquidityChart rows={d.outstanding} />
         </Panel>
-        <Panel title="Outstanding by Product & Day" sub="৳ crore · which product is outstanding on which day, with the daily total" span={12} pad={false}
+        <Panel title="What these instruments mean" sub="every OMO facility in the data · green = injects (adds market liquidity), red = mops up (absorbs)" span={12}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {legend.map((l) => (
+              <div key={l.key} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 10px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--panel-2, transparent)", fontSize: 12 }}>
+                <span style={{ width: 9, height: 9, borderRadius: 2, background: l.color, flex: "0 0 auto" }} />
+                <span className="mono" style={{ fontWeight: 600 }}>{l.key}</span>
+                <span style={{ color: "var(--fg-mute)" }}>{l.full}</span>
+                <span style={{ fontSize: 10.5, fontWeight: 600, color: l.role === "mop-up" ? "var(--neg)" : "var(--pos)" }}>
+                  {l.role === "mop-up" ? "MOP-UP" : "INJECT"}
+                </span>
+              </div>
+            ))}
+          </div>
+        </Panel>
+        <Panel title="Outstanding by Product & Day" sub="৳ crore · every product per day, plus the liquidity BB is injecting vs mopping up (SDF) and the net" span={12} pad={false}
           right={<DownloadButton data={outPivot.rows} filename="omo_outstanding_by_product" />}>
           <div className="table-wrap" style={{ maxHeight: 420, overflow: "auto" }}>
             <table className="dt">
               <thead><tr>
                 <th>Date</th>
-                {outPivot.instList.map((i) => <th key={i} className="r">{i}</th>)}
+                {outPivot.instList.map((i) => <th key={i} className="r" style={{ color: isAbsorb(i) ? "var(--neg)" : undefined }}>{i}</th>)}
+                <th className="r" style={{ color: "var(--pos)" }}>Injection</th>
+                <th className="r" style={{ color: "var(--neg)" }}>Mop-up (SDF)</th>
+                <th className="r">Net</th>
                 <th className="r">Total</th>
               </tr></thead>
               <tbody>
@@ -138,10 +186,13 @@ export default function OmoView({ d }: { d: OmoData }) {
                   <tr key={ri}>
                     <td>{row.date}</td>
                     {outPivot.instList.map((i) => <td key={i} className="r mono">{Number(row[i]) ? Number(row[i]).toLocaleString() : ""}</td>)}
-                    <td className="r mono" style={{ fontWeight: 600 }}>{Number(row.Total).toLocaleString()}</td>
+                    <td className="r mono pos">{Number(row["Injection (support)"]).toLocaleString()}</td>
+                    <td className="r mono neg">{Number(row["Mop-up (SDF)"]) ? Number(row["Mop-up (SDF)"]).toLocaleString() : ""}</td>
+                    <td className="r mono" style={{ color: Number(row["Net liquidity"]) >= 0 ? "var(--info)" : "var(--warn)" }}>{Number(row["Net liquidity"]).toLocaleString()}</td>
+                    <td className="r mono" style={{ fontWeight: 600 }}>{Number(row["Total (gross)"]).toLocaleString()}</td>
                   </tr>
                 ))}
-                {outPivot.rows.length === 0 && <tr><td colSpan={outPivot.instList.length + 2} style={{ textAlign: "center", color: "var(--fg-mute)", padding: 16 }}>No outstanding in the selected window.</td></tr>}
+                {outPivot.rows.length === 0 && <tr><td colSpan={outPivot.instList.length + 5} style={{ textAlign: "center", color: "var(--fg-mute)", padding: 16 }}>No outstanding in the selected window.</td></tr>}
               </tbody>
             </table>
           </div>

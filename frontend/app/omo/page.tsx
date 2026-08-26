@@ -3,16 +3,14 @@ import { fmtDate } from "@/lib/format";
 import RelatedLinks from "@/components/RelatedLinks";
 import DateRangeControl from "@/components/DateRangeControl";
 import { resolveRange, inRange } from "@/lib/daterange";
-import { OMO_CATS, pivotOmo } from "@/lib/terminal";
+import { OMO_INSTRUMENTS, pivotOmo, omoCatsFromData } from "@/lib/terminal";
 import { netLiquiditySeries } from "@/lib/analytics";
 import Freshness from "@/components/Freshness";
 import OmoView, { type OmoOpRow } from "@/components/terminal/views/OmoView";
 
 export const revalidate = 300;
 
-const INST_LABEL: Record<string, string> = {
-  CB_REPO: "Repo", AR: "Assured Repo", IBLF: "IBLF", SLF: "SLF", SDF: "SDF",
-};
+const INST_LABEL: Record<string, string> = Object.fromEntries(OMO_INSTRUMENTS.map((i) => [i.key, i.label]));
 
 export default async function OmoPage({ searchParams }: { searchParams: Promise<{ from?: string; to?: string }> }) {
   const sp = await searchParams;
@@ -33,6 +31,7 @@ export default async function OmoPage({ searchParams }: { searchParams: Promise<
   const txns = txnAll.filter((t) => inRange(t.transaction_date, range.from, range.to));
 
   const omoSeries = pivotOmo(outstanding);
+  const omoCats = omoCatsFromData(outstanding);   // every product present, none dropped
   const ops: OmoOpRow[] = txns
     .filter((t) => t.accepted_bdt_crore > 0)
     .slice(0, 40)
@@ -80,7 +79,7 @@ export default async function OmoPage({ searchParams }: { searchParams: Promise<
       )}
 
       <div className="grid12">
-        <OmoView d={{ omoSeries, omoCats: OMO_CATS, ops, outstanding, txns: txnAll, stance, latestNet }} />
+        <OmoView d={{ omoSeries, omoCats, ops, outstanding, txns: txnAll, stance, latestNet }} />
       </div>
       <RelatedLinks items={[
         { href: "/forecast", label: "Liquidity Forecast", why: "when these repos mature & drain" },

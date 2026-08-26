@@ -1,15 +1,13 @@
 import { api } from "@/lib/api";
 import { fmtDate } from "@/lib/format";
-import { OMO_CATS, pivotOmo, omoNetSeries, buildCurve, tenorSeries, fxRateSeries } from "@/lib/terminal";
+import { OMO_INSTRUMENTS, pivotOmo, omoNetSeries, omoCatsFromData, buildCurve, tenorSeries, fxRateSeries } from "@/lib/terminal";
 import OverviewView, { type OverviewData, type OmoAuctionRow, type SecAuctionRow } from "@/components/terminal/views/OverviewView";
 import type { Kpi } from "@/components/terminal/ui";
 import Freshness from "@/components/Freshness";
 
 export const revalidate = 300;
 
-const INST_LABEL: Record<string, string> = {
-  CB_REPO: "Repo", AR: "Assured Repo", IBLF: "IBLF", SLF: "SLF", SDF: "SDF",
-};
+const INST_LABEL: Record<string, string> = Object.fromEntries(OMO_INSTRUMENTS.map((i) => [i.key, i.label]));
 
 function delta(series: number[]): number | null {
   return series.length >= 2 ? +(series[series.length - 1] - series[series.length - 2]).toFixed(2) : null;
@@ -30,6 +28,7 @@ export default async function Home() {
   ]);
 
   const omoSeries = pivotOmo(outstanding);
+  const omoCats = omoCatsFromData(outstanding);   // every product present, none dropped
   const netSeries = omoNetSeries(omoSeries);
   const cb = buildCurve(curve, history);
 
@@ -78,7 +77,7 @@ export default async function Home() {
 
   const data: OverviewData = {
     kpis, tenors: cb.tenors, today: cb.today, weekAgo: cb.weekAgo, monthAgo: cb.monthAgo,
-    omoSeries, omoCats: OMO_CATS, corridor, omoAuctions, secAuctions,
+    omoSeries, omoCats, corridor, omoAuctions, secAuctions,
   };
   return (
     <>

@@ -52,7 +52,23 @@ export const GLOSSARY: GlossaryEntry[] = [
   },
   {
     term: "AR", full: "Assured Repo / Liquidity support", category: "Operations",
-    def: "A term liquidity-support repo instrument in the OMO data, typically longer-dated (e.g. 180D).",
+    def: "A term liquidity-support repo instrument in the OMO data, typically longer-dated (e.g. 180D). Injects liquidity.",
+  },
+  {
+    term: "CM_REPO", full: "Capital Market Repo", category: "Operations",
+    def: "A special repo line through which BB supplies liquidity to banks to support their capital-market (stock-market) exposures. Injects liquidity.",
+  },
+  {
+    term: "MLS", full: "Mudaraba Liquidity Support", category: "Operations",
+    def: "A Shariah-compliant liquidity injection for Islamic banks, structured on the Mudaraba profit-sharing basis rather than interest. Injects liquidity.",
+  },
+  {
+    term: "SLS", full: "Special Liquidity Support", category: "Operations",
+    def: "An ad-hoc special liquidity-support line BB extends to banks needing funds beyond the standard standing facilities. Injects liquidity.",
+  },
+  {
+    term: "SRF", full: "Special Repo Facility", category: "Operations",
+    def: "A special repo facility that supplies liquidity against securities outside the regular central-bank repo, typically on bespoke terms. Injects liquidity.",
   },
   {
     term: "OMO", full: "Open Market Operations", category: "Operations",
