@@ -1,0 +1,14 @@
+fiscal_year: "2026-27"
+# Source: Bangladesh Bank holiday circular for FY2026-27.
+# TODO: load the full official FY2026-27 gazette list when published; entries
+# below are only what is confirmed so far.
+holidays:
+  # Data-confirmed closure: on 2026-08-05 the money market was shut — call money,
+  # reference rates and OMO all had ZERO activity, while 04-Aug and 06-Aug were
+  # both fully active (6 call-money / 6 ref-rate rows, live OMO). An isolated
+  # all-source zero flanked by active days is a bank-holiday signature, and it
+  # explains the 2-day publication lag of the 04-Aug (Tue) CB Repo. Gazette name
+  # to be confirmed and updated here.
+  - date: "2026-08-05"
+    name: "Bank/money-market closed (inferred; confirm gazette name)"
+    type: INFERRED_CLOSURE
