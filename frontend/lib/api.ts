@@ -123,6 +123,11 @@ export interface BacktestRow {
   dm_fdr_pass: boolean | null;
   /** Published band half-width in bps (EWMA volatility-scaled). */
   band_bps: number | null;
+  /** Economic value vs naive at an equal fill rate. Established models only. */
+  ev_pickup_bps: number | null;
+  ev_shade_bps: number | null;
+  ev_bench_shade_bps: number | null;
+  ev_fill_target: number | null;
 }
 export interface TrackRecordRow {
   tenor: string; model: ForecastModel;

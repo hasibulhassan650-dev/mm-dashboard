@@ -42,6 +42,7 @@ from forecast.features import (build as build_features, ols_fit, ols_predict,  #
 from forecast.policy import (load_history as policy_history,   # noqa: E402
                             usable as policy_usable, attach as policy_attach)
 from forecast import robustness as rb  # noqa: E402
+from forecast import economic_value as ev  # noqa: E402
 
 log = logging.getLogger("forecast")
 
@@ -494,6 +495,7 @@ def run(dry_run: bool = False) -> dict:
                  LOOKBACK_YEARS or "all", LOOKBACK_BONDS or "all", BAND_RECENT_FRAC * 100)
 
         forecasts, metrics, preds, skipped = [], [], [], []
+        bt_by_tenor = {}   # tenor -> backtest, reused by the economic-value pass
         anchor = build_anchor(hist, ANCHOR_TENOR)
         log.info("curve anchor: %s with %d prints", ANCHOR_TENOR, len(anchor))
 
@@ -528,6 +530,7 @@ def run(dry_run: bool = False) -> dict:
 
             target = next_auction_date(g["auction_date"])
             bt = backtest(f)
+            bt_by_tenor[tenor] = bt
 
             # The live forecast: train on EVERY usable row, then predict the
             # next auction from a synthetic row carrying only lagged inputs.
@@ -636,6 +639,11 @@ def run(dry_run: bool = False) -> dict:
         # reported in full, but never promoted to "established", because choosing
         # among them after seeing results is exactly the selection bias this
         # whole guard exists to prevent.
+        # ── Economic value, for ESTABLISHED models only ────────────────────
+        # Not computed for unproven models on purpose: quoting a cash pickup
+        # from an edge this same page calls unproven would be the most
+        # misleading number on it. Runs AFTER the FDR pass below sets the final
+        # verdict, so it is applied at the end of run() instead.
         primary = [m for m in metrics if m["model"] == PRIMARY_MODEL]
         passes = rb.bh_fdr([m.get("dm_pvalue") for m in primary])
         demoted = []
@@ -655,6 +663,28 @@ def run(dry_run: bool = False) -> dict:
                  PRIMARY_MODEL, len(primary), sum(passes))
         if demoted:
             log.info("demoted by multiple-testing correction: %s", ", ".join(demoted))
+
+        for m in metrics:
+            if m["model"] == "naive" or m.get("verdict") != "established":
+                continue
+            bt = bt_by_tenor.get(m["tenor"])
+            if not bt or m["model"] not in bt:
+                continue
+            shared = set(bt[m["model"]]["date"])
+            idx = [i for i, d in enumerate(bt["naive"]["date"]) if d in shared]
+            v = ev.value_vs_benchmark(
+                np.asarray(bt[m["model"]]["pred"], dtype=float),
+                np.asarray(bt["naive"]["pred"], dtype=float)[idx],
+                np.asarray(bt["naive"]["actual"], dtype=float)[idx])
+            if v:
+                m["ev_pickup_bps"] = v["pickup_bps"]
+                m["ev_shade_bps"] = v["model_shade_bps"]
+                m["ev_bench_shade_bps"] = v["bench_shade_bps"]
+                m["ev_fill_target"] = v["target_fill"]
+                log.info("%-8s %-9s economic value +%.1f bps at %.0f%% fill "
+                         "(shade %.1f vs naive %.1f)", m["tenor"], m["model"],
+                         v["pickup_bps"], v["target_fill"] * 100,
+                         v["model_shade_bps"], v["bench_shade_bps"])
 
         if skipped:
             log.info("skipped (too little history): %s", ", ".join(skipped))

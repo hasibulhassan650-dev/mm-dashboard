@@ -325,6 +325,13 @@ class BacktestMetric(Base):
     # comparison in the run? A verdict of "established" requires it.
     dm_fdr_pass   = Column(Boolean)
     band_bps      = Column(Float)   # published band half-width, EWMA-scaled
+    # Economic value: bidding this model instead of naive, both shaded to the
+    # SAME fill rate so the deployed notional is identical. See
+    # forecast/economic_value.py. Only populated for established models.
+    ev_pickup_bps      = Column(Float)   # extra yield captured, bps
+    ev_shade_bps       = Column(Float)   # shading this model needs for the fill target
+    ev_bench_shade_bps = Column(Float)   # shading naive needs for the same fill
+    ev_fill_target     = Column(Float)
 
 
 class BacktestPrediction(Base):
@@ -507,6 +514,10 @@ def init_db():
         "ALTER TABLE backtest_metrics ADD COLUMN IF NOT EXISTS rmse_recent_bps DOUBLE PRECISION",
         "ALTER TABLE backtest_metrics ADD COLUMN IF NOT EXISTS dm_fdr_pass BOOLEAN",
         "ALTER TABLE backtest_metrics ADD COLUMN IF NOT EXISTS band_bps DOUBLE PRECISION",
+        "ALTER TABLE backtest_metrics ADD COLUMN IF NOT EXISTS ev_pickup_bps DOUBLE PRECISION",
+        "ALTER TABLE backtest_metrics ADD COLUMN IF NOT EXISTS ev_shade_bps DOUBLE PRECISION",
+        "ALTER TABLE backtest_metrics ADD COLUMN IF NOT EXISTS ev_bench_shade_bps DOUBLE PRECISION",
+        "ALTER TABLE backtest_metrics ADD COLUMN IF NOT EXISTS ev_fill_target DOUBLE PRECISION",
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_backtest_predictions_key "
         "ON backtest_predictions (computed_date, tenor, model, auction_date)",
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_research_diagnostics_key "

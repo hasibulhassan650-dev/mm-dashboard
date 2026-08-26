@@ -17,6 +17,9 @@ const MODEL_LABEL: Record<ForecastModel, string> = {
   ecm: "ECM", blend: "Blend",
 };
 const MODEL_ORDER: ForecastModel[] = ["naive", "momentum", "curve", "ecm", "ols", "blend"];
+const TENOR_YEARS: Record<string, number> = {
+  "91D": 0.25, "182D": 0.5, "364D": 1, "2Y": 2, "5Y": 5, "10Y": 10, "15Y": 15, "20Y": 20,
+};
 const TRACK_TENOR = "91D";   // deepest series — the one worth eyeballing
 
 /** Section heading inside a prose panel. */
@@ -82,8 +85,22 @@ export default async function ResearchPage() {
     .filter(h => (h.metric.mae_recent ?? h.metric.mae_bps) != null)
     .sort((a, b) => (a.metric.mae_recent ?? a.metric.mae_bps!) - (b.metric.mae_recent ?? b.metric.mae_bps!))[0] ?? null;
   const scored = fc.track_record.length;
+  // Economic value is only stored for established models, so this list is
+  // already filtered to edges the page is willing to stand behind.
+  const evRows = tenors
+    .map(t => {
+      const e = byTenor.get(t)!;
+      const m = MODEL_ORDER.find(k => e[k]?.ev_pickup_bps != null);
+      return m ? { tenor: t, model: m, metric: e[m]! } : null;
+    })
+    .filter((x): x is { tenor: string; model: ForecastModel; metric: BacktestRow } => x !== null);
 
   const empty = fc.run_date == null;
+  // The tab served two-week-old forecasts in Aug 2026 with no visible warning
+  // while the scheduled job was failing. Age is now shown on the page itself.
+  const staleDays = fc.run_date
+    ? Math.floor((Date.now() - new Date(fc.run_date).getTime()) / 86_400_000)
+    : null;
   const gate = diags.find(d => d.test === "policy_gate");
   const gateBlocked = gate?.conclusion?.startsWith("BLOCKED") ?? false;
 
@@ -91,6 +108,18 @@ export default async function ResearchPage() {
     // Fragment: the page needs no client state at the top level — each Term
     // manages its own tooltip and concept reader.
     <>
+      {!empty && staleDays != null && staleDays > 8 && (
+        <div style={{
+          border: "1px solid var(--warn)", borderRadius: "var(--radius-sm)",
+          padding: "8px 12px", marginBottom: "var(--gap)", fontSize: 12.5,
+          color: "var(--warn)", background: "color-mix(in oklab, var(--warn) 10%, transparent)",
+        }}>
+          ⚠ FORECASTS ARE {staleDays} DAYS OLD — the weekly job runs Thursday, so anything past
+          about 8 days means it has not completed. These numbers may pre-date auctions that have
+          already printed. Check the Weekly Forecast workflow before bidding off this page.
+        </div>
+      )}
+
       {empty && (
         <div style={{
           border: "1px solid var(--warn)", borderRadius: "var(--radius-sm)",
@@ -212,6 +241,65 @@ export default async function ResearchPage() {
           sub="every out-of-sample prediction against what actually printed · a simulation of the models, NOT the published forecast log">
           <BacktestTrackChart rows={track} />
         </Panel>
+
+        {evRows.length > 0 && (
+          <Panel title="What the Edge Is Worth" span={12} pad={false}
+            sub={`bidding the model instead of the last print, both shaded to the same ${
+              Math.round((evRows[0].metric.ev_fill_target ?? 0.9) * 100)}% fill rate — `
+              + "equal fills means equal notional deployed, so no reinvestment assumption is needed"}>
+            <div style={{ padding: "10px 14px", fontSize: 12, color: "var(--fg-mute)",
+                          borderBottom: "1px solid var(--border-soft)" }}>
+              BB fills bids from the lowest yield up; the cutoff is the highest accepted. Bid above it
+              and you miss the auction, bid below and you are filled but leave yield on the table. A
+              better forecast is worth money because it lets you bid closer to the cutoff without
+              missing. Shown only for tenors whose edge is{" "}
+              <Term t="Selection Bias">statistically established</Term>.
+            </div>
+            <div className="table-wrap">
+              <table className="dt">
+                <thead><tr>
+                  <th><Term t="Tenor" /></th><th>Model</th>
+                  <th className="r">Shade needed</th>
+                  <th className="r">Naive needs</th>
+                  <th className="r">Yield pickup</th>
+                  <th className="r">Per 100cr bid<br /><span style={{ fontWeight: 400 }}>BDT lakh, to maturity</span></th>
+                </tr></thead>
+                <tbody>
+                  {evRows.map(({ tenor, model, metric: m }) => {
+                    // Cash on a 100 crore bid, held to maturity, UNDISCOUNTED.
+                    // Not summed across tenors: a 91D and a 20Y commitment are
+                    // not the same money and adding them would be meaningless.
+                    const yrs = TENOR_YEARS[tenor] ?? 1;
+                    const lakh = 100 * ((m.ev_pickup_bps ?? 0) / 10000) * yrs * 100;
+                    return (
+                      <tr key={tenor}>
+                        <td style={{ fontWeight: 600 }}>{tenor}</td>
+                        <td style={{ color: "var(--accent)" }}>{MODEL_LABEL[model]}</td>
+                        <td className="r mono">{m.ev_shade_bps?.toFixed(1) ?? DASH} bps</td>
+                        <td className="r mono" style={{ color: "var(--fg-mute)" }}>{m.ev_bench_shade_bps?.toFixed(1) ?? DASH} bps</td>
+                        <td className="r mono" style={{ fontWeight: 600, color: "var(--pos)" }}>
+                          +{m.ev_pickup_bps?.toFixed(1) ?? DASH} bps
+                        </td>
+                        <td className="r mono">{lakh.toFixed(1)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ padding: "10px 14px", fontSize: 11.5, color: "var(--fg-mute)",
+                          borderTop: "1px solid var(--border-soft)" }}>
+              <b style={{ color: "var(--warn)" }}>Read this before quoting the number.</b> The cash
+              column is undiscounted and assumes the paper is held to maturity, so a 20Y row spans
+              twenty years of coupons from a single auction — it is not annual P&amp;L, and the rows
+              must not be added together. The simulation also assumes all-or-nothing fills, a fixed
+              notional at every auction, no competitor reaction, and no reflexivity: bidding
+              differently would at the margin move the very cutoff being forecast. Treat the{" "}
+              <b style={{ color: "var(--fg)" }}>bps pickup</b> as the honest figure and the cash as an
+              illustration.
+            </div>
+          </Panel>
+        )}
 
         <Panel title="Backtest — Model vs Naive" span={12} pad={false}
           sub={'every model tested against "same as last time" on auctions it never saw · '
