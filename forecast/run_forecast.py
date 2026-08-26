@@ -426,24 +426,29 @@ def save_metrics(session, metrics: list[dict]) -> int:
 
 
 def save_predictions(session, preds: list[dict]) -> int:
-    """Persist the backtest's out-of-sample predictions for the history chart.
+    """Replace the stored backtest predictions with this run's.
 
-    Rewrites this run's rows for the tenors involved rather than accumulating,
-    so the table always reflects the current model definitions.
+    REPLACE, not merge, for three reasons learned the hard way:
+
+    1. The backtest is fully regenerated every run, so merging is pointless —
+       the rows are recomputed from scratch each time.
+    2. Keeping every run grew this table by ~2,800 rows a WEEK (6,888 after
+       three runs) of data nothing reads: /api/forecast only ever selects
+       MAX(computed_date).
+    3. The old per-row "query then insert" loop ran 2,800 SELECTs and, worse,
+       issued them while inserts were still pending — SQLAlchemy autoflushed
+       mid-loop and the scheduled job died on
+       "duplicate key value violates unique constraint
+       backtest_predictions_pkey" (CI runs 2026-08-13 and 2026-08-20).
+       A bulk delete + bulk insert has no query-with-pending-writes window.
     """
-    n = 0
-    for p in preds:
-        row = session.query(BacktestPrediction).filter_by(
-            computed_date=p["computed_date"], tenor=p["tenor"],
-            model=p["model"], auction_date=p["auction_date"],
-        ).first()
-        if row:
-            row.actual_yield, row.pred_yield = p["actual_yield"], p["pred_yield"]
-        else:
-            session.add(BacktestPrediction(**p))
-            n += 1
+    if not preds:
+        return 0
+    session.query(BacktestPrediction).delete(synchronize_session=False)
+    session.flush()
+    session.bulk_insert_mappings(BacktestPrediction, preds)
     session.commit()
-    return n
+    return len(preds)
 
 
 def score_past_forecasts(session, hist: pd.DataFrame) -> int:
