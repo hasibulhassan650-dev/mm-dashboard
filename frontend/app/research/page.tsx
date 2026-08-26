@@ -144,7 +144,7 @@ export default async function ResearchPage() {
 
 
         <Panel title="Next Auction — Forecast Change per Tenor" span={12}
-          sub="change from the last cutoff, in bps · bar = 95% band from the model's own out-of-sample error">
+          sub="change from the last cutoff, in bps · bar = the model's own measured error band, scaled by recent volatility so it tracks the regime">
           <ForecastIntervalChart rows={fc.forecasts} />
         </Panel>
 
@@ -509,7 +509,7 @@ export default async function ResearchPage() {
         <Panel title="Using This at the Desk" span={6}>
           <div style={{ fontSize: 12.5, lineHeight: 1.75, color: "var(--fg-mute)" }}>
             <p><b style={{ color: "var(--fg)" }}>The band is the position-sizing input, not decoration.</b>{" "}
-            It is ±1.96 × the model&apos;s own realised out-of-sample RMSE, so it is a measured error
+            It is 1.96 × an EWMA estimate of the model&apos;s own recent out-of-sample error, so it is a measured
             distribution, not an assumption. A ±30 bps band on a bill means your rate view is worth
             acting on; a ±150 bps band on a bond means the model is explicitly telling you it cannot
             call that auction, and size accordingly.</p>
@@ -552,7 +552,7 @@ export default async function ResearchPage() {
             deliberately absent rather than fitted on placeholders. Backfilling the policy corridor is the single
             highest-value unlock for this page.</p>
 
-            <p><b style={{ color: "var(--fg)" }}>The band is measured, not assumed.</b> It is ±1.96 × the model&apos;s own
+            <p><b style={{ color: "var(--fg)" }}>The band is measured, not assumed.</b> It is 1.96 × an EWMA estimate of the model&apos;s own
             out-of-sample RMSE from an expanding-window backtest — refit on everything up to week t, predict week t,
             score, roll forward. No future data ever touches a fit, so the width is what this model actually delivered,
             not what a distributional assumption would flatter it into claiming.</p>

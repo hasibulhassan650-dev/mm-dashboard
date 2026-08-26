@@ -162,7 +162,7 @@ export const CONCEPTS: Concept[] = [
       "Worked example. On the 91-day bill, MAE is about 9.7 bps but RMSE is about 17.8. That gap says most weeks are close, and a few weeks are not — exactly what you would expect for a rate that sits still and then jumps on news.",
     ],
     onThisPage:
-      "The 95% band around every forecast is ±1.96 × RMSE, computed from recent errors only. So RMSE is not just a score — it is the thing that sets how wide the published range is.",
+      "RMSE also sets the published band, but not as a single fixed number: the band is 1.96 x an exponentially-weighted RMSE, which leans on recent errors so it widens in turbulent periods and tightens in calm ones. See EWMA Volatility.",
     pitfall:
       "Assuming RMSE and MAE rank models the same way. They can disagree, and when they do it is telling you the models fail differently: one is steadily mediocre, the other is usually excellent and occasionally awful.",
   },
@@ -266,7 +266,7 @@ export const CONCEPTS: Concept[] = [
     intuition:
       "A delivery service promises a 2-hour window and says it is right 95% of the time. You can check that claim: note the window, note when they actually arrive, count. If they only make it two-thirds of the time, the window is marketing, not information.",
     mechanics: [
-      "The published band is ±1.96 × RMSE. That multiplier of 1.96 comes from the normal distribution — it is only a genuine 95% range if the errors follow a bell curve. Financial errors often do not: they have fat tails, meaning extreme moves happen more often than a bell curve predicts, which would make the band too narrow.",
+      "The published band is 1.96 x an EWMA estimate of recent error volatility. The multiplier 1.96 comes from the normal distribution, so it is only a genuine 95% range if errors follow a bell curve. Financial errors often do not: they have fat tails, so extremes arrive more often than a bell curve predicts and the band can be too narrow.",
       "Rather than assume, count. Across every backtested forecast, how often did the actual print land inside the band? The answer here is roughly 90–95%, depending on tenor — close to what is advertised, slightly conservative in places.",
       "That is a genuine finding and it could easily have gone the other way. If coverage had come out at 80%, the band would have needed widening, and every position sized off it would have been under-hedged.",
     ],

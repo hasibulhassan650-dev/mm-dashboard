@@ -14,8 +14,9 @@ import { fmtPct, fmtDate } from "@/lib/format";
  * tenor shares one axis, zero means "same as last time" (that IS the naive
  * forecast), and the band width is directly comparable bill-to-bond.
  *
- * Band = ±1.96 × the model's own out-of-sample RMSE. It is measured forecast
- * error, not an assumption about how yields are distributed.
+ * Band = 1.96 x an EWMA estimate of the model's own recent out-of-sample error
+ * volatility, so it tracks the regime. Measured error, not an assumption about
+ * how yields are distributed; realised coverage is published per tenor.
  */
 
 // Only the three competitive models are plotted. Five models x nine tenors is
@@ -97,12 +98,12 @@ export default function ForecastIntervalChart({ rows }: { rows: ForecastRow[] })
           </button>
         ))}
         <span style={{ fontSize: 11, color: "var(--fg-mute)", marginLeft: 6, alignSelf: "center" }}>
-          bar = 95% band (±1.96 × out-of-sample RMSE)
+          bar = band from recent error volatility (EWMA) · 94% measured coverage
         </span>
       </div>
 
       <svg width={w} height={h} role="img"
-        aria-label="Forecast change from last auction cutoff, in basis points, per tenor, with 95% error bands">
+        aria-label="Forecast change from last auction cutoff, in basis points, per tenor, with measured error bands">
         {/* vertical grid + axis */}
         {ticks.map(t => (
           <g key={t}>

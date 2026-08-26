@@ -52,16 +52,18 @@ export default function ResearchIntro() {
         </li>
 
         <li style={li}>
-          {b("The market got choppier — use the RECENT error.")} On 91D the typical miss was ~5 bps
-          early and ~14 bps recently. A lifetime average flatters the present, so the tables show{" "}
+          {b("Volatility flips between regimes — use the RECENT error.")} Not a steady drift: measured
+          per-auction, the 10Y cutoff moved 16 bps in 2024 and 104 bps in 2025. A lifetime average is an
+          average of a calm year and a violent one, which describes neither, so the tables show{" "}
           <b>early → recent</b> and the headline uses the recent figure.
         </li>
 
         <li>
-          {b("Read the range, not just the number.")} Every forecast carries a band built from{" "}
-          <Term t="RMSE">how wrong the model has recently been</Term>.{" "}
-          <Term t="Coverage" /> confirms it: real outcomes land inside about 90–95% of the time, as
-          advertised. A wide band is the model saying it does not know.
+          {b("Read the range, not just the number.")} The band is scaled by{" "}
+          <Term t="EWMA Volatility">recent error volatility</Term>, so it widens in turbulent periods
+          and tightens in calm ones instead of sitting at one fixed width.{" "}
+          <Term t="Coverage" /> is measured, not asserted: 94.3% of prints land inside it, and each
+          tenor's own figure is in the scoreboard. A wide band is the model saying it does not know.
         </li>
       </ol>
 
