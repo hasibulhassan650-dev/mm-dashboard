@@ -60,7 +60,7 @@ def get_forecast():
 
         metrics = session.execute(text("""
             SELECT tenor, model, mae_bps, rmse_bps, rmse_recent_bps, dir_acc, hit_5bps, n_obs, dm_pvalue,
-                   mae_lo, mae_hi, gap_lo, gap_hi, coverage, mae_first, mae_recent, verdict
+                   mae_lo, mae_hi, gap_lo, gap_hi, coverage, mae_first, mae_recent, verdict, dm_fdr_pass, band_bps
             FROM backtest_metrics
             WHERE computed_date = (SELECT MAX(computed_date) FROM backtest_metrics)
             ORDER BY tenor, model

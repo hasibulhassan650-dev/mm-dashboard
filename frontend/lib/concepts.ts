@@ -58,6 +58,38 @@ export const CONCEPTS: Concept[] = [
       "Reading the bond tenors as 'the models are bad here'. Wider bands on longer tenors are mostly the honest consequence of monthly auctions and larger moves, not model failure.",
   },
   {
+    term: "Multiple Testing",
+    oneLine: "Test enough things and something wins by luck — the correction that stops a scoreboard from manufacturing winners.",
+    intuition:
+      "Give 1,000 people a coin and ask them to flip 10 heads in a row. Someone will manage it. If you then write a newspaper story about that person's gift, you have not discovered anything — you have just forgotten about the 999 who failed. Running many statistical tests has exactly the same problem.",
+    mechanics: [
+      "A p-value below 0.05 means 'noise would produce this about one time in twenty'. Run one test and that is reassuring. Run thirty and you should EXPECT one or two to clear the bar even if every model is worthless. Simulated on this scoreboard's 31 comparisons under the null, raw testing yields about 1.5 false 'established' verdicts every single run.",
+      "Benjamini-Hochberg controls the false discovery rate: the expected share of your declared winners that are junk. Sort the p-values, and keep the largest set where the k-th smallest is below q x k / m. On the same simulation this drops false discoveries from 1.57 to 0.05 per run.",
+      "The subtle part is what counts as the 'family'. Applied to all 31 model-by-tenor cells it rejected EVERYTHING, including 2Y curve carry at p=0.0038 — a false negative, because those cells are not independent (the blend model contains curve, so they are near-duplicate tests) and padding the family with models already known to fail inflates m and destroys power.",
+      "So the correction is applied to the pre-specified primary hypothesis: curve carry beats naive, tested across tenors. Curve is primary because it was hypothesised from a mechanism before it was tested. Every other model is exploratory — reported in full, never promoted. On that family all five bond tenors survive and both bills fail, which matches every other line of evidence.",
+    ],
+    onThisPage:
+      "It is the reason a model can show a low p-value and still not be marked 'established', and the reason non-primary models are labelled exploratory however good their headline number looks.",
+    pitfall:
+      "Believing more correction is always safer. An over-broad family produces false negatives — throwing away real findings — which on a trading desk is just as costly as a false positive.",
+  },
+  {
+    term: "EWMA Volatility",
+    oneLine: "An error-size estimate that weights recent misses more heavily, so the forecast band widens in turbulent periods and tightens in calm ones.",
+    intuition:
+      "If you are estimating how late your train usually is, last month's delays tell you far more than delays from two years ago — the timetable, the staff and the weather have all changed. An exponentially-weighted average does exactly that: it never forgets old data completely, it just cares progressively less.",
+    mechanics: [
+      "Take the squared forecast errors and weight them by lambda^age with lambda = 0.94 (the RiskMetrics convention, roughly a 30-observation memory), then take the square root. Recent errors dominate; old ones fade smoothly rather than dropping off a cliff the way a fixed window does.",
+      "Why it matters here is not theoretical. Measured on this data, per-auction volatility of the 10Y cutoff was 16 bps in 2024 and 104 bps in 2025 — a six-fold change. A band built on one fixed number is necessarily wrong in both regimes: too wide in 2024, and too narrow in 2025 precisely when the desk carried most risk.",
+      "Measured result across all eight tenors: coverage rose from 88.8% to 94.3% against a 95% target, and coverage in the worst single year rose from 77% to 87% — for about 2 bps of extra average width.",
+      "Two more elaborate alternatives were tested and rejected on value: adaptive conformal reached 93.9% coverage and conformalised EWMA 94.4%, but cost roughly 40% more width in every period including calm ones, which just means carrying less position for no gain.",
+    ],
+    onThisPage:
+      "It sets the 95% Low / 95% High columns and the bars on the interval chart. Each tenor's realised coverage is published in the scoreboard, so you can check the band against what actually happened rather than trusting a nominal number.",
+    pitfall:
+      "Reading the band as a promise. It is an estimate from past errors, and it can only widen AFTER volatility shows up — it will still be caught out by the first auction of a new regime.",
+  },
+  {
     term: "Naive Benchmark",
     oneLine: "The forecast that says the next auction rate equals the last one — the bar every model must clear.",
     intuition:

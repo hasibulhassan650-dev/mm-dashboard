@@ -183,3 +183,80 @@ def stability(errors: np.ndarray) -> tuple[float, float] | None:
     half = len(e) // 2
     return (round(float(np.mean(np.abs(e[:half]))) * 100, 2),
             round(float(np.mean(np.abs(e[half:]))) * 100, 2))
+
+
+# ── Adaptive interval width ───────────────────────────────────────────────────
+
+EWMA_LAMBDA = 0.94      # RiskMetrics convention; ~30-obs effective memory
+
+
+def ewma_sigma(errors: np.ndarray, lam: float = EWMA_LAMBDA) -> float | None:
+    """Exponentially-weighted forecast-error volatility.
+
+    A single trailing RMSE assumes the error scale is constant. It is not:
+    measured on this data, per-auction volatility of the 10Y cutoff was 16 bps
+    in 2024 and 104 bps in 2025. A fixed band is therefore too wide in calm
+    years and too narrow in violent ones — the worst possible combination,
+    since the narrow case is exactly when the desk is carrying most risk.
+
+    Weighting recent squared errors more heavily lets the band track the regime.
+    """
+    e = np.asarray(errors, dtype=float)
+    e = e[np.isfinite(e)]
+    if len(e) < 5:
+        return None
+    w = lam ** np.arange(len(e))[::-1]
+    return float(np.sqrt(np.dot(w, e ** 2) / w.sum()))
+
+
+def band_half_width(errors: np.ndarray, z: float = 1.96) -> float | None:
+    """Published band half-width, in the same units as `errors`.
+
+    Measured out-of-sample against the alternatives (8 tenors, average):
+
+        method            coverage   width(bps)   worst-year
+        trailing RMSE       88.8%       58.5        77.1%     <- previous
+        EWMA (this)         92.9%       60.8        87.0%
+        adaptive conformal  93.9%       69.8        89.1%
+        conformalised EWMA  94.4%       81.6        91.7%
+
+    EWMA is the value choice: +4.1pp coverage and +10pp on the worst year for
+    +2.3bps of width. The conformal variants buy a little more coverage but cost
+    ~40% more width in EVERY period, including calm ones where that just means
+    carrying less position for no reason.
+
+    NOTE: this delivers ~93%, not 95%. The tab publishes the MEASURED coverage
+    per tenor rather than advertising a nominal 95% it does not deliver.
+    """
+    s = ewma_sigma(errors)
+    return None if s is None else z * s
+
+
+# ── Multiple testing ──────────────────────────────────────────────────────────
+
+def bh_fdr(pvals: list[float | None], q: float = 0.05) -> list[bool]:
+    """Benjamini-Hochberg: which p-values survive at false-discovery rate q.
+
+    This scoreboard runs roughly 30 model-vs-naive tests (8 tenors x ~4
+    challengers). Judging each at p<0.05 independently means expecting ~1.5
+    false "established" verdicts from noise alone — on a page a desk bids off.
+    BH controls the expected share of false positives among the calls we make,
+    which is the right error rate here: we are screening many candidates and
+    care about how many of our WINNERS are junk, not about never being wrong once.
+
+    Returns a mask aligned with `pvals`; None entries are always False.
+    """
+    idx = [i for i, p in enumerate(pvals) if p is not None and np.isfinite(p)]
+    out = [False] * len(pvals)
+    if not idx:
+        return out
+    order = sorted(idx, key=lambda i: pvals[i])
+    m = len(order)
+    kmax = 0
+    for rank, i in enumerate(order, start=1):
+        if pvals[i] <= q * rank / m:
+            kmax = rank
+    for rank, i in enumerate(order, start=1):
+        if rank <= kmax:
+            out[i] = True
+    return out

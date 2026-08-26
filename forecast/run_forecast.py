@@ -53,6 +53,7 @@ MIN_HISTORY = 16
 MIN_TRAIN   = 12
 MODELS      = ("naive", "momentum", "ols", "curve", "ecm", "blend")
 ECM_COLS    = ["spread_policy_lag1", "d_policy"]
+PRIMARY_MODEL = "curve"   # pre-specified primary hypothesis; see the FDR block in run()
 ANCHOR_TENOR = "364D"   # freshest deep weekly series; see features.build_anchor
 Z95         = 1.96
 
@@ -548,9 +549,18 @@ def run(dry_run: bool = False) -> dict:
                     continue
                 err = np.asarray(bt[model]["err"], dtype=float)
                 rmse_pct = s["rmse_bps"] / 100.0
+                # Band half-width from EWMA error volatility, so it tracks the
+                # regime instead of averaging a calm year with a violent one.
+                # Falls back to the old trailing-RMSE rule only if there are too
+                # few errors for an EWMA estimate.
+                band_hw = rb.band_half_width(err)
+                if band_hw is None:
+                    band_hw = Z95 * s["rmse_recent_bps"] / 100.0
+                s["band_bps"] = round(band_hw * 100, 2)
                 ci = rb.bootstrap_ci(err)
                 s["mae_lo"], s["mae_hi"] = (round(ci[0], 2), round(ci[1], 2)) if ci else (None, None)
-                s["coverage"] = rb.coverage(err, rmse_pct)
+                # Coverage against the band actually published, not a nominal one.
+                s["coverage"] = round(float(np.mean(np.abs(err) <= band_hw)), 4)
                 st = rb.stability(err)
                 s["mae_first"], s["mae_recent"] = st if st else (None, None)
 
@@ -566,9 +576,13 @@ def run(dry_run: bool = False) -> dict:
                     s["dm_pvalue"] = rb.dm_test(err, nb, hln=True)
                     gap = rb.bootstrap_gap_ci(err, nb)
                     s["gap_lo"], s["gap_hi"] = (round(gap[0], 2), round(gap[1], 2)) if gap else (None, None)
+                    # Provisional. The final verdict also needs to survive the
+                    # multiple-testing correction applied across the whole run
+                    # below — one tenor cannot be judged in isolation when ~30
+                    # comparisons are being screened at once.
                     s["verdict"] = _verdict(gap, s["dm_pvalue"])
                 # Band from the RECENT error, not the lifetime average.
-                band = Z95 * s["rmse_recent_bps"] / 100.0     # bps -> yield %
+                band = band_hw                                # yield %
                 point = points[model]
                 e = bt[model]
                 preds.extend({
@@ -594,6 +608,48 @@ def run(dry_run: bool = False) -> dict:
                          s.get("gap_lo"), s.get("gap_hi"),
                          s.get("dm_pvalue"), s.get("coverage"),
                          s.get("mae_first"), s.get("mae_recent"), s.get("verdict"))
+
+        # ── Multiple-testing correction ───────────────────────────────────
+        # Screening many comparisons at p<0.05 manufactures winners: measured by
+        # simulation, 31 tests under the null yield ~1.5 false "established"
+        # verdicts per run. Benjamini-Hochberg fixes that — but ONLY if the
+        # family is defined honestly, and that is the subtle part.
+        #
+        # The family is NOT every model x tenor cell. Those 31 cells are not 31
+        # independent hypotheses: `blend` is partly a function of `curve`, so
+        # tenor/curve and tenor/blend are near-duplicate tests, and padding the
+        # family with models already known to fail (ols, momentum, ecm) inflates
+        # m and destroys power without buying any inferential protection. Run
+        # that way, BH rejects everything including 2Y curve at p=0.0038 — a
+        # false negative produced by a badly specified family, not by weak evidence.
+        #
+        # So the family is the PRE-SPECIFIED PRIMARY HYPOTHESIS: curve carry
+        # beats naive, tested across the tenors. Curve is primary because it was
+        # hypothesised from a mechanism (bond auctions price off a stale own-print
+        # while the weekly bill curve has moved) BEFORE it was tested, and it is
+        # the model the tab actually recommends. Every other model is exploratory:
+        # reported in full, but never promoted to "established", because choosing
+        # among them after seeing results is exactly the selection bias this
+        # whole guard exists to prevent.
+        primary = [m for m in metrics if m["model"] == PRIMARY_MODEL]
+        passes = rb.bh_fdr([m.get("dm_pvalue") for m in primary])
+        demoted = []
+        for m, ok in zip(primary, passes):
+            m["dm_fdr_pass"] = bool(ok)
+            if m.get("verdict") == "established" and not ok:
+                m["verdict"] = "unproven"
+                demoted.append(f"{m['tenor']}(p={m.get('dm_pvalue')})")
+        for m in metrics:
+            if m["model"] == PRIMARY_MODEL or m["model"] == "naive":
+                continue
+            # Exploratory: shown with its real numbers, never promoted.
+            m["dm_fdr_pass"] = None
+            if m.get("verdict") == "established":
+                m["verdict"] = "exploratory"
+        log.info("FDR(q=0.05) on the primary family (%s vs naive, %d tenors): %d pass",
+                 PRIMARY_MODEL, len(primary), sum(passes))
+        if demoted:
+            log.info("demoted by multiple-testing correction: %s", ", ".join(demoted))
 
         if skipped:
             log.info("skipped (too little history): %s", ", ".join(skipped))

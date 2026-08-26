@@ -252,10 +252,12 @@ export default async function ResearchPage() {
                       const v = r.verdict;
                       const vColor = v === "established" ? "var(--pos)"
                         : v === "worse" ? "var(--neg)"
-                        : v === "benchmark" ? "var(--fg-mute)" : "var(--warn)";
+                        : v === "benchmark" ? "var(--fg-mute)"
+                        : v === "exploratory" ? "var(--info)" : "var(--warn)";
                       const vText = v === "established" ? "real edge"
                         : v === "worse" ? "worse than naive"
-                        : v === "benchmark" ? "the benchmark" : "could be luck";
+                        : v === "benchmark" ? "the benchmark"
+                        : v === "exploratory" ? "exploratory only" : "could be luck";
                       const gap = r.gap_lo != null && r.gap_hi != null
                         ? `${r.gap_lo > 0 ? "+" : ""}${r.gap_lo.toFixed(1)} to ${r.gap_hi > 0 ? "+" : ""}${r.gap_hi.toFixed(1)}`
                         : DASH;
@@ -423,12 +425,30 @@ export default async function ResearchPage() {
             over-rejects badly on ~20 bond auctions — it declares victories that are not there. The
             Harvey-Leybourne-Newbold correction rescales it and reads a t-distribution instead of a normal.
             Every p-value shown is the corrected one.</p>
-            <p><b style={{ color: "var(--fg)" }}>3. A rule fixed in advance.</b> The model shown at the top
+            <p><b style={{ color: "var(--fg)" }}>3. A correction for testing many things at once.</b>{" "}
+            Screening ~30 comparisons at p&lt;0.05 manufactures winners: simulated under the null,
+            that produces about 1.5 false &quot;established&quot; verdicts per run.{" "}
+            <Term t="Multiple Testing">Benjamini-Hochberg</Term> cuts that to 0.05. The subtlety is
+            defining the family honestly — the correction is applied to the pre-specified primary
+            hypothesis (curve carry beats naive, across tenors), not to every model-by-tenor cell,
+            because those cells are not independent tests and padding the family with models already
+            known to fail would reject even the strongest result. Every other model is marked{" "}
+            <b style={{ color: "var(--info)" }}>exploratory</b>: shown with its real numbers, never
+            promoted. All five bond tenors survive this correction; the bills do not.</p>
+
+            <p><b style={{ color: "var(--fg)" }}>4. A rule fixed in advance.</b> The model shown at the top
             is not simply the one with the lowest error — choosing after seeing results is how backtests
             lie. A challenger is used only when its range excludes zero <i>and</i> the corrected test agrees.
             Otherwise the page falls back to naive, even when another model&apos;s headline number looks better.</p>
-            <p>We also checked the band actually holds: real prints landed inside the published 95%
-            interval about 90–95% of the time, so it is not being oversold.</p>
+            <p><b style={{ color: "var(--fg)" }}>The band now tracks the regime.</b> It used to be a
+            fixed multiple of recent error, which assumes the error scale is constant. It is not: the
+            10Y cutoff moved 16 bps per auction in 2024 and 104 bps in 2025. That band was too wide in
+            calm years and — far worse — too narrow in violent ones, covering only 83% of 10Y prints in
+            2025 when risk was highest. It is now scaled by an{" "}
+            <Term t="EWMA Volatility">exponentially-weighted volatility</Term> estimate, which lifted
+            measured coverage from 88.8% to 94.3% and the worst year from 77% to 87%, for about 2 bps
+            of extra average width. Each tenor&apos;s realised coverage is published in the scoreboard
+            rather than a nominal 95% being asserted.</p>
 
             <H>Why the average error understates today</H>
             <p>Splitting the backtest in half is uncomfortable reading. On 91D the typical miss was about

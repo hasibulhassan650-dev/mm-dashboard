@@ -117,7 +117,12 @@ export interface BacktestRow {
   coverage: number | null;
   /** First-half vs second-half MAE — mae_recent is what today actually looks like. */
   mae_first: number | null; mae_recent: number | null;
-  verdict: "established" | "unproven" | "worse" | "benchmark" | null;
+  verdict: "established" | "unproven" | "worse" | "benchmark" | "exploratory" | null;
+  /** Survived Benjamini-Hochberg across the pre-specified primary family.
+   *  null for exploratory models, which are never promoted. */
+  dm_fdr_pass: boolean | null;
+  /** Published band half-width in bps (EWMA volatility-scaled). */
+  band_bps: number | null;
 }
 export interface TrackRecordRow {
   tenor: string; model: ForecastModel;

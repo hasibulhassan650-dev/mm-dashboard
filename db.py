@@ -321,6 +321,10 @@ class BacktestMetric(Base):
     mae_first     = Column(Float)    # first-half MAE (bps)
     mae_recent    = Column(Float)    # second-half MAE (bps) — what today looks like
     verdict       = Column(String(20))  # established | unproven | worse
+    # Did this model's DM test survive Benjamini-Hochberg across every
+    # comparison in the run? A verdict of "established" requires it.
+    dm_fdr_pass   = Column(Boolean)
+    band_bps      = Column(Float)   # published band half-width, EWMA-scaled
 
 
 class BacktestPrediction(Base):
@@ -501,6 +505,8 @@ def init_db():
         "ALTER TABLE backtest_metrics ADD COLUMN IF NOT EXISTS mae_recent DOUBLE PRECISION",
         "ALTER TABLE backtest_metrics ADD COLUMN IF NOT EXISTS verdict VARCHAR(20)",
         "ALTER TABLE backtest_metrics ADD COLUMN IF NOT EXISTS rmse_recent_bps DOUBLE PRECISION",
+        "ALTER TABLE backtest_metrics ADD COLUMN IF NOT EXISTS dm_fdr_pass BOOLEAN",
+        "ALTER TABLE backtest_metrics ADD COLUMN IF NOT EXISTS band_bps DOUBLE PRECISION",
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_backtest_predictions_key "
         "ON backtest_predictions (computed_date, tenor, model, auction_date)",
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_research_diagnostics_key "
