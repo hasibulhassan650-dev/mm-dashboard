@@ -50,6 +50,16 @@ jobs:
         # api/requirements.txt must stay slim for Vercel.
         run: pip install -r requirements-forecast.txt
 
+      - name: Refresh policy corridor history from BB MPD circulars
+        # Keeps the corridor current after an MPC decision. continue-on-error
+        # because BB's site can block or be down, and a stale corridor must
+        # never stop the forecast running — the fetcher writes nothing unless
+        # its chain reproduces BB's live published corridor.
+        continue-on-error: true
+        run: |
+          python fetchers/policy_history.py --write
+          python forecast/policy.py --load
+
       - name: Run forecast (numpy only — this is the published forecast)
         run: python forecast/run_forecast.py
 
