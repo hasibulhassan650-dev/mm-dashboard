@@ -115,8 +115,19 @@ def get_monetary():
     monthly = sorted(data.get("monthly", []) or [], key=lambda r: str(r.get("month", "")))
     rr = sorted(data.get("reserve_requirements", []) or [],
                 key=lambda r: str(r.get("effective_date", "")))
+    # Different indicators publish on different lags (CPI to Jul, monetary
+    # survey to Jun, …), so "latest" is the most recent AVAILABLE value per
+    # field, not just the last row — otherwise a KPI reads "—" while its real
+    # figure sits one month back.
+    latest = None
+    if monthly:
+        latest = {}
+        for row in monthly:
+            for k, v in row.items():
+                if v is not None and v != "":
+                    latest[k] = v
     return {
         "monthly": monthly,
-        "latest": monthly[-1] if monthly else None,
+        "latest": latest,
         "reserve_requirements": {"current": rr[-1] if rr else None, "history": rr},
     }

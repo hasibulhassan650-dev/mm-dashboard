@@ -22,8 +22,8 @@ export default async function MonetaryPage({ searchParams }: { searchParams: Pro
 
   return (
     <>
-      <div style={{ marginBottom: "var(--gap)", padding: "10px 14px", borderRadius: "var(--radius-sm)", border: "1px solid color-mix(in oklab, var(--warn) 45%, transparent)", background: "color-mix(in oklab, var(--warn) 12%, transparent)", color: "var(--warn)", fontSize: 12.5 }}>
-        ⚠ <b>Illustrative figures.</b> CPI, monetary aggregates, bank rates and CRR/SLR on this page are placeholder values pending wiring to official BBS / Bangladesh Bank releases — do not treat as published data.
+      <div style={{ marginBottom: "var(--gap)", padding: "8px 12px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", background: "var(--panel-2, transparent)", color: "var(--fg-mute)", fontSize: 12 }}>
+        Real figures sourced from <b>Bangladesh Bank econdata</b> (inflation, interest rates, monetary survey). Indicators publish on different lags, so some series are shorter than others. CRR/SLR are shown only when sourced.
       </div>
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "var(--gap)" }}>
         <DateRangeControl min={range.min} max={range.max} from={range.from} to={range.to} />
