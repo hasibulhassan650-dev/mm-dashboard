@@ -426,40 +426,62 @@ export default async function ResearchPage() {
         )}
 
         {gate && (
-          <Panel title="Error-Correction Model — Status" span={12}
-            sub="the pull-to-anchor model from the project guide (Phase 5.3), and what it is waiting on">
-            <div style={{ fontSize: 12.5, lineHeight: 1.7, color: "var(--fg-mute)", maxWidth: 980 }}>
+          <Panel title="Error-Correction Model — Tested and Rejected" span={12}
+            sub="the pull-to-anchor model from the project guide (Phase 5.3), now run on verified policy history">
+            <div style={{ fontSize: 12.5, lineHeight: 1.75, color: "var(--fg-mute)", maxWidth: 980 }}>
               <div style={{
                 display: "inline-flex", alignItems: "center", gap: 8, marginBottom: 12,
                 padding: "6px 12px", borderRadius: "var(--radius-sm)", fontSize: 12,
-                border: `1px solid ${gateBlocked ? "var(--warn)" : "var(--pos)"}`,
-                color: gateBlocked ? "var(--warn)" : "var(--pos)",
-                background: `color-mix(in oklab, ${gateBlocked ? "var(--warn)" : "var(--pos)"} 10%, transparent)`,
+                border: `1px solid ${gateBlocked ? "var(--warn)" : "var(--neg)"}`,
+                color: gateBlocked ? "var(--warn)" : "var(--neg)",
+                background: `color-mix(in oklab, ${gateBlocked ? "var(--warn)" : "var(--neg)"} 10%, transparent)`,
               }}>
-                <b>{gateBlocked ? "BLOCKED" : "ACTIVE"}</b>
-                <span style={{ color: "var(--fg-dim)" }}>{gate.conclusion?.replace(/^(BLOCKED|OPEN) — /, "")}</span>
+                <b>{gateBlocked ? "BLOCKED" : "REJECTED"}</b>
+                <span style={{ color: "var(--fg-dim)" }}>
+                  {gateBlocked
+                    ? gate.conclusion?.replace(/^(BLOCKED|OPEN) — /, "")
+                    : "the corridor anchor exists, and the cutoff is not tethered to it"}
+                </span>
               </div>
 
-              <p>The ECM is the most theoretically honest model for a corridor regime: it says a cutoff
-              sitting well above the policy rate should get <i>pulled back</i> toward it, at a speed α that
-              the data estimates. Everything for it is built and wired — the effective-dated corridor table,
-              the step-function lookup, the spread and policy-change terms, the Engle-Granger{" "}
-              <Term t="Cointegration">cointegration</Term> test, and a sign check that withholds the forecast if α comes out positive (which would mean
-              the spread is explosive, not error-correcting).</p>
+              <p><b style={{ color: "var(--fg)" }}>The idea.</b> An ECM says a cutoff sitting far above
+              the policy rate should be pulled back toward it, at a speed the data estimates. The
+              project guide calls this the most theoretically honest specification for a corridor
+              regime, and it was the single highest-value thing still unbuilt.</p>
 
-              <p><b style={{ color: "var(--fg)" }}>What it is waiting on is data, not code.</b> The model
-              needs the corridor as a step function across the whole fit window. The database holds one
-              verified corridor observation; the seed&apos;s other two entries say in their own notes that
-              they were drafted from memory. Fitting on those would not fail loudly — it would produce a
-              confident α and a plausible-looking pull-to-anchor built on invented numbers, which is worse
-              than having no model at all. So it stays switched off.</p>
+              <p><b style={{ color: "var(--fg)" }}>It was blocked on data, so the data was fetched.</b>{" "}
+              The corridor history now comes from Bangladesh Bank&apos;s own MPD circulars — 11 dated
+              re-fixations from the introduction of the Interest Rate Corridor on 20 Jun 2023 to
+              2 Aug 2026, parsed from the circular PDFs. Every entry is verified twice: each circular
+              states the rate it is replacing, so the chain validates link by link, and the final
+              corridor it produces equals what BB publishes live today.</p>
 
-              <p><b style={{ color: "var(--fg)" }}>To unlock it:</b> add every corridor change back to at
-              least the start of the fit window into{" "}
-              <span className="mono">api/seeds/policy_rates.yaml</span> from the BB MPD circular archive,
-              set <span className="mono">verified: true</span> on each one you actually checked, then run{" "}
-              <span className="mono">python forecast/policy.py --load</span>. The ECM and the cointegration
-              test switch themselves on at the next weekly run — no code change needed.</p>
+              <p><b style={{ color: "var(--fg)" }}>With real data, the hypothesis fails — three
+              independent ways.</b></p>
+              <ul style={{ paddingLeft: 20, margin: "0 0 10px" }}>
+                <li style={{ marginBottom: 5 }}>The spread (cutoff − repo) is{" "}
+                <b style={{ color: "var(--fg)" }}>not stationary</b> on any tenor
+                (<Term t="Stationarity">ADF</Term> p = 0.73 to 0.86). It wanders; it does not revert.</li>
+                <li style={{ marginBottom: 5 }}>Engle-Granger finds{" "}
+                <b style={{ color: "var(--fg)" }}>no <Term t="Cointegration" /></b> between cutoff and
+                policy rate on any tenor (p = 0.09 to 0.66). There is no tether.</li>
+                <li>Fitted anyway, the ECM is{" "}
+                <b style={{ color: "var(--neg)" }}>significantly worse than naive</b> where it has
+                enough history to run — 91D 14.7 vs 9.8 bps, 182D 16.6 vs 10.9, both with an
+                improvement interval entirely below zero.</li>
+              </ul>
+
+              <p>All three say the same thing, which is what makes it credible rather than a single
+              unlucky test: over this sample BB&apos;s cutoffs are <i>not</i> anchored to the policy
+              corridor in a way an error-correction model can exploit. Imposing a pull that is not
+              there just adds noise, so the model is switched off — now for a measured reason rather
+              than a missing-data one.</p>
+
+              <p style={{ color: "var(--fg-dim)" }}><b style={{ color: "var(--fg)" }}>Worth knowing
+              anyway.</b> The corridor history is now a first-class series in the database, so the
+              spread is available to any future model, and this result is re-tested automatically
+              every week. If BB tightens the corridor&apos;s grip on auction pricing, the tests will
+              say so.</p>
             </div>
           </Panel>
         )}

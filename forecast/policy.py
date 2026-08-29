@@ -47,7 +47,13 @@ SEED = ROOT / "api" / "seeds" / "policy_rates.yaml"
 # after the auctions do leaves most rows with no anchor at all.
 MIN_VERIFIED_POINTS = 4     # distinct verified corridor observations
 MIN_DISTINCT_REPO   = 3     # repo must actually take several levels
-MAX_START_LAG_DAYS  = 31    # history must begin at/before the fit window start
+# The corridor must cover a usable SPAN, not the whole auction history. The
+# Interest Rate Corridor did not exist before 2023-06-20 — BB ran repo/reverse
+# repo with no SLF/SDF — so demanding coverage back to the start of a 5-year
+# bond window would block the ECM forever on a condition reality cannot meet.
+# Auctions predating the corridor simply carry no spread and cannot feed the
+# ECM (attach() leaves them NaN), which is the correct handling.
+MIN_COVERED_YEARS   = 2.0
 
 
 def load_seed(path: Path = SEED) -> list[dict]:
@@ -125,12 +131,15 @@ def usable(hist: pd.DataFrame, window_start) -> tuple[bool, str]:
         return False, (f"repo takes only {distinct} distinct value(s) in verified "
                        f"history; an anchor that never moves explains nothing")
     start = hist["effective_date"].min()
-    ws = pd.Timestamp(window_start)
-    lag = (start - ws).days
-    if lag > MAX_START_LAG_DAYS:
-        return False, (f"verified history starts {start.date()}, "
-                       f"{lag} days after the fit window opens {ws.date()}")
-    return True, f"{n} verified corridor changes from {start.date()}"
+    end = hist["effective_date"].max()
+    covered = (pd.Timestamp(window_start).normalize() if False else pd.Timestamp.today()) - start
+    years = covered.days / 365.25
+    if years < MIN_COVERED_YEARS:
+        return False, (f"verified corridor covers only {years:.1f} years "
+                       f"(from {start.date()}); need {MIN_COVERED_YEARS:.0f}")
+    return True, (f"{n} verified corridor changes from {start.date()}, "
+                  f"{years:.1f} years of corridor history "
+                  f"(latest {end.date()})")
 
 
 def attach(f: pd.DataFrame, hist: pd.DataFrame) -> pd.DataFrame:
