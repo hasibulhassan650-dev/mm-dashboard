@@ -166,16 +166,16 @@ def _parse_page(html: str, snapshot_date: datetime.date) -> List[Dict]:
             elif "t.bond" in tenor_name or "tbond" in tenor_name:
                 stype = "T_BOND"
 
-            # Use Standard/Devolvement Yield (col_std) when available — this is
-            # the benchmark yield BB uses; fall back to Cut-off yield for T-Bills
-            # (which have no standard yield column).
+            # Store the CUT-OFF yield — the yield at which the auction actually
+            # cleared, which is what the desk trades off. The Standard/Devolvement
+            # Yield column (col_std) is a DIFFERENT figure (the rate on any amount
+            # devolved on the PDs/BB) and for a premium re-issued bond sits well
+            # above the cut-off — e.g. 15Y on 27-Aug-2026: cut-off 9.0975% vs
+            # standard 10.36%. Prefer the cut-off; fall back to std only if the
+            # cut-off column is missing. A 0% sovereign yield is never real.
             std_val    = _clean_float(cells[col_std])    if col_std and col_std < len(cells) else None
             cutoff_val = _clean_float(cells[col_cutoff]) if col_cutoff < len(cells) else None
-            # The Standard/Devolvement Yield column is blank for T-bills (often
-            # rendered as "0"); treat a non-positive std as missing and fall back
-            # to the cut-off yield. A 0% sovereign yield is never real, so skip
-            # any row that still has no positive yield (prevents bogus 0% rows).
-            cutoff = std_val if (std_val is not None and std_val > 0) else cutoff_val
+            cutoff = cutoff_val if (cutoff_val is not None and cutoff_val > 0) else std_val
             if cutoff is None or cutoff <= 0:
                 continue
 
@@ -191,24 +191,11 @@ def _parse_page(html: str, snapshot_date: datetime.date) -> List[Dict]:
                 "source": BB_TREASURY_URL,
             })
 
-    # ── Table 1: yield curve summary (T-Bonds, current month only) ───────────
-    if len(tables) >= 2:
-        std_yr_map = {2:"2Y", 3:"3Y", 5:"5Y", 10:"10Y", 15:"15Y", 20:"20Y", 25:"25Y"}
-        for tr in tables[1].find_all("tr")[2:]:
-            cells = [c.get_text(" ", strip=True) for c in tr.find_all(["td","th"])]
-            if len(cells) < 4:
-                continue
-            std_yr  = _clean_float(cells[2])
-            std_yld = _clean_float(cells[3])
-            if std_yr is None or std_yld is None:
-                continue
-            yi = int(round(std_yr))
-            label = std_yr_map.get(yi, f"{yi}Y")
-            # Override T_BOND entry with standard yield (more accurate for yield curve)
-            for r in results:
-                if r["tenor_label"] == label and r["security_type"] == "T_BOND":
-                    r["cutoff_yield_pct"] = std_yld
-                    break
+    # ── Table 1 (Standard Tenor & Yield) is deliberately NOT used ─────────────
+    # It carries BB's interpolated STANDARD-tenor benchmark yields (e.g. an exact
+    # 15Y point), which previously OVERWROTE each bond's real cut-off yield —
+    # showing 10.36% where the 15Y auction actually cleared at 9.0975%. The desk
+    # wants the auction cut-off, so the cut-off from Table 0 is kept as-is.
 
     log.info("Parsed %d yield points from page (snapshot %s)", len(results), snapshot_date)
     return results
