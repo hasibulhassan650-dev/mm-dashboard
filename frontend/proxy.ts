@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { AUTH_COOKIE, AUTH_TTL, authSecret, makeToken, sitePassword, verifyToken } from "./lib/auth";
+import { AUTH_COOKIE, AUTH_TTL, authSecret, makeToken, verifyToken } from "./lib/auth";
 
 function cookieOpts() {
   return {
@@ -13,10 +13,6 @@ function cookieOpts() {
 
 // Next 16 renamed the "middleware" convention to "proxy" (same runtime & API).
 export async function proxy(req: NextRequest) {
-  // The gate stays OFF until SITE_PASSWORD is configured in the environment, so
-  // shipping this code never locks the live site out before the env var is set.
-  if (!sitePassword()) return NextResponse.next();
-
   const { pathname } = req.nextUrl;
   if (pathname === "/login" || pathname.startsWith("/api/auth")) {
     return NextResponse.next();

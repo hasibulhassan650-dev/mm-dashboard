@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { AUTH_COOKIE, AUTH_TTL, authSecret, makeToken, sitePassword } from "@/lib/auth";
+import { AUTH_COOKIE, AUTH_TTL, authSecret, makeToken, verifyPassword } from "@/lib/auth";
 
 export async function POST(req: NextRequest) {
   let password = "";
@@ -9,8 +9,7 @@ export async function POST(req: NextRequest) {
     /* empty body → treated as wrong password */
   }
 
-  const expected = sitePassword();
-  if (!expected || password !== expected) {
+  if (!(await verifyPassword(password))) {
     return NextResponse.json({ ok: false }, { status: 401 });
   }
 
