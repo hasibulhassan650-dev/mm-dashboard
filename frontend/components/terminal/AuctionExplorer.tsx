@@ -20,28 +20,38 @@ export default function AuctionExplorer({ bounds }: { bounds: { min: string | nu
   const [from, setFrom] = React.useState(min);
   const [to, setTo] = React.useState(max);
   const [tenor, setTenor] = React.useState("All");
-  const [rows, setRows] = React.useState<YieldRow[]>([]);
-  const [loading, setLoading] = React.useState(false);
+  // Fetch the full history ONCE; every date/tenor change then filters in-memory
+  // (instant) instead of a network round-trip per keystroke.
+  const [allRows, setAllRows] = React.useState<YieldRow[]>([]);
+  const [loading, setLoading] = React.useState(true);
 
-  const load = React.useCallback(async (f: string, t: string, tn: string) => {
-    setLoading(true);
-    try {
-      const data = await api.yieldsRange(f, t, tn === "All" ? undefined : tn);
-      setRows(data);
-    } catch { setRows([]); }
-    setLoading(false);
-  }, []);
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      try { const data = await api.yieldsRange(min, max); if (alive) setAllRows(data); }
+      catch { if (alive) setAllRows([]); }
+      if (alive) setLoading(false);
+    })();
+    return () => { alive = false; };
+  }, [min, max]);
 
-  React.useEffect(() => { load(from, to, tenor); }, []); // initial
-
+  // tenor options come from the FULL dataset, so filtering never hides options
   const tenors = React.useMemo(
-    () => ["All", ...Array.from(new Set(rows.map((r) => r.tenor_label))).sort()],
-    [rows],
+    () => ["All", ...Array.from(new Set(allRows.map((r) => r.tenor_label))).sort()],
+    [allRows],
+  );
+
+  // the displayed rows are a pure client-side filter of the full history
+  const rows = React.useMemo(
+    () => allRows.filter((r) =>
+      r.auction_date >= from && r.auction_date <= to &&
+      (tenor === "All" || r.tenor_label === tenor)),
+    [allRows, from, to, tenor],
   );
 
   function applyPreset(years: number | "all") {
     const f = years === "all" ? min : (isoAddYears(max, -years) < min ? min : isoAddYears(max, -years));
-    setFrom(f); setTo(max); load(f, max, tenor);
+    setFrom(f); setTo(max);
   }
 
   const btn = (label: string, onClick: () => void) => (
@@ -58,17 +68,17 @@ export default function AuctionExplorer({ bounds }: { bounds: { min: string | nu
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>
         <label style={{ fontSize: 12, color: "var(--fg-dim)", display: "flex", gap: 6, alignItems: "center" }}>
           From
-          <input type="date" value={from} min={min} max={to} onChange={(e) => { setFrom(e.target.value); load(e.target.value, to, tenor); }}
+          <input type="date" value={from} min={min} max={to} onChange={(e) => setFrom(e.target.value)}
             style={inputStyle} />
         </label>
         <label style={{ fontSize: 12, color: "var(--fg-dim)", display: "flex", gap: 6, alignItems: "center" }}>
           To
-          <input type="date" value={to} min={from} max={max} onChange={(e) => { setTo(e.target.value); load(from, e.target.value, tenor); }}
+          <input type="date" value={to} min={from} max={max} onChange={(e) => setTo(e.target.value)}
             style={inputStyle} />
         </label>
         <label style={{ fontSize: 12, color: "var(--fg-dim)", display: "flex", gap: 6, alignItems: "center" }}>
           Tenor
-          <select value={tenor} onChange={(e) => { setTenor(e.target.value); load(from, to, e.target.value); }} style={inputStyle}>
+          <select value={tenor} onChange={(e) => setTenor(e.target.value)} style={inputStyle}>
             {tenors.map((t) => <option key={t} value={t}>{t}</option>)}
           </select>
         </label>
