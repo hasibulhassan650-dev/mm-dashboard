@@ -94,16 +94,34 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
         # rather than asserting. Skip the last 2 days: results publish with a lag,
         # so "missing" there is not-yet-published, not a real gap.
         from calendar_utils import is_working_day
-        hol = {r[0] for r in q("SELECT calendar_date FROM holiday_calendar")}
+        # Normalise DB dates to date objects — Postgres returns date, SQLite str.
+        def _dset(sql, **p):
+            out = set()
+            for r in q(sql, **p):
+                v = r[0]
+                out.add(datetime.date.fromisoformat(v[:10]) if isinstance(v, str) else v)
+            return out
+        hol = _dset("SELECT calendar_date FROM holiday_calendar")
         _lo = today - datetime.timedelta(days=21)
         _hi = today - datetime.timedelta(days=2)
-        omo_dates = {r[0] for r in q(
+        omo_dates = _dset(
             "SELECT DISTINCT transaction_date FROM omo_transactions "
-            "WHERE transaction_date >= :lo AND transaction_date <= :hi", lo=_lo, hi=today)}
-        cbrepo_dates = {r[0] for r in q(
+            "WHERE transaction_date >= :lo AND transaction_date <= :hi", lo=_lo, hi=today)
+        cbrepo_dates = _dset(
             "SELECT DISTINCT transaction_date FROM omo_transactions "
             "WHERE instrument = 'CB_REPO' AND transaction_date >= :lo AND transaction_date <= :hi",
-            lo=_lo, hi=today)}
+            lo=_lo, hi=today)
+        # Market-activity signature: a day the WHOLE money market traded. If call
+        # money AND reference rates were also silent on a day OMO is missing, the
+        # market was shut — a bank holiday the calendar may not list yet — so it
+        # is NOT a missing/mislabeled release and must not fail the gate. This
+        # auto-suppresses holidays (05-Aug, 26-Aug…) without seeding each one.
+        cm_dates = _dset(
+            "SELECT DISTINCT trade_date FROM call_money_rates "
+            "WHERE trade_date >= :lo AND trade_date <= :hi", lo=_lo, hi=today)
+        rr_dates = _dset(
+            "SELECT DISTINCT trade_date FROM ref_rates "
+            "WHERE trade_date >= :lo AND trade_date <= :hi", lo=_lo, hi=today)
         # Only flag a gap we can PROVE is real: one we hold later data past. A
         # missing day at the tail is just not-yet-published (results lag, more so
         # over the Fri–Sat weekend), not a genuine hole.
@@ -111,11 +129,15 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
         d = _lo
         while d <= _hi:
             if max_omo is not None and d < max_omo and is_working_day(d, hol):  # Mon–Thu + Sun, minus known holidays
+                market_shut = d not in cm_dates and d not in rr_dates
                 if d not in omo_dates:
-                    add("omo", f"no OMO operation on working day {d} ({d:%a}) — BB operates "
-                               f"every working day; a BB press release is likely missing or "
-                               f"duplicate-dated. Confirm {d} was not a bank holiday.")
-                elif d.weekday() == 1 and d not in cbrepo_dates:   # Tuesday, ops but no CB Repo
+                    if not market_shut:   # market traded but no OMO → real gap
+                        add("omo", f"no OMO operation on working day {d} ({d:%a}) — BB operates "
+                                   f"every working day and the money market WAS open (call money / "
+                                   f"ref rates traded); a BB press release is likely missing or "
+                                   f"duplicate-dated. Confirm {d} was not a bank holiday.")
+                    # else: whole market shut → bank holiday, auto-suppressed
+                elif d.weekday() == 1 and d not in cbrepo_dates:   # Tuesday WITH ops but no CB Repo
                     add("omo", f"no CB_REPO on working Tuesday {d} — CB Repo is the Tuesday "
                                f"operation; likely a mislabeled/duplicate BB release swallowed "
                                f"it. Confirm {d} was a working day (not a bank holiday).")
