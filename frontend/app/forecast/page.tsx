@@ -45,6 +45,21 @@ export default async function ForecastPage({ searchParams }: { searchParams: Pro
   const horizon = forecast.auction_horizon ?? null;
   const auctionsBlind = windowEnd != null && (horizon == null || horizon < windowEnd);
 
+  // ── Desk alerts: threshold-crossing signals with an explicit action, shown
+  // only when they actually fire — distinct from the always-on KPIs below. ────
+  const alerts: { tone: "warn" | "info"; text: string }[] = [];
+  if (war != null && cor?.slf != null && war >= cor.slf - 0.5)
+    alerts.push({ tone: "warn", text: `Call O/N ${fmtRate(war, 2)}% is within 50 bps of the SLF ceiling (${cor.slf}%) — the system is tight; go in as a lender.` });
+  else if (war != null && cor?.sdf != null && war <= cor.sdf + 0.5)
+    alerts.push({ tone: "info", text: `Call O/N ${fmtRate(war, 2)}% is near the SDF floor (${cor.sdf}%) — the system is flush; fund cheap as a borrower.` });
+  for (const d of days.filter(x => x.net_crore <= -5000).sort((a, b) => a.net_crore - b.net_crore).slice(0, 2))
+    alerts.push({ tone: "warn", text: `Large drain ${fmtDate(d.date)} (${d.weekday}): ${fmtCrore(d.net_crore)} cr net — position as a lender going in.` });
+  if (biggestInject && biggestInject.net_crore >= 5000)
+    alerts.push({ tone: "info", text: `Flush day ${fmtDate(biggestInject.date)} (${biggestInject.weekday}): +${fmtCrore(biggestInject.net_crore)} cr — a cheap borrowing window.` });
+  const cumEnd = days.at(-1)?.cum_net_crore ?? 0;
+  if (cumEnd <= -10000)
+    alerts.push({ tone: "warn", text: `Cumulative known liquidity over the window is ${fmtCrore(cumEnd)} cr — a sustained squeeze; keep lending capacity in reserve.` });
+
   return (
     <>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: "var(--gap)", flexWrap: "wrap" }}>
@@ -64,6 +79,25 @@ export default async function ForecastPage({ searchParams }: { searchParams: Pro
           ⚠ AUCTION DATA INCOMPLETE — last known auction settlement is {horizon ? fmtDate(horizon) : "none on record"}.
           Days after that show NO auction outflow because the calendar isn&apos;t ingested yet, not because none is scheduled.
           Net figures on those days overstate liquidity. BB auctions T-bills nearly every week.
+        </div>
+      )}
+
+      {alerts.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: "var(--gap)" }}>
+          <div style={{ fontSize: 10.5, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".12em", color: "var(--fg-dim)" }}>Desk Alerts</div>
+          {alerts.map((a, i) => {
+            const c = a.tone === "warn" ? "var(--warn)" : "var(--info)";
+            return (
+              <div key={i} style={{
+                display: "flex", gap: 9, alignItems: "flex-start",
+                border: `1px solid ${c}`, borderRadius: "var(--radius-sm)", padding: "8px 12px", fontSize: 12.5,
+                background: `color-mix(in oklab, ${c} 9%, transparent)`,
+              }}>
+                <span style={{ fontWeight: 700, color: c }}>{a.tone === "warn" ? "▲" : "▼"}</span>
+                <span style={{ color: "var(--fg)" }}>{a.text}</span>
+              </div>
+            );
+          })}
         </div>
       )}
 
