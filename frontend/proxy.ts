@@ -14,7 +14,9 @@ function cookieOpts() {
 // Next 16 renamed the "middleware" convention to "proxy" (same runtime & API).
 export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
-  if (pathname === "/login" || pathname.startsWith("/api/auth")) {
+  // Public: the login page, the auth endpoints, and deploy-status (exposes only
+  // a commit hash + deploy time, so the uptime sentinel can read it un-gated).
+  if (pathname === "/login" || pathname.startsWith("/api/auth") || pathname === "/api/deploy-status") {
     return NextResponse.next();
   }
 

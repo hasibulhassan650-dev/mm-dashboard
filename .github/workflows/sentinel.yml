@@ -1,0 +1,61 @@
+name: Uptime Sentinel
+
+# Pings the live API + frontend and checks the deployed commit is current, so a
+# dead host or a stale deploy alerts within a couple of hours instead of sitting
+# silent. Files a GitHub issue on failure and auto-closes it on recovery.
+
+on:
+  schedule:
+    - cron: "17 */2 * * *"    # every 2 hours
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  sentinel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run sentinel
+        id: run
+        continue-on-error: true
+        run: python sentinel.py
+
+      - name: File or clear the alert
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label create uptime --color FBCA04 --description "Uptime/deploy sentinel" --force >/dev/null 2>&1 || true
+          OK=$(python -c "import json;print(json.load(open('verdict.json'))['ok'])")
+          NUM=$(gh issue list --state open --label uptime --json number --jq '.[0].number' 2>/dev/null || echo "")
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          if [ "$OK" = "True" ]; then
+            if [ -n "$NUM" ]; then
+              gh issue close "$NUM" --comment "Recovered — all uptime checks passing. ($RUN_URL)"
+            fi
+          else
+            BODY=$(python - <<'PY'
+          import json
+          v=json.load(open('verdict.json'))
+          print("Automated uptime sentinel found problems ("+v["checked_utc"]+"):\n")
+          for p in v["problems"]:
+              print("- "+p)
+          PY
+          )
+            BODY="$BODY
+
+          Run: $RUN_URL"
+            if [ -n "$NUM" ]; then
+              gh issue comment "$NUM" --body "$BODY"
+            else
+              gh issue create --title "UPTIME ALERT: site/API unreachable or deploy stale" --label uptime --body "$BODY"
+            fi
+          fi
