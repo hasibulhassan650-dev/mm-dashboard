@@ -467,6 +467,14 @@ def _parse_via_text(full_text: str, txn_date: datetime.date, pdf_url: str) -> Li
             else:
                 lbl = None
             if lbl:
+                # A long instrument name can wrap across several standalone lines
+                # — e.g. "CB Repo (Finetuning" / "for maintaining" / "reserve)".
+                # An UNKNOWN alpha fragment must NOT clobber a KNOWN instrument name
+                # already captured for this not-yet-emitted block: it's a piece of
+                # the same name, not a new product. (Without this the fragment
+                # "for maintaining" overwrote CB_REPO and stored FOR_MAINTAINING.)
+                if not known and cur["name"] and cur["known"] and not cur["rows"]:
+                    continue
                 if cur["rows"] and cur["name"] and lbl != cur["name"]:
                     _flush()
                 cur["name"], cur["known"] = lbl, known
@@ -489,7 +497,11 @@ def _parse_via_text(full_text: str, txn_date: datetime.date, pdf_url: str) -> Li
         tenor_reset = last_tenor is not None and tenor_days <= last_tenor
         if name_change or (tenor_reset and (cur["rows"] or cur["name"])):
             _flush()
-        if resolved:
+        # Keep a KNOWN instrument name already captured for this not-yet-emitted
+        # block rather than overwrite it with an UNKNOWN leading fragment from a
+        # data row whose real name wrapped onto the line(s) above — e.g. a row
+        # rendered "for maintaining 1-Day …" under a "CB Repo (Finetuning" header.
+        if resolved and (resolved[2] or not (cur["name"] and cur["known"] and not cur["rows"])):
             cur["name"], cur["dir"], cur["known"] = resolved[0], resolved[1], resolved[2]
 
         maturity = abs(nums[-2])

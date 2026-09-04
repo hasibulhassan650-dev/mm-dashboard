@@ -152,6 +152,25 @@ class TestInstrumentParsing:
         assert "NEWFAC" in insts, "unknown instrument lost / mislabelled"
         assert ("CB_REPO", 30) not in {(r["instrument"], r["tenor_days"]) for r in rows}
 
+    def test_wrapped_instrument_name_not_split_into_fragment(self):
+        # BB wraps a long name across lines: "CB Repo (Finetuning" / a data row
+        # rendered "for maintaining 1-Day …" / "reserve)". The fragment
+        # "for maintaining" must NOT become an instrument (FOR_MAINTAINING) and
+        # clobber the CB Repo it belongs to (real case, pr14255, 31-Aug-2026).
+        text = (
+            "Open Market Operations as on 31 August 2026\n"
+            "CB Repo (Finetuning\n"
+            "for maintaining 1-Day 7,519.44 7,519.44 9.50 0.00 7,519.44\n"
+            "reserve)\n"
+            "IBLF 7-Days 8,058.21 8,058.21 3.00 0.00 8,058.21\n"
+            "SDF 1-Day -2,891.00 -2,891.00 7.50 3,410.70 519.70\n"
+        )
+        rows = self._parse(text)
+        by = {(r["instrument"], r["tenor_days"]): r for r in rows}
+        assert "FOR_MAINTAINING" not in {r["instrument"] for r in rows}, "wrapped-name fragment stored as an instrument"
+        assert ("CB_REPO", 1) in by and abs(by[("CB_REPO", 1)]["accepted_bdt_crore"] - 7519.44) < 0.01
+        assert by[("CB_REPO", 1)]["direction"] == "INJECTION"
+
 
 class TestMislabelGuard:
     """Aug-2026: BB stamped the 04-Aug (Tuesday) CB Repo operation with the

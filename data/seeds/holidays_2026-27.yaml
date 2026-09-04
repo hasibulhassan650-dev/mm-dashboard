@@ -12,3 +12,8 @@ holidays:
   - date: "2026-08-05"
     name: "Bank/money-market closed (inferred; confirm gazette name)"
     type: INFERRED_CLOSURE
+  # Same signature on 2026-08-26 (Wed): call money, ref rates and OMO all ZERO
+  # while 25-Aug and 27-Aug were fully active — a market-wide closure.
+  - date: "2026-08-26"
+    name: "Bank/money-market closed (inferred; confirm gazette name)"
+    type: INFERRED_CLOSURE
