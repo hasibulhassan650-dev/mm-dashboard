@@ -315,6 +315,26 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
         for r in q("SELECT month, remittance_usd_mn FROM remittance_monthly "
                    "WHERE remittance_usd_mn IS NOT NULL AND (remittance_usd_mn < 0 OR remittance_usd_mn > 10000)"):
             add("remittance", f"{r[0]} remittance {r[1]} mn implausible")
+
+        # ---- monetary indicators (real, BB econdata; DB-backed) ----
+        # Plausibility bounds so a parse drift is caught: CPI/growth as %,
+        # lending must exceed deposit. Wrapped — the table may not exist yet.
+        try:
+            for r in q("SELECT month, cpi_p2p, cpi_12mo_avg FROM monetary_monthly WHERE "
+                       "(cpi_p2p IS NOT NULL AND (cpi_p2p < -5 OR cpi_p2p > 40)) OR "
+                       "(cpi_12mo_avg IS NOT NULL AND (cpi_12mo_avg < -5 OR cpi_12mo_avg > 40))"):
+                add("monetary", f"{r[0]} CPI implausible (p2p {r[1]}, 12mo {r[2]})")
+            for r in q("SELECT month, wavg_deposit, wavg_lending FROM monetary_monthly WHERE "
+                       "(wavg_deposit IS NOT NULL AND (wavg_deposit <= 0 OR wavg_deposit > 25)) OR "
+                       "(wavg_lending IS NOT NULL AND (wavg_lending <= 0 OR wavg_lending > 30)) OR "
+                       "(wavg_deposit IS NOT NULL AND wavg_lending IS NOT NULL AND wavg_lending < wavg_deposit)"):
+                add("monetary", f"{r[0]} bank rates implausible (dep {r[1]}, lend {r[2]})")
+            for r in q("SELECT month, m2_growth, private_credit_growth FROM monetary_monthly WHERE "
+                       "(m2_growth IS NOT NULL AND (m2_growth < -20 OR m2_growth > 60)) OR "
+                       "(private_credit_growth IS NOT NULL AND (private_credit_growth < -30 OR private_credit_growth > 60))"):
+                add("monetary", f"{r[0]} growth implausible (M2 {r[1]}, pvt {r[2]})")
+        except Exception:
+            pass   # monetary_monthly not created yet (first pipeline run makes it)
     finally:
         s.close()
 

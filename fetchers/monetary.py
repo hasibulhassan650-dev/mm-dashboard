@@ -164,6 +164,12 @@ def build_monetary() -> dict:
             "_fetched_utc": datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z"}
 
 
+def fetch_monetary() -> list:
+    """Real monthly monetary rows for the DB refresh — [{month, ...fields}, ...].
+    Only real, sourced fields per month; the pipeline upserts them by month."""
+    return build_monetary()["monthly"]
+
+
 def write_yaml(path: str) -> int:
     import yaml
     data = build_monetary()

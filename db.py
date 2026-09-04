@@ -244,6 +244,25 @@ class ReservesMonthly(Base):
     ingested_utc              = Column(DateTime)
 
 
+class MonetaryMonthly(Base):
+    """Monetary & prices indicators per month (BB econdata: inflation, interest
+    rates, monetary survey). Fields are OPTIONAL — indicators publish on
+    different lags, and only real, sourced values are stored (never fabricated)."""
+    __tablename__ = "monetary_monthly"
+    __table_args__ = (UniqueConstraint("month"),)
+    id                    = Column(Integer, primary_key=True, autoincrement=True)
+    month                 = Column(String(7), nullable=False)   # "YYYY-MM"
+    cpi_p2p               = Column(Float)   # CPI inflation, point-to-point (YoY)
+    cpi_12mo_avg          = Column(Float)   # CPI inflation, 12-month moving average
+    m2_growth             = Column(Float)   # broad money (M2) YoY growth
+    reserve_money_growth  = Column(Float)   # reserve money YoY growth
+    private_credit_growth = Column(Float)   # private-sector credit YoY growth
+    wavg_deposit          = Column(Float)   # scheduled-bank weighted-avg deposit rate
+    wavg_lending          = Column(Float)   # scheduled-bank weighted-avg lending rate
+    source                = Column(String(200))
+    ingested_utc          = Column(DateTime)
+
+
 class PolicyRateSnapshot(Base):
     """BB policy-rate corridor, fetched live from bb.org.bd's POLICY RATES box.
     One row per DISTINCT corridor observed — a new row means a rate change,

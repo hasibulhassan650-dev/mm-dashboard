@@ -75,6 +75,30 @@ def _db_reserves() -> dict:
     return out
 
 
+def _db_monetary() -> dict:
+    """Real fetched monetary indicators per month from the DB, keyed by
+    'YYYY-MM' → {field: value} (only non-null fields). {} on any error."""
+    out: dict = {}
+    try:
+        from sqlalchemy import text
+        from db import get_session
+        session = get_session()
+        try:
+            rows = session.execute(text(
+                "SELECT month, cpi_p2p, cpi_12mo_avg, m2_growth, reserve_money_growth, "
+                "private_credit_growth, wavg_deposit, wavg_lending FROM monetary_monthly"
+            )).fetchall()
+            for r in rows:
+                m = dict(r._mapping)
+                mo = m.pop("month")
+                out[mo] = {k: v for k, v in m.items() if v is not None}
+        finally:
+            session.close()
+    except Exception:
+        pass   # table not created yet → fall back to the seed YAML
+    return out
+
+
 @router.get("/reserves")
 def get_reserves_remittances():
     """
@@ -112,7 +136,16 @@ def get_monetary():
         reserve_requirements: { current: {...}|null, history: [...asc...] } }
     """
     data = _read_yaml(_MONETARY)
-    monthly = sorted(data.get("monthly", []) or [], key=lambda r: str(r.get("month", "")))
+    seed = {r["month"]: r for r in (data.get("monthly", []) or []) if r.get("month")}
+    db = _db_monetary()
+    # DB (self-updating from the pipeline) is authoritative; the seed YAML is a
+    # fallback for months the fetcher hasn't covered. Merge per field.
+    monthly = []
+    for mo in sorted(set(seed) | set(db)):
+        row = {"month": mo}
+        row.update({k: v for k, v in seed.get(mo, {}).items() if k != "month"})
+        row.update(db.get(mo, {}))
+        monthly.append(row)
     rr = sorted(data.get("reserve_requirements", []) or [],
                 key=lambda r: str(r.get("effective_date", "")))
     # Different indicators publish on different lags (CPI to Jul, monetary

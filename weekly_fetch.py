@@ -302,6 +302,40 @@ def main():
         log.exception("Policy-rate fetch failed: %s", exc)
         errors.append(f"policy: {exc}")
 
+    # ── 10. Monetary & prices (CPI, bank rates, M2/credit — BB econdata) ─────
+    # Monthly indicators; upsert by month so BB revisions are picked up and only
+    # real, sourced fields overwrite (a month with rates but no CPI yet must not
+    # null out a CPI figure fetched earlier).
+    log.info("--- Step 10: Monetary & prices indicators ---")
+    try:
+        from fetchers.monetary import fetch_monetary
+        from db import MonetaryMonthly
+        import datetime as _dt
+        _MO_FIELDS = ("cpi_p2p", "cpi_12mo_avg", "m2_growth", "reserve_money_growth",
+                      "private_credit_growth", "wavg_deposit", "wavg_lending")
+        rows_mo = fetch_monetary()
+        now_utc = _dt.datetime.utcnow()
+        session = get_session()
+        saved_mo = 0
+        for r in rows_mo:
+            present = {k: r[k] for k in _MO_FIELDS if r.get(k) is not None}
+            existing = session.query(MonetaryMonthly).filter_by(month=r["month"]).first()
+            if existing:
+                for k, v in present.items():
+                    setattr(existing, k, v)          # only overwrite fields we actually have
+                existing.source = "BB econdata"
+                existing.ingested_utc = now_utc
+            else:
+                session.add(MonetaryMonthly(month=r["month"], source="BB econdata",
+                                            ingested_utc=now_utc, **present))
+                saved_mo += 1
+        session.commit()
+        session.close()
+        log.info("Monetary OK | new_rows=%d (fetched %d)", saved_mo, len(rows_mo))
+    except Exception as exc:
+        log.exception("Monetary fetch failed: %s", exc)
+        errors.append(f"monetary: {exc}")
+
     # ── Summary ───────────────────────────────────────────────────────────────
     elapsed = (datetime.datetime.now() - start).seconds
     if errors:
