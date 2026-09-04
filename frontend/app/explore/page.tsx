@@ -9,7 +9,9 @@ export const revalidate = 300;
 export default async function ExplorePage() {
   const [omoOut, cm, yh, fx, macro, rr, flows, fresh] = await Promise.all([
     api.omoOutstanding(365).catch(() => []),
-    api.callmoney(730).catch(() => ({ daily_summary: [], latest_breakdown: [], latest_date: null })),
+    // 5 years: the call-money series was backfilled from 2021, so the
+    // correlation grid is no longer limited to the ~5 months it once held.
+    api.callmoney(1825).catch(() => ({ daily_summary: [], latest_breakdown: [], latest_date: null })),
     api.yields(36).catch(() => []),
     api.fx(1095).catch(() => []),
     api.macro(),
