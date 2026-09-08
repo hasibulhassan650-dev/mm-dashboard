@@ -349,6 +349,28 @@ def _prior_free_tuesday(session, d: datetime.date, max_back: int = 10):
     return None
 
 
+def _prior_gap_day(session, d: datetime.date, max_back: int = 12):
+    """The most recent day before `d` where the money market TRADED (call money
+    or reference rates printed) but NO OMO is recorded — exactly the day a
+    mis-dated release belongs to. Bank holidays are skipped for free (nothing
+    traded), and None is returned when the nearest prior working day already has
+    OMO or nothing matches, so we never guess."""
+    import calendar_utils
+    from db import CallMoneyRate, RefRate
+    t = d - datetime.timedelta(days=1)
+    for _ in range(max_back):
+        if calendar_utils.is_working_day(t):
+            if session.query(OMOTransaction).filter_by(transaction_date=t).first():
+                return None          # prior working day already covered — no gap
+            traded = (session.query(CallMoneyRate).filter_by(trade_date=t).first()
+                      or session.query(RefRate).filter_by(trade_date=t).first())
+            if traded:
+                return t             # market open + no OMO = the missing day
+            # market shut that day (holiday) — keep walking back
+        t -= datetime.timedelta(days=1)
+    return None
+
+
 def _store_omo_txns(session, txns: list, now: datetime.datetime) -> tuple:
     """
     Store OMO rows with correction-aware supersession, returning (saved,
@@ -399,6 +421,24 @@ def _store_omo_txns(session, txns: list, now: datetime.datetime) -> tuple:
         if not keep:
             continue
 
+        # Within-batch, no-lag variant: this fetch pulled BOTH releases for date d
+        # and one was published with NO LAG (pub <= d), so BB stamped it with the
+        # wrong date — the keep-latest filter above would silently drop it. Re-home
+        # that release to the day the market traded with no OMO recorded.
+        _nolag_pubs = {_pub(x) for x in rows
+                       if _pub(x) not in (latest_pub, datetime.date.min) and _pub(x) <= d}
+        if len(_nolag_pubs) == 1:
+            _p = _nolag_pubs.pop()
+            target = _prior_gap_day(session, d)
+            if target is not None:
+                for x in (r for r in rows if _pub(r) == _p):
+                    x2 = dict(x)
+                    x2["transaction_date"] = target
+                    x2["maturity_date"]    = target + datetime.timedelta(days=(x.get("tenor_days") or 0))
+                    _insert(x2); saved += 1
+                log.error("OMO mislabel guard (batch): no-lag release (pub %s) re-homed from "
+                          "'as on %s' to %s.", _p, d, target)
+
         # Within-batch mislabel: if this one fetch pulled BOTH releases for date d
         # and the OLDER one carries a CB Repo the latest lacks, the keep-filter
         # above would silently drop it. That CB Repo is a different (Tuesday)
@@ -423,6 +463,39 @@ def _store_omo_txns(session, txns: list, now: datetime.datetime) -> tuple:
         existing = session.query(OMOTransaction).filter_by(transaction_date=d).all()
         stored_pub = max((e.source_pub_date for e in existing if e.source_pub_date), default=None)
         inc_pub = None if latest_pub == datetime.date.min else latest_pub
+
+        # ── Mislabel guard A: a release published with NO LAG is mis-dated ───
+        # BB publishes a day's operations the NEXT working day, so a release whose
+        # 'as on' date equals (or precedes) its own publication date has BB's date
+        # wrong — it is an EARLIER operation. When a second, normally-lagged
+        # release claims the same 'as on' date, keying on the date alone deletes
+        # one of two REAL operations (Sep-2026: the 03-Sep op, published 06-Sep
+        # and stamped 'as on 06 Sep', was dropped by the genuine 06-Sep release).
+        # Re-home the no-lag release to the day the market traded but no OMO was
+        # recorded. Instrument-agnostic and works on either fetch order.
+        if existing and inc_pub is not None and stored_pub is not None and inc_pub != stored_pub:
+            stored_nolag = stored_pub <= d
+            inc_nolag    = inc_pub <= d
+            if stored_nolag != inc_nolag:          # exactly one side is mis-dated
+                target = _prior_gap_day(session, d)
+                if target is not None:
+                    if stored_nolag:   # move the stored mis-dated op, keep incoming on d
+                        for e in existing:
+                            e.transaction_date = target
+                            e.maturity_date    = target + datetime.timedelta(days=e.tenor_days or 0)
+                        session.flush()
+                        for r in keep:
+                            _insert(r); saved += 1
+                    else:              # incoming is mis-dated → store it on the gap day
+                        for r in keep:
+                            r2 = dict(r)
+                            r2["transaction_date"] = target
+                            r2["maturity_date"]    = target + datetime.timedelta(days=(r.get("tenor_days") or 0))
+                            _insert(r2); saved += 1
+                    log.error("OMO mislabel guard: no-lag release re-homed from 'as on %s' to %s "
+                              "— BB double-dated two operations (%s traded but had no OMO).",
+                              d, target, target)
+                    continue
 
         # ── OMO mislabel guard: two operations stamped with one 'as on' date ──
         # A genuine BB correction re-states the SAME operation (it keeps CB_REPO).

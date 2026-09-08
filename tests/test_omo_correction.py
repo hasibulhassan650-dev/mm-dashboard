@@ -230,3 +230,29 @@ class TestMislabelGuard:
         thu = sess.query(OMOTransaction).filter_by(transaction_date=self.THU).all()
         assert len(thu) == 1 and abs(thu[0].accepted_bdt_crore - 1945.80) < 1e-6, \
             "latest correction wins on its own date"
+
+    def test_no_lag_release_rehomed_to_the_traded_day_with_no_omo(self):
+        # Sep-2026 (pr14268 vs pr14269): BB stamped the 03-Sep operation
+        # 'as on 06 September' and published it the SAME day (zero lag), while the
+        # genuine 06-Sep release published 07-Sep. Keying on the date alone
+        # deleted one of two real operations. The no-lag release must be re-homed
+        # to the day the market traded with no OMO (03-Sep). Instrument-agnostic:
+        # neither release carries a CB Repo, so the older guard could not see it.
+        from engines.pipeline import _store_omo_txns
+        from db import OMOTransaction, CallMoneyRate
+        SUN = datetime.date(2026, 9, 6)   # the 'as on' date both releases claim
+        THU = datetime.date(2026, 9, 3)   # traded (call money printed), no OMO
+        sess = _mem_session()
+        sess.add(CallMoneyRate(trade_date=THU)); sess.commit()
+
+        genuine = [_row("IBLF", 7, 11918.86, "INJECTION", datetime.date(2026, 9, 7), "05/2026-404", ason=SUN)]
+        _store_omo_txns(sess, genuine, datetime.datetime.utcnow()); sess.commit()
+        nolag = [_row("IBLF", 7, 1307.63, "INJECTION", datetime.date(2026, 9, 6), "05/2026-403", ason=SUN)]
+        _store_omo_txns(sess, nolag, datetime.datetime.utcnow()); sess.commit()
+
+        thu = sess.query(OMOTransaction).filter_by(transaction_date=THU).all()
+        sun = sess.query(OMOTransaction).filter_by(transaction_date=SUN).all()
+        assert any(abs(r.accepted_bdt_crore - 1307.63) < 1e-6 for r in thu), \
+            "the no-lag (mis-dated) operation must be re-homed to 03-Sep, not dropped"
+        assert len(sun) == 1 and abs(sun[0].accepted_bdt_crore - 11918.86) < 1e-6, \
+            "the genuine 06-Sep operation must stay on its own date"
