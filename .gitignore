@@ -30,3 +30,6 @@ Thumbs.db
 
 # generated logs
 frontend/cleanup.log
+
+# uptime sentinel scratch output
+verdict.json

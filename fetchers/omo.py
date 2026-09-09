@@ -174,6 +174,17 @@ def _resolve_rate(vals: List[float]) -> tuple:
     return rate, None
 
 
+def _is_omo_release(full_text: str) -> bool:
+    """True only for an actual Open Market Operations press release.
+
+    BB's press feed also carries T-bill/T-bond auction results. Those tables
+    parse into garbage "instruments" (the header "OF BILLS AUCTIONED" became
+    OF_BILLS_AUCTIONED), which then trip the integrity gate as an unknown
+    instrument and fail every refresh run.
+    """
+    return "open market operation" in (full_text or "").lower()
+
+
 def _should_skip(line: str) -> bool:
     ll = line.lower()
     return any(kw in ll for kw in _SKIP_LINES)
@@ -252,6 +263,15 @@ def parse_omo_pdf(pdf_bytes: bytes, hint_date: Optional[datetime.date], pdf_url:
                     all_tables.extend(tbl)
     except Exception as exc:
         log.error("pdfplumber failed for %s: %s", pdf_url, exc)
+        return []
+
+    # Guard: this must actually BE an OMO release. BB's press feed also carries
+    # T-bill/T-bond auction results whose tables parse into garbage "instruments"
+    # (the header "OF BILLS AUCTIONED" became OF_BILLS_AUCTIONED). The fetcher
+    # filters by listing title; this body-level check stops a retitled, backfilled
+    # or directly-fetched PDF from poisoning the instrument set.
+    if not _is_omo_release(full_text):
+        log.info("Not an OMO press release (no 'Open Market Operations' heading): %s", pdf_url)
         return []
 
     txn_date = _parse_date_from_text(full_text) or hint_date or datetime.date.today()

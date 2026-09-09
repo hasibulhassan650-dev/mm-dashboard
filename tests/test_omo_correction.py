@@ -256,3 +256,28 @@ class TestMislabelGuard:
             "the no-lag (mis-dated) operation must be re-homed to 03-Sep, not dropped"
         assert len(sun) == 1 and abs(sun[0].accepted_bdt_crore - 11918.86) < 1e-6, \
             "the genuine 06-Sep operation must stay on its own date"
+
+
+class TestReleaseTypeGuard:
+    """BB's press feed carries more than OMO. A Treasury-bill auction release
+    parsed as OMO turned its table header 'OF BILLS AUCTIONED' into an
+    instrument (OF_BILLS_AUCTIONED), which the integrity gate then flags as
+    unknown and fails every refresh run. Only a real OMO release may be parsed."""
+
+    def test_treasury_bill_auction_release_is_rejected(self):
+        from fetchers.omo import _is_omo_release
+        auction = (
+            "Bangladesh Bank\nPress Release\n"
+            "Treasury Bills Auctions held on 06 September 2026\n"
+            "PARTICULARS AMOUNT TO BE BIDS OFFERED BIDS ACCEPTED\n"
+            "OF BILLS AUCTIONED\n"
+        )
+        assert not _is_omo_release(auction), \
+            "a T-bill auction release must never be parsed as OMO"
+
+    def test_genuine_omo_release_is_accepted(self):
+        from fetchers.omo import _is_omo_release
+        assert _is_omo_release(
+            "Open Market Operations as on 06 September 2026\n"
+            "IBLF 7-Days 11,918.86 11,918.86 3.00 0.00 11,918.86\n"
+        )
