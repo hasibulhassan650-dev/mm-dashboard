@@ -3,6 +3,10 @@ fiscal_year: "2026-27"
 # TODO: load the full official FY2026-27 gazette list when published; entries
 # below are only what is confirmed so far.
 holidays:
+  # Bank half-yearly closing — data-confirmed (market-wide silence on a weekday).
+  - date: "2026-07-01"
+    name: "Bank holiday - half-yearly closing (data-confirmed)"
+    type: INFERRED_CLOSURE
   # Data-confirmed closure: on 2026-08-05 the money market was shut — call money,
   # reference rates and OMO all had ZERO activity, while 04-Aug and 06-Aug were
   # both fully active (6 call-money / 6 ref-rate rows, live OMO). An isolated

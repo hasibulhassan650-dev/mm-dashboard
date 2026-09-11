@@ -51,10 +51,35 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
             if r[0] not in _YIELD_TENORS:
                 add("yields", f"unknown tenor label '{r[0]}'")
 
-        # ---- OMO (the instrument-mislabel guard) ----
-        for r in q("SELECT transaction_date, instrument, tenor_days, rate_pct FROM omo_transactions "
-                   "WHERE instrument = 'CB_REPO' AND rate_pct IS NOT NULL AND (rate_pct < 8 OR rate_pct > 12)"):
-            add("omo", f"{r[0]} CB_REPO rate {r[3]}% — outside policy band (likely IBLF/AR mislabel)")
+        # ---- OMO rate fingerprint: a label must match the rate it printed ----
+        # Every BB facility carries a signature rate: SDF = corridor floor (~7.5,
+        # overnight), SLF = ceiling (~11–11.5, overnight), repo/AR = policy rate
+        # (~9.5–10), IBLF = an Islamic profit RANGE or a fixed rate ≤5, CM_REPO =
+        # 4.75/90D, MLS = 5.25/28D. A label that contradicts its rate is a block-
+        # attribution error in the parser. Mar–Jun 2026: 55 such rows, including
+        # 13 SDF ABSORPTIONS stored as AR INJECTIONS (sign errors in net liquidity)
+        # and the 15-Jun IBLF stored as CB_REPO that produced the 5,703→13,622 jump.
+        # Bands are tolerant to modest policy moves; a regime change needs review.
+        for r in q("SELECT transaction_date, instrument, tenor_days, rate_pct, rate_range "
+                   "FROM omo_transactions WHERE accepted_bdt_crore > 0 AND rate_pct IS NOT NULL"):
+            d, inst, ten, rate, rng = r[0], r[1], int(r[2] or 0), float(r[3]), r[4]
+            lo = None
+            if rng:
+                try: lo = float(str(rng).split('-')[0])
+                except Exception: lo = None
+            want = None
+            if ten == 1 and 7.0 <= rate <= 8.0:                          want = "SDF"
+            elif ten == 1 and 10.5 <= rate <= 12.0:                      want = "SLF"
+            elif rng and lo is not None and lo <= 7.0:                   want = "IBLF"
+            elif ten == 90 and abs(rate - 4.75) < 1e-6:                  want = "CM_REPO"
+            elif ten == 28 and abs(rate - 5.25) < 1e-6:                  want = "MLS"
+            elif rate <= 5.0 and inst in ("AR", "CB_REPO", "SLF"):        want = "IBLF"
+            elif 9.0 <= rate <= 10.5 and not rng and inst in ("IBLF", "MLS", "SLF", "SDF"):
+                want = "CB_REPO/AR"
+            ok = want is None or want == inst or (want == "CB_REPO/AR" and inst in ("CB_REPO", "AR"))
+            if not ok:
+                add("omo", f"{d} {inst} {ten}D @{rate}%{' ('+str(rng)+')' if rng else ''} — rate fingerprint "
+                           f"says {want}: instrument mislabeled (parser block-attribution error)")
         for r in q("SELECT transaction_date, tenor_days FROM omo_transactions "
                    "WHERE instrument = 'SDF' AND tenor_days <> 1"):
             add("omo", f"{r[0]} SDF tenor {r[1]}D — SDF is overnight-only")
@@ -109,7 +134,7 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
             "WHERE transaction_date >= :lo AND transaction_date <= :hi", lo=_lo, hi=today)
         cbrepo_dates = _dset(
             "SELECT DISTINCT transaction_date FROM omo_transactions "
-            "WHERE instrument = 'CB_REPO' AND transaction_date >= :lo AND transaction_date <= :hi",
+            "WHERE instrument = 'CB_REPO' AND accepted_bdt_crore > 0 AND transaction_date >= :lo AND transaction_date <= :hi",
             lo=_lo, hi=today)
         # Market-activity signature: a day the WHOLE money market traded. If call
         # money AND reference rates were also silent on a day OMO is missing, the
@@ -143,6 +168,49 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
                                f"it. Confirm {d} was a working day (not a bank holiday).")
             d += datetime.timedelta(days=1)
 
+        # ---- OMO ledger reconciliation: live tranches vs BB's printed maturities ----
+        # BB prints, per instrument per day, the amount that MATURED. Our outstanding
+        # is the sum of live tranches, so the tranches WE hold maturing on day D must
+        # equal BB's printed maturity for D. BB's figure is principal PLUS interest/
+        # profit, so each tranche is grown by rate×tenor/365 before comparing, which
+        # lets the tolerance be tight. A shortfall = a missing/misdated injection (a
+        # dropped or double-dated release); an excess = a phantom tranche. Either one
+        # silently corrupts outstanding (Jun-2026: IBLF read 5,703→13,622 on a real
+        # net of 3,114 because the 15-Jun injection was never stored). Recent window
+        # only — tranches placed before our history began can't be reconciled, and
+        # results publish with a lag.
+        _rlo = today - datetime.timedelta(days=30)
+        _rhi = today - datetime.timedelta(days=2)
+        _d = lambda v: datetime.date.fromisoformat(v[:10]) if isinstance(v, str) else v
+        try:
+            printed = {}
+            for r in q("SELECT instrument, transaction_date, SUM(COALESCE(maturity_bdt_crore,0)) "
+                       "FROM omo_transactions WHERE transaction_date BETWEEN :lo AND :hi "
+                       "GROUP BY instrument, transaction_date", lo=_rlo, hi=_rhi):
+                if r[2] and float(r[2]) > 0:
+                    printed[(r[0], _d(r[1]))] = float(r[2])
+            live = {}
+            for r in q("SELECT instrument, maturity_date, accepted_bdt_crore, rate_pct, tenor_days "
+                       "FROM omo_transactions WHERE accepted_bdt_crore > 0 "
+                       "AND maturity_date BETWEEN :lo AND :hi", lo=_rlo, hi=_rhi):
+                k = (r[0], _d(r[1]))
+                p, rate, ten = float(r[2] or 0), float(r[3] or 0), int(r[4] or 0)
+                live[k] = live.get(k, 0.0) + p * (1 + rate / 100 * ten / 365)
+            # A tranche placed before our OMO history began (up to 180 days for
+            # AR/SLS/SRF) can mature inside the window with no record of the
+            # injection — that is the history boundary, not a missing release.
+            hs = q("SELECT MIN(transaction_date) FROM omo_transactions")[0][0]
+            hist_start = _d(hs) if hs else None
+            for (inst, d), bb in sorted(printed.items(), key=lambda x: (x[0][1], x[0][0])):
+                ours = live.get((inst, d), 0.0)
+                if ours < bb and hist_start and d - datetime.timedelta(days=180) < hist_start:
+                    continue                          # possibly pre-window — can't judge
+                if abs(ours - bb) > max(0.015 * bb, 10):
+                    kind = "missing/misdated injection" if ours < bb else "phantom tranche"
+                    add("omo-ledger", f"{d} {inst}: tranches maturing {ours:,.0f} cr != BB printed "
+                                      f"{bb:,.0f} cr — {kind}; outstanding is wrong until fixed")
+        except Exception as exc:
+            add("omo-ledger", f"reconciliation failed ({exc})")
         # ---- maturity principal must equal the security's outstanding face ----
         # A G-sec redeems its FULL outstanding at maturity. If a maturity event's
         # principal differs from the security's outstanding, the event was built

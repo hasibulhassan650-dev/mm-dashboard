@@ -281,3 +281,62 @@ class TestReleaseTypeGuard:
             "Open Market Operations as on 06 September 2026\n"
             "IBLF 7-Days 11,918.86 11,918.86 3.00 0.00 11,918.86\n"
         )
+
+    def test_wrapped_column_header_is_never_an_instrument(self):
+        # 17-Jun-2026 (pr14126): the column header "Amount Amount" wrapped onto its
+        # own line where the parser expected a product name, so the IBLF operation
+        # was stored under the instrument AMOUNT_AMOUNT. Header vocabulary must
+        # never become a product; the row keeps the real instrument.
+        text = (
+            "Open Market Operations as on 17 June 2026\n"
+            "IBLF\n"
+            "Amount Amount\n"
+            "7-Days 1,109.42 1,109.42 4.00 -716.61 392.81\n"
+            "SDF 1-Day -2,000.00 -2,000.00 7.50 0.00 -2,000.00\n"
+        )
+        from fetchers.omo import _parse_via_text
+        rows = _parse_via_text(text, datetime.date(2026, 6, 17), "pr14126.pdf")
+        insts = {r["instrument"] for r in rows}
+        assert "AMOUNT_AMOUNT" not in insts, "a wrapped column header was stored as an instrument"
+        by = {(r["instrument"], r["tenor_days"]): r for r in rows}
+        assert ("IBLF", 7) in by and abs(by[("IBLF", 7)]["accepted_bdt_crore"] - 1109.42) < 0.01
+
+
+class TestRateFingerprint:
+    """The rate BB prints identifies the facility unambiguously. When the parser's
+    block attribution slips, a row inherits a neighbouring instrument's name —
+    Mar–Jun 2026 had 55 such rows, including 13 SDF ABSORPTIONS stored as AR
+    INJECTIONS (sign errors in net liquidity) and the 15-Jun IBLF stored as
+    CB_REPO that produced the 5,703→13,622 outstanding jump. The rate must win."""
+
+    def _parse(self, text, d):
+        from fetchers.omo import _parse_via_text
+        return _parse_via_text(text, d, "pr_test.pdf")
+
+    def test_collapsed_block_is_recovered_from_rates(self):
+        # 14-May-2026 (pr14079): every row printed under "AR"
+        text = ("Open Market Operations as on 14 May 2026\n"
+                "AR 7-Days 155.00 155.00 4.00-5.37 -95.07 59.93\n"      # Islamic range → IBLF
+                "AR 14-Days 250.00 250.00 4.50 -413.63 -163.63\n"       # fixed ≤5     → IBLF
+                "AR 180-Days 83.75 83.75 10.00 0.00 83.75\n"            # policy rate  → AR (kept)
+                "AR 1-Day 78.59 78.59 11.50 -51.75 26.84\n"             # ceiling o/n  → SLF
+                "AR 1-Day -997.00 -997.00 7.50 5896.21 4899.21\n")      # floor o/n    → SDF absorption
+        got = {(r["instrument"], r["tenor_days"]): r["direction"] for r in self._parse(text, datetime.date(2026, 5, 14))}
+        assert got == {("IBLF", 7): "INJECTION", ("IBLF", 14): "INJECTION", ("AR", 180): "INJECTION",
+                       ("SLF", 1): "INJECTION", ("SDF", 1): "ABSORPTION"}, got
+
+    def test_islamic_range_under_cb_repo_label_is_iblf(self):
+        # 15-Jun-2026 (pr14120): the IBLF line stored as CB_REPO — the exact row
+        # behind the user's 22-Jun jump. CB Repo never prints a profit range.
+        text = ("Open Market Operations as on 15 June 2026\n"
+                "CB Repo 7-Days 4,799.94 4,799.94 3.00-5.37 -8,505.39 -3,705.45\n")
+        r = self._parse(text, datetime.date(2026, 6, 15))[0]
+        assert r["instrument"] == "IBLF" and r["direction"] == "INJECTION"
+
+    def test_consistent_labels_are_left_alone(self):
+        text = ("Open Market Operations as on 16 June 2026\n"
+                "CB Repo 7-Days 1,000.00 1,000.00 9.50 0.00 1,000.00\n"
+                "IBLF 7-Days 500.00 500.00 3.00-5.25 0.00 500.00\n"
+                "SDF 1-Day -200.00 -200.00 7.50 0.00 -200.00\n")
+        got = {r["instrument"] for r in self._parse(text, datetime.date(2026, 6, 16))}
+        assert got == {"CB_REPO", "IBLF", "SDF"}

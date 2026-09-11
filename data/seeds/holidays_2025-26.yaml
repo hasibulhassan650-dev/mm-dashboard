@@ -1,5 +1,10 @@
 fiscal_year: "2025-26"
-# Source: Bangladesh Bank holiday circular (update with confirmed Eid dates)
+# Source: Bangladesh Bank holiday circular + DATA VERIFICATION.
+# The original "approximate - update on moon sighting" Eid dates were never
+# updated and turned out WRONG (the money market traded on 30/31-Mar, 01-Apr and
+# 07-Jun). Every date below is cross-checked against actual market activity:
+# a listed holiday must show NO call-money, NO reference-rate and NO OMO prints.
+# INFERRED_CLOSURE = confirmed from that market-wide silence on a weekday.
 holidays:
   - date: "2026-02-21"
     name: "Shaheed Dibosh & International Mother Language Day"
@@ -7,27 +12,41 @@ holidays:
   - date: "2026-03-17"
     name: "Birthday of Bangabandhu Sheikh Mujibur Rahman"
     type: GOVT_GAZETTE
+  # Eid ul Fitr 2026 — real block (Fri/Sat 20-21 Mar are the weekend between)
+  - date: "2026-03-18"
+    name: "Market closed (data-confirmed; Eid ul Fitr block)"
+    type: INFERRED_CLOSURE
+  - date: "2026-03-19"
+    name: "Market closed (data-confirmed; Eid ul Fitr block)"
+    type: INFERRED_CLOSURE
+  - date: "2026-03-22"
+    name: "Market closed (data-confirmed; Eid ul Fitr block)"
+    type: INFERRED_CLOSURE
+  - date: "2026-03-23"
+    name: "Market closed (data-confirmed; Eid ul Fitr block)"
+    type: INFERRED_CLOSURE
   - date: "2026-03-26"
     name: "Independence Day"
     type: GOVT_GAZETTE
-  - date: "2026-03-30"
-    name: "Eid ul Fitr Day 1 (approximate - update on moon sighting)"
-    type: MOON_SIGHTING
-  - date: "2026-03-31"
-    name: "Eid ul Fitr Day 2 (approximate)"
-    type: MOON_SIGHTING
-  - date: "2026-04-01"
-    name: "Eid ul Fitr Day 3 (approximate)"
-    type: MOON_SIGHTING
+  - date: "2026-04-14"
+    name: "Pohela Boishakh - Bengali New Year (data-confirmed)"
+    type: INFERRED_CLOSURE
   - date: "2026-05-01"
     name: "May Day (International Labour Day)"
     type: GOVT_GAZETTE
-  - date: "2026-06-05"
-    name: "Eid ul Adha Day 1 (approximate)"
-    type: MOON_SIGHTING
-  - date: "2026-06-06"
-    name: "Eid ul Adha Day 2 (approximate)"
-    type: MOON_SIGHTING
-  - date: "2026-06-07"
-    name: "Eid ul Adha Day 3 (approximate)"
-    type: MOON_SIGHTING
+  # Eid ul Adha 2026 — real block (Fri/Sat 29-30 May are the weekend between)
+  - date: "2026-05-25"
+    name: "Market closed (data-confirmed; Eid ul Adha block)"
+    type: INFERRED_CLOSURE
+  - date: "2026-05-26"
+    name: "Market closed (data-confirmed; Eid ul Adha block)"
+    type: INFERRED_CLOSURE
+  - date: "2026-05-27"
+    name: "Market closed (data-confirmed; Eid ul Adha block)"
+    type: INFERRED_CLOSURE
+  - date: "2026-05-28"
+    name: "Market closed (data-confirmed; Eid ul Adha block)"
+    type: INFERRED_CLOSURE
+  - date: "2026-05-31"
+    name: "Market closed (data-confirmed; Eid ul Adha block)"
+    type: INFERRED_CLOSURE

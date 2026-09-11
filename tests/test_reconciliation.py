@@ -126,3 +126,59 @@ def test_missing_omo_on_open_market_day_is_flagged(monkeypatch):
     rep = _run_check(monkeypatch, eng)
     assert any("no OMO operation" in i and str(b) in i for i in rep["issues"]), \
         f"missing OMO on an open-market day {b} should be flagged: {rep['issues']}"
+
+
+# ── OMO ledger: live tranches must reconcile to BB's printed maturities ──────
+# The Jun-2026 bug: IBLF outstanding read 5,703→13,622 on a real net of 3,114
+# because the 15-Jun injection was never stored, so nothing expired on the 22nd
+# and the gross 7,919 was added instead of the net. BB prints what matured each
+# day; that figure is the ground truth the tranche ledger must match.
+
+def _ledger_db():
+    eng = create_engine("sqlite:///:memory:"); dbmod.Base.metadata.create_all(eng)
+    return eng, sessionmaker(bind=eng)()
+
+def test_consistent_tranche_ledger_is_quiet(monkeypatch):
+    D = datetime.date.today() - datetime.timedelta(days=5)
+    eng, s = _ledger_db()
+    # a 7-day IBLF placed a week ago, maturing on D …
+    s.add(OMOTransaction(transaction_date=D - datetime.timedelta(days=7), maturity_date=D,
+                         instrument="IBLF", tenor_days=7, accepted_bdt_crore=1000.0, rate_pct=3.0,
+                         direction="INJECTION"))
+    # … and BB's own line on D saying that (principal + 7 days' profit) matured
+    s.add(OMOTransaction(transaction_date=D, maturity_date=D, instrument="IBLF", tenor_days=7,
+                         accepted_bdt_crore=0.0, maturity_bdt_crore=1000.0 * (1 + 0.03 * 7 / 365),
+                         direction="INJECTION"))
+    s.commit(); s.close()
+    rep = _run_check(monkeypatch, eng)
+    assert rep["by_table"].get("omo-ledger", 0) == 0, f"consistent ledger falsely flagged: {rep['issues']}"
+
+def test_missing_injection_is_flagged_by_ledger(monkeypatch):
+    # BB says 4,804 of IBLF matured on D, but we hold NO tranche maturing then —
+    # the injection that created it was never stored (the real 15-Jun case).
+    D = datetime.date.today() - datetime.timedelta(days=5)
+    eng, s = _ledger_db()
+    # history began long ago, so a 7-day tranche maturing on D is NOT pre-window
+    s.add(OMOTransaction(transaction_date=D - datetime.timedelta(days=300), maturity_date=D - datetime.timedelta(days=293),
+                         instrument="IBLF", tenor_days=7, accepted_bdt_crore=1.0, direction="INJECTION"))
+    s.add(OMOTransaction(transaction_date=D, maturity_date=D, instrument="IBLF", tenor_days=7,
+                         accepted_bdt_crore=0.0, maturity_bdt_crore=4804.23, direction="INJECTION"))
+    s.commit(); s.close()
+    rep = _run_check(monkeypatch, eng)
+    hits = [i for i in rep["issues"] if i.startswith("omo-ledger") and "missing" in i]
+    assert hits, f"missing injection must be flagged: {rep['issues']}"
+
+def test_phantom_tranche_is_flagged_by_ledger(monkeypatch):
+    # we hold a 10,000 tranche maturing on D but BB says only 1,000 matured —
+    # a duplicate/misdated tranche is inflating outstanding.
+    D = datetime.date.today() - datetime.timedelta(days=5)
+    eng, s = _ledger_db()
+    s.add(OMOTransaction(transaction_date=D - datetime.timedelta(days=7), maturity_date=D,
+                         instrument="IBLF", tenor_days=7, accepted_bdt_crore=10000.0, rate_pct=3.0,
+                         direction="INJECTION"))
+    s.add(OMOTransaction(transaction_date=D, maturity_date=D, instrument="IBLF", tenor_days=7,
+                         accepted_bdt_crore=0.0, maturity_bdt_crore=1000.0, direction="INJECTION"))
+    s.commit(); s.close()
+    rep = _run_check(monkeypatch, eng)
+    hits = [i for i in rep["issues"] if i.startswith("omo-ledger") and "phantom" in i]
+    assert hits, f"phantom tranche must be flagged: {rep['issues']}"

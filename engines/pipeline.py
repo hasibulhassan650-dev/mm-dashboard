@@ -444,9 +444,9 @@ def _store_omo_txns(session, txns: list, now: datetime.datetime) -> tuple:
         # above would silently drop it. That CB Repo is a different (Tuesday)
         # operation BB double-dated — re-home the whole older release to its
         # Tuesday instead of losing it. (Cross-run duplicates are caught below.)
-        if not any(k["instrument"] == "CB_REPO" for k in keep):
+        if not any(k["instrument"] == "CB_REPO" and k["accepted_bdt_crore"] > 0 for k in keep):
             older_cb_pub = max((_pub(x) for x in rows
-                                if _pub(x) != latest_pub and x["instrument"] == "CB_REPO"),
+                                if _pub(x) != latest_pub and x["instrument"] == "CB_REPO" and x["accepted_bdt_crore"] > 0),
                                default=datetime.date.min)
             if older_cb_pub != datetime.date.min:
                 target = _prior_free_tuesday(session, d)
@@ -508,8 +508,8 @@ def _store_omo_txns(session, txns: list, now: datetime.datetime) -> tuple:
         # only fires when exactly one side has CB Repo and the prior Tuesday is a
         # clean, empty working day. Loud, so the desk can confirm the date.
         if existing and inc_pub is not None and stored_pub is not None and inc_pub != stored_pub:
-            stored_has_cb = any(e.instrument == "CB_REPO" for e in existing)
-            inc_has_cb    = any(r["instrument"] == "CB_REPO" for r in keep)
+            stored_has_cb = any(e.instrument == "CB_REPO" and (e.accepted_bdt_crore or 0) > 0 for e in existing)
+            inc_has_cb    = any(r["instrument"] == "CB_REPO" and r["accepted_bdt_crore"] > 0 for r in keep)
             if stored_has_cb != inc_has_cb:
                 target = _prior_free_tuesday(session, d)
                 if target is not None:

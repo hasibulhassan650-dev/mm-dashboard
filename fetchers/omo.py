@@ -103,7 +103,7 @@ def _extract_label(line: str) -> Optional[str]:
     if not m:
         return None
     label = re.sub(r'\s+', ' ', m.group(1)).strip()
-    if not label or len(label) > 30 or _should_skip(label):
+    if not label or len(label) > 30 or _should_skip(label) or _is_header_vocab(label):
         return None
     return label
 
@@ -183,6 +183,50 @@ def _is_omo_release(full_text: str) -> bool:
     instrument and fail every refresh run.
     """
     return "open market operation" in (full_text or "").lower()
+
+
+_HEADER_WORDS = {"amount", "amounts", "offered", "accepted", "settlement", "maturity",
+                 "net", "rate", "rates", "tenor", "tenors", "instrument", "instruments",
+                 "injection", "absorption", "psr", "epr", "total", "crore", "taka", "tk",
+                 "in", "and", "of", "the"}
+
+
+def _is_header_vocab(label: str) -> bool:
+    """True when a label is built ONLY of column-header words — a wrapped table
+    header such as "Amount Amount", never a product. One of these was stored as
+    the instrument AMOUNT_AMOUNT, swallowing the 17-Jun-2026 IBLF operation."""
+    words = [w for w in re.split(r"[^a-z]+", label.lower()) if w]
+    return bool(words) and all(w in _HEADER_WORDS for w in words)
+
+
+def _fingerprint(inst: str, tenor_days: int, rate: Optional[float], rate_range: Optional[str],
+                 txn_date: datetime.date):
+    """(instrument, direction) the RATE says this row is, or None if consistent.
+
+    Every BB facility prints a signature rate: SDF = corridor floor (~7.5,
+    overnight), SLF = ceiling (~11–11.5, overnight), repo/AR = policy rate
+    (~9.5–10), IBLF = an Islamic profit RANGE or fixed ≤5, CM_REPO = 4.75/90D,
+    MLS = 5.25/28D. A block-attribution slip can hand a row the neighbouring
+    instrument's name (Mar–Jun 2026: 55 rows, incl. 13 SDF ABSORPTIONS stored
+    as AR INJECTIONS and the 15-Jun IBLF stored as CB_REPO). The rate is
+    unambiguous, so it wins. Bands tolerate modest policy moves."""
+    if rate is None:
+        return None
+    lo = None
+    if rate_range:
+        try: lo = float(str(rate_range).split('-')[0])
+        except Exception: lo = None
+    if tenor_days == 1 and 7.0 <= rate <= 8.0:                 want = ("SDF", "ABSORPTION")
+    elif tenor_days == 1 and 10.5 <= rate <= 12.0:             want = ("SLF", "INJECTION")
+    elif rate_range and lo is not None and lo <= 7.0:          want = ("IBLF", "INJECTION")
+    elif tenor_days == 90 and abs(rate - 4.75) < 1e-6:         want = ("CM_REPO", "INJECTION")
+    elif tenor_days == 28 and abs(rate - 5.25) < 1e-6:         want = ("MLS", "INJECTION")
+    elif rate <= 5.0 and inst in ("AR", "CB_REPO", "SLF"):     want = ("IBLF", "INJECTION")
+    elif 9.0 <= rate <= 10.5 and not rate_range and inst in ("IBLF", "MLS", "SLF", "SDF"):
+        want = (("CB_REPO" if txn_date.weekday() == 1 else "AR"), "INJECTION")   # CB Repo is the Tuesday op
+    else:
+        return None
+    return None if want[0] == inst else want
 
 
 def _should_skip(line: str) -> bool:
@@ -351,11 +395,27 @@ def _build_txn(instr: str, direction: str, tenor_days: int,
                accepted: float, maturity: float, rate: Optional[float],
                txn_date: datetime.date, pdf_url: str,
                rate_range: Optional[str] = None) -> Optional[Dict]:
-    """Build a transaction dict. Only stores rows where a new acceptance happened."""
+    """Build a transaction dict.
+
+    A NEW acceptance becomes a live tranche (accepted>0) that matures on the
+    next WORKING day on/after txn_date+tenor — BB settles on working days, so an
+    overnight SDF placed Thursday matures Sunday. (Calendar-day maturities put
+    ~17% of tranches on impossible days and broke the outstanding reconciliation.)
+
+    A MATURITY-ONLY line (accepted=0, BB reports X maturing today with no new
+    deal) is kept too, with accepted=0 so every outstanding sum ignores it — but
+    its printed maturity is BB's own statement of what expired that day, which
+    is what the tranche ledger is reconciled against. Dropping these lines left
+    the reconciliation blind (e.g. a 1-day finetuning repo's maturity vanished).
+    """
+    import calendar_utils
     if abs(accepted) < 0.01:
-        return None
-    mat_date = (txn_date + datetime.timedelta(days=tenor_days)
-                if abs(accepted) >= 0.01 else txn_date)
+        if not maturity or abs(maturity) < 0.01:
+            return None                       # empty line — nothing happened
+        accepted, mat_date = 0.0, txn_date    # maturity-only: matured TODAY
+    else:
+        mat_date = calendar_utils.get_next_working_day(
+            txn_date + datetime.timedelta(days=tenor_days))["result_date"]
     return {
         "transaction_date":   txn_date,
         "maturity_date":      mat_date,
@@ -482,7 +542,7 @@ def _parse_via_text(full_text: str, txn_date: datetime.date, pdf_url: str) -> Li
             m = _match_instrument(line)
             if m:
                 lbl, dirn, known = m[0], m[1], True
-            elif re.fullmatch(r'[A-Za-z][A-Za-z0-9/.\s\-]{0,28}', line):
+            elif re.fullmatch(r'[A-Za-z][A-Za-z0-9/.\s\-]{0,28}', line) and not _is_header_vocab(line):
                 lbl, dirn, known = (re.sub(r'[^A-Z0-9]+', '_', line.upper()).strip('_')[:30] or None), None, False
             else:
                 lbl = None
@@ -548,7 +608,8 @@ def _parse_via_text(full_text: str, txn_date: datetime.date, pdf_url: str) -> Li
                              rate_range=r.get("rate_range"))
             if txn:
                 transactions.append(txn)
-                emitted += 1
+                if txn["accepted_bdt_crore"] > 0:
+                    emitted += 1        # maturity-only lines never raise the alarm
         # Only alarm on an unrecognised instrument that actually STORED a
         # transaction — maturity-only rows (accepted=0, e.g. a wrapped "for
         # maintaining …" fragment) produce nothing and must not raise noise.
@@ -565,6 +626,19 @@ def _parse_via_text(full_text: str, txn_date: datetime.date, pdf_url: str) -> Li
         if txn["instrument"] == "SDF" and txn["tenor_days"] > 1:
             txn["instrument"] = "AR"
             txn["direction"] = "INJECTION"
+
+    # Rate fingerprint: the rate BB printed is unambiguous, so if it contradicts
+    # the label the row was mis-attributed to a neighbouring block — fix label
+    # AND direction here so a re-parse can never re-corrupt the stored history.
+    fixed = []
+    for txn in transactions:
+        fp = _fingerprint(txn["instrument"], txn["tenor_days"], txn.get("rate_pct"),
+                          txn.get("rate_range"), txn_date)
+        if fp:
+            fixed.append(f"{txn['instrument']}->{fp[0]} {txn['tenor_days']}D@{txn.get('rate_pct')}")
+            txn["instrument"], txn["direction"] = fp
+    if fixed:
+        log.warning("OMO rate-fingerprint relabel in %s: %s", Path(pdf_url).name, fixed)
 
     return transactions
 
