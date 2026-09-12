@@ -34,21 +34,46 @@ _MAX_ITER         = 14                 # safety: no holiday block should exceed 
 
 # ── In-memory holiday set (loaded from DB or seed file at startup) ─────────────
 _holiday_set: Set[datetime.date] = set()
+# Weekend dates the government declared WORKING (e.g. Sat 23-May-2026 to
+# compensate for the Eid ul Adha block; Sat 17/24-May-2025). The money market
+# traded on them — call money, reference rates and an FX auction all printed —
+# so a coupon, maturity or OMO settling that day is paid THAT day, not rolled.
+# Stored in holiday_calendar with holiday_type = WORKING_DAY.
+WORKING_DAY_TYPE = "WORKING_DAY"
+_working_weekend_set: Set[datetime.date] = set()
 
 
-def load_holidays(holidays: Set[datetime.date]) -> None:
+def load_holidays(holidays: Set[datetime.date],
+                  working_weekends: Set[datetime.date] = None) -> None:
     """
     Load the holiday set into memory.
     Call this at application start and whenever the holiday table changes.
     Weekends do NOT need to be included — they are handled by weekday check.
+    `working_weekends` are Fri/Sat dates declared working days.
     """
-    global _holiday_set
+    global _holiday_set, _working_weekend_set
     _holiday_set = set(holidays)
-    log.info("Holiday calendar loaded: %d public holidays", len(_holiday_set))
+    _working_weekend_set = set(working_weekends or ())
+    log.info("Holiday calendar loaded: %d public holidays, %d working weekends",
+             len(_holiday_set), len(_working_weekend_set))
+
+
+def load_calendar_rows(rows) -> None:
+    """Load from holiday_calendar ORM rows / (date, type) pairs — the ONE place
+    that knows a WORKING_DAY row is a working weekend, not a holiday."""
+    hols, work = set(), set()
+    for r in rows:
+        d, t = (r.calendar_date, r.holiday_type) if hasattr(r, "calendar_date") else (r[0], r[1])
+        (work if t == WORKING_DAY_TYPE else hols).add(d)
+    load_holidays(hols, work)
 
 
 def get_loaded_holidays() -> frozenset:
     return frozenset(_holiday_set)
+
+
+def get_loaded_working_weekends() -> frozenset:
+    return frozenset(_working_weekend_set)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -89,7 +114,7 @@ def get_next_working_day(
         wd = candidate.weekday()
 
         # Check: is this a valid working day?
-        if wd in _WORKING_WEEKDAYS and candidate not in hols:
+        if (wd in _WORKING_WEEKDAYS or candidate in _working_weekend_set) and candidate not in hols:
             return {
                 "result_date": candidate,
                 "input_date":  date,
@@ -190,7 +215,19 @@ def roll_date(raw_date: datetime.date, holidays: Set[datetime.date] = None) -> t
 def is_working_day(d: datetime.date, holidays: Set[datetime.date] = None) -> bool:
     """Return True if d is a valid Bangladesh working day."""
     hols = holidays if holidays is not None else _holiday_set
-    return d.weekday() in _WORKING_WEEKDAYS and d not in hols
+    return (d.weekday() in _WORKING_WEEKDAYS or d in _working_weekend_set) and d not in hols
+
+
+def previous_working_day(d: datetime.date, holidays: Set[datetime.date] = None) -> datetime.date:
+    """The last working day STRICTLY before d. Used to recover an auction date
+    (T) from the issue date BB prints (T+1 working day)."""
+    hols = holidays if holidays is not None else _holiday_set
+    c = d - datetime.timedelta(days=1)
+    for _ in range(_MAX_ITER):
+        if is_working_day(c, hols):
+            return c
+        c -= datetime.timedelta(days=1)
+    raise ValueError(f"previous_working_day: no working day within {_MAX_ITER} days before {d}")
 
 
 def is_weekend(d: datetime.date) -> bool:

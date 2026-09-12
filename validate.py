@@ -55,11 +55,13 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
         # Every BB facility carries a signature rate: SDF = corridor floor (~7.5,
         # overnight), SLF = ceiling (~11–11.5, overnight), repo/AR = policy rate
         # (~9.5–10), IBLF = an Islamic profit RANGE or a fixed rate ≤5, CM_REPO =
-        # 4.75/90D, MLS = 5.25/28D. A label that contradicts its rate is a block-
-        # attribution error in the parser. Mar–Jun 2026: 55 such rows, including
-        # 13 SDF ABSORPTIONS stored as AR INJECTIONS (sign errors in net liquidity)
-        # and the 15-Jun IBLF stored as CB_REPO that produced the 5,703→13,622 jump.
+        # 4.75/90D. A label that contradicts its rate is a block-attribution
+        # error in the parser. Mar–Jun 2026: 55 such rows, including 13 SDF
+        # ABSORPTIONS stored as AR INJECTIONS (sign errors in net liquidity) and
+        # the 15-Jun IBLF stored as CB_REPO that produced the 5,703→13,622 jump.
         # Bands are tolerant to modest policy moves; a regime change needs review.
+        # MLS (28D, Islamic) has no rate signature — 9.50 in Jun–Jul 2026, 5.25
+        # from Aug — so it is exempt in both directions (see fetchers/omo.py).
         for r in q("SELECT transaction_date, instrument, tenor_days, rate_pct, rate_range "
                    "FROM omo_transactions WHERE accepted_bdt_crore > 0 AND rate_pct IS NOT NULL"):
             d, inst, ten, rate, rng = r[0], r[1], int(r[2] or 0), float(r[3]), r[4]
@@ -72,17 +74,16 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
             elif ten == 1 and 10.5 <= rate <= 12.0:                      want = "SLF"
             elif rng and lo is not None and lo <= 7.0:                   want = "IBLF"
             elif ten == 90 and abs(rate - 4.75) < 1e-6:                  want = "CM_REPO"
-            elif ten == 28 and abs(rate - 5.25) < 1e-6:                  want = "MLS"
             elif rate <= 5.0 and inst in ("AR", "CB_REPO", "SLF"):        want = "IBLF"
-            elif 9.0 <= rate <= 10.5 and not rng and inst in ("IBLF", "MLS", "SLF", "SDF"):
+            elif 9.0 <= rate <= 10.5 and not rng and inst in ("IBLF", "SLF", "SDF"):
                 want = "CB_REPO/AR"
             ok = want is None or want == inst or (want == "CB_REPO/AR" and inst in ("CB_REPO", "AR"))
             if not ok:
                 add("omo", f"{d} {inst} {ten}D @{rate}%{' ('+str(rng)+')' if rng else ''} — rate fingerprint "
                            f"says {want}: instrument mislabeled (parser block-attribution error)")
-        for r in q("SELECT transaction_date, tenor_days FROM omo_transactions "
-                   "WHERE instrument = 'SDF' AND tenor_days <> 1"):
-            add("omo", f"{r[0]} SDF tenor {r[1]}D — SDF is overnight-only")
+        for r in q("SELECT transaction_date, instrument, tenor_days FROM omo_transactions "
+                   "WHERE instrument IN ('SDF', 'SLF') AND tenor_days <> 1"):
+            add("omo", f"{r[0]} {r[1]} tenor {r[2]}D — standing facilities are overnight-only")
         for r in q("SELECT DISTINCT instrument FROM omo_transactions"):
             if r[0] not in _OMO_INSTRUMENTS:
                 add("omo", f"unknown instrument '{r[0]}'")
@@ -126,7 +127,9 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
                 v = r[0]
                 out.add(datetime.date.fromisoformat(v[:10]) if isinstance(v, str) else v)
             return out
-        hol = _dset("SELECT calendar_date FROM holiday_calendar")
+        hol = _dset("SELECT calendar_date FROM holiday_calendar WHERE holiday_type <> 'WORKING_DAY'")
+        from calendar_utils import get_next_working_day, load_calendar_rows
+        load_calendar_rows(q("SELECT calendar_date, holiday_type FROM holiday_calendar"))  # working weekends too
         _lo = today - datetime.timedelta(days=21)
         _hi = today - datetime.timedelta(days=2)
         omo_dates = _dset(
@@ -202,6 +205,12 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
             hs = q("SELECT MIN(transaction_date) FROM omo_transactions")[0][0]
             hist_start = _d(hs) if hs else None
             for (inst, d), bb in sorted(printed.items(), key=lambda x: (x[0][1], x[0][0])):
+                if inst == "MLS":
+                    # Mudaraba Liquidity Support is repaid in PARTS as remittance
+                    # claims settle (Aug/Sep-2026: 1,340 placed 09-Aug came back as
+                    # 83 on 25-Aug + 1,262.40 on 06-Sep = 1,345.40 = principal +
+                    # profit). Per-day matching is meaningless for it.
+                    continue
                 ours = live.get((inst, d), 0.0)
                 if ours < bb and hist_start and d - datetime.timedelta(days=180) < hist_start:
                     continue                          # possibly pre-window — can't judge
@@ -211,6 +220,22 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
                                       f"{bb:,.0f} cr — {kind}; outstanding is wrong until fixed")
         except Exception as exc:
             add("omo-ledger", f"reconciliation failed ({exc})")
+        # ---- duplicate-content releases (BB re-published a stale table) ----
+        # Two 'as on' dates with an identical full row-set are one operation
+        # stored twice: BB's "as on 04 May 2026" was the 05-Apr table verbatim.
+        # The store refuses these; if one is ever in the DB, outstanding is
+        # double-counting a whole day's tranches for their entire tenor.
+        _sigs = {}
+        for r in q("SELECT transaction_date, instrument, tenor_days, accepted_bdt_crore, "
+                   "COALESCE(maturity_bdt_crore, 0) FROM omo_transactions"):
+            _sigs.setdefault(_d(r[0]), []).append((r[1], int(r[2] or 0), round(float(r[3] or 0), 2), round(float(r[4] or 0), 2)))
+        _seen = {}
+        for dd, rs in sorted(_sigs.items()):
+            key = tuple(sorted(rs))
+            if len(key) >= 3 and key in _seen:
+                add("omo", f"{dd} operation is a verbatim copy of {_seen[key]} — BB re-published a stale "
+                           f"table; reconstruct {dd} from printed maturities (see 04-May-2026)")
+            _seen.setdefault(key, dd)
         # ---- maturity principal must equal the security's outstanding face ----
         # A G-sec redeems its FULL outstanding at maturity. If a maturity event's
         # principal differs from the security's outstanding, the event was built
@@ -268,6 +293,147 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
                 if abs(a - e) > max(5.0, e * 0.005):
                     add("ladder-recon", f"{d} {label}: ladder {a:.0f} != events {e:.0f} mill "
                                         f"— daily_net_flow stale vs live rows; rebuild the flow pipeline")
+        # The BEST outflow (accepted when BB confirmed, else offered) is what the
+        # net-borrowing figure uses; it must track the confirmed amounts too.
+        best_evt: dict[str, float] = {}
+        for r in q("SELECT settlement_date, offered_amount_bdt_mill, accepted_amount_bdt_mill, outflow_status "
+                   "FROM auction_events WHERE settlement_date >= :lo AND settlement_date <= :horizon",
+                   lo=today - datetime.timedelta(days=60), horizon=horizon):
+            k = str(r[0])[:10]
+            v = r[2] if (r[3] == "CONFIRMED" and r[2] is not None) else (r[1] or 0.0)
+            best_evt[k] = best_evt.get(k, 0.0) + float(v)
+        ladder_best = {}
+        for r in q("SELECT flow_date, auction_outflow_best_mill FROM daily_net_flow "
+                   "WHERE flow_date >= :lo AND flow_date <= :horizon",
+                   lo=today - datetime.timedelta(days=60), horizon=horizon):
+            ladder_best[str(r[0])[:10]] = float(r[1] or 0.0)
+        for d in sorted(set(ladder_best) | set(best_evt)):
+            a, e = ladder_best.get(d, 0.0), best_evt.get(d, 0.0)
+            if abs(a - e) > max(5.0, e * 0.005):
+                add("ladder-recon", f"{d} auction-best: ladder {a:.0f} != events {e:.0f} mill "
+                                    f"— confirmed accepted amounts not reflected; rebuild the flow pipeline")
+
+        # ---- calendar vs market activity (the holiday table must match reality) ----
+        # A weekday on which call money, reference rates AND OMO are all silent is
+        # a bank holiday; if it is not in holiday_calendar every coupon, maturity,
+        # auction settlement and OMO maturity that day is booked on a day the
+        # market was shut. Conversely a listed holiday with prints is a wrong
+        # seed (the FY2025-26 "approximate" Eid dates), and a Fri/Sat with prints
+        # is a declared working day that must be seeded as WORKING_DAY (23-May-
+        # 2026). Sep-2026 audit: 11 real closures in FY2025-26 H1 were missing.
+        work_wk = _dset("SELECT calendar_date FROM holiday_calendar WHERE holiday_type = 'WORKING_DAY'")
+        _clo = datetime.date(2025, 7, 1)
+        _chi = today - datetime.timedelta(days=3)
+        act = {}
+        for tbl, col, cond in (("call_money_rates", "trade_date", ""),
+                               ("ref_rates", "trade_date", ""),
+                               ("omo_transactions", "transaction_date", " AND accepted_bdt_crore > 0")):
+            for dd in _dset(f"SELECT DISTINCT {col} FROM {tbl} WHERE {col} >= :lo AND {col} <= :hi{cond}",
+                            lo=_clo, hi=today):
+                act[dd] = act.get(dd, 0) + 1
+        d = _clo
+        while d <= _chi:
+            weekday = d.weekday() in (0, 1, 2, 3, 6)
+            if weekday and d not in hol and act.get(d, 0) == 0:
+                add("calendar", f"{d} ({d:%a}) — whole money market silent (no call money, ref rates or "
+                                f"OMO) but not in holiday_calendar: seed it as a closure or fix the fetchers")
+            elif d in hol and act.get(d, 0) > 0:
+                add("calendar", f"{d} ({d:%a}) listed as a holiday but the market printed — wrong seed")
+            elif not weekday and act.get(d, 0) > 0 and d not in work_wk:
+                add("calendar", f"{d} ({d:%a}) weekend with market prints — declared working day; "
+                                f"seed it as WORKING_DAY or settlements roll past it")
+            d += datetime.timedelta(days=1)
+
+        # ---- payment dates must be rolled under the CURRENT calendar ----
+        # Events are re-rolled every pipeline run, so a stale payment_date means
+        # the holiday table changed after the last run (or the run failed). 31
+        # coupons and 5 maturities were sitting on Eid/Pohela Boishakh closures.
+        for tbl in ("coupon_events", "maturity_events"):
+            n = 0
+            for r in q(f"SELECT isin, scheduled_date, payment_date FROM {tbl} "
+                       f"WHERE scheduled_date >= :lo", lo=_clo):
+                sd, pd_ = _d(r[1]), _d(r[2])
+                exp = get_next_working_day(sd)["result_date"]
+                if pd_ != exp:
+                    n += 1
+                    add("events-roll", f"{tbl} {r[0]} scheduled {sd} paid {pd_} but current calendar "
+                                       f"rolls to {exp} — re-run the pipeline")
+        # Auction settlement: PLANNED rows = next working day after the auction;
+        # CONFIRMED rows carry BB's actual issue date (may differ — that is the
+        # point). Past auctions must be CONFIRMED: an unconfirmed one means the
+        # result never arrived or never linked (all 267 were like this).
+        for r in q("SELECT auction_date, settlement_date, tenor_label, outflow_status FROM auction_events"):
+            ad, sd = _d(r[0]), _d(r[1])
+            if r[3] != "CONFIRMED":
+                exp = get_next_working_day(ad + datetime.timedelta(days=1))["result_date"]
+                if sd != exp:
+                    add("events-roll", f"auction {ad} {r[2]} settles {sd} but calendar says {exp}")
+                if ad < today - datetime.timedelta(days=5):
+                    add("auctions", f"{ad} {r[2]} still PLANNED {(today - ad).days} days later — BB result "
+                                    f"missing or not linked (confirm_auctions_from_results)")
+
+        # ---- auction results: date semantics ----
+        # BB's results page prints the ISSUE date; auction_date is the previous
+        # working day. Every row must carry both, in that order, on working days.
+        for r in q("SELECT auction_date, issue_date, tenor_label FROM primary_yield_snapshots "
+                   "WHERE auction_date >= :lo", lo=_clo):
+            ad, idt = _d(r[0]), _d(r[1]) if r[1] else None
+            if idt is None:
+                add("yields", f"{ad} {r[2]} has no issue_date — fetcher regressed to storing one date")
+            elif not (idt > ad):
+                add("yields", f"{ad} {r[2]} issue_date {idt} not after auction_date")
+            if not is_working_day(ad, hol):
+                add("yields", f"{ad} ({ad:%a}) {r[2]} auction dated on a non-working day")
+
+        # ---- OMO facility rates vs the policy corridor in force that day ----
+        # 7-day+ CB Repo / AR price AT the policy repo rate; SDF at the floor;
+        # SLF at the ceiling. A different rate is either a parser slip or a
+        # corridor change the history table has not recorded. Overnight CB Repo
+        # / AR fine-tuning is exempt: BB printed 10.00 for it while 7-day was
+        # 9.50 (13/17-Aug-2026) — verified against the PDFs. The first 7 days
+        # after a corridor change are exempt too: the Aug-2026 cut was "effective
+        # 02 August" but BB's 02-Aug AR and 04-Aug CB Repo still printed 10.00
+        # (verified); the first 9.50 print was 09-Aug.
+        ph = [(_d(r[0]), float(r[1]), float(r[2]), float(r[3])) for r in
+              q("SELECT effective_date, repo, slf, sdf FROM policy_rate_history "
+                "WHERE verified = TRUE ORDER BY effective_date")]
+        def _pol(dd):
+            cur = None
+            for e in ph:
+                if e[0] <= dd: cur = e
+            return cur
+        for r in q("SELECT transaction_date, instrument, tenor_days, rate_pct FROM omo_transactions "
+                   "WHERE accepted_bdt_crore > 0 AND rate_pct IS NOT NULL AND rate_range IS NULL "
+                   "AND instrument IN ('SDF','SLF','CB_REPO','AR') ORDER BY transaction_date"):
+            dd, inst, ten, rate = _d(r[0]), r[1], int(r[2] or 0), float(r[3])
+            p = _pol(dd)
+            if not p:
+                continue
+            exp = {"SDF": p[3], "SLF": p[2], "CB_REPO": p[1], "AR": p[1]}[inst]
+            if inst in ("CB_REPO", "AR") and ten <= 1:
+                continue
+            if dd - p[0] < datetime.timedelta(days=7):
+                continue
+            if abs(rate - exp) > 0.011:
+                add("omo-policy", f"{dd} {inst} {ten}D printed {rate}% but corridor in force says "
+                                  f"{exp}% — parser slip or policy_rate_history missing a change")
+
+        # ---- label hygiene (one label per series or charts/filters split) ----
+        for r in q("SELECT DISTINCT product FROM call_money_rates"):
+            if r[0] not in ("Overnight", "Short Notice", "Term"):
+                add("callmoney", f"unexpected product label '{r[0]}'")
+        for r in q("SELECT DISTINCT rate_type, product FROM ref_rates"):
+            if r[1] not in ("Overnight", "1W", "1M", "3M") or r[0] not in ("BOFR", "DOMMR"):
+                add("refrate", f"unexpected series label {r[0]}/{r[1]}")
+        for r in q("SELECT effective_date FROM policy_rate_history WHERE verified = FALSE"):
+            add("policy", f"unverified policy_rate_history row {r[0]} — drafts must not sit beside verified circulars")
+
+        # ---- flows on non-working days ----
+        for r in q("SELECT flow_date, total_inflow_bdt_mill, auction_outflow_best_mill FROM daily_net_flow "
+                   "WHERE flow_date >= :lo AND (total_inflow_bdt_mill > 0 OR auction_outflow_best_mill > 0)", lo=_clo):
+            fd = _d(r[0])
+            if not is_working_day(fd, hol):
+                add("flows", f"{fd} ({fd:%a}) books {r[1]:.0f} in / {r[2]:.0f} out on a non-working day")
 
         # ---- call money / ref rates ----
         for r in q("SELECT trade_date, average_rate_pct FROM call_money_rates "

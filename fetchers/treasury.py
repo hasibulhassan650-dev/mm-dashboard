@@ -14,6 +14,7 @@ Returned rows (list of dicts):
   tenor_years, cutoff_yield_pct, offered_bdt_crore, accepted_bdt_crore, source
 """
 import datetime
+import calendar_utils
 import logging
 import re
 from typing import Dict, List, Optional
@@ -181,7 +182,11 @@ def _parse_page(html: str, snapshot_date: datetime.date) -> List[Dict]:
 
             results.append({
                 "snapshot_date":     snapshot_date,
-                "auction_date":      issue_date or snapshot_date,
+                # The page prints the ISSUE date; the auction was the previous
+                # working day (bills: Sun→Mon, bonds: Tue→Wed, holidays skipped).
+                "auction_date":      (calendar_utils.previous_working_day(issue_date)
+                                      if issue_date else snapshot_date),
+                "issue_date":        issue_date,
                 "security_type":     stype,
                 "tenor_label":       tenor_label,
                 "tenor_years":       _tenor_years(tenor_label),

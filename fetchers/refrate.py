@@ -69,7 +69,9 @@ def parse_refrate_html(html: str) -> List[Dict]:
                 rows.append({
                     "trade_date":    current_date,
                     "rate_type":     rate_type,
-                    "product":       cells[0].strip(),
+                    # BB relabelled the 7-day bucket "7D" → "1W" in Apr-2026;
+                    # one label or the series splits in every chart/filter.
+                    "product":       {"7D": "1W"}.get(cells[0].strip(), cells[0].strip()),
                     "amount_crore":  _parse_float(cells[1]),
                     "rate_pct":      _parse_float(cells[2]),
                     "num_deals":     _parse_int(cells[3]),

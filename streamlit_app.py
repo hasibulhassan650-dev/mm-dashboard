@@ -16,7 +16,7 @@ def initialise(today: datetime.date):
     from db import init_db
     from seeds_loader import load_holiday_file
     from engines.pipeline import run_pipeline
-    from calendar_utils import load_holidays
+    from calendar_utils import load_calendar_rows
 
     init_db()
 
@@ -27,7 +27,7 @@ def initialise(today: datetime.date):
     from db import get_session, HolidayCalendar
     session = get_session()
     rows = session.query(HolidayCalendar).all()
-    load_holidays({r.calendar_date for r in rows})
+    load_calendar_rows(rows)
     session.close()
 
     summary = run_pipeline(

@@ -41,8 +41,8 @@ log = logging.getLogger(__name__)
 
 def _load_holidays(session):
     rows = session.query(HolidayCalendar).all()
-    calendar_utils.load_holidays({r.calendar_date for r in rows})
-    log.info("Loaded %d holidays", len(rows))
+    calendar_utils.load_calendar_rows(rows)   # WORKING_DAY rows = working weekends
+    log.info("Loaded %d calendar rows", len(rows))
 
 
 def _upsert_security(session, row: dict):
@@ -189,6 +189,95 @@ def _upsert_auction(session, event: dict):
                "rd":rd,"rr":rr,"src":src,"dq":dq})
 
 
+def confirm_auctions_from_results(session) -> dict:
+    """Attach BB's published auction RESULTS to the calendar auctions they settle.
+
+    The calendar (auction_events) is a plan: an offered amount and a settlement
+    date computed from the holiday table. The results page (primary_yield_
+    snapshots) is what actually happened: the accepted amount and the ISSUE
+    date BB settled on. Until Sep-2026 the two were never joined — every
+    auction stayed PLANNED forever, so daily_net_flow booked the OFFERED
+    amount on a COMPUTED date, even where BB accepted a different amount
+    (devolvement / over-subscription) or moved the auction (the pre-Eid
+    bills were issued 24-May, not the computed 01-Jun).
+
+    Match, per tenor: (1) a calendar row on exactly the derived auction date;
+    else (2) the nearest still-unmatched calendar row in the 10 days up to the
+    issue date (BB shifted the auction — the pre-Eid bills ran on the working
+    Saturday 23-May against a 24-May calendar slot). A result with NO row at
+    all inside the calendar era is an auction BB added ad hoc (5Y on
+    27-Nov-2025 and 03-Feb-2026): inserted as CONFIRMED so the outflow never
+    misses an auction that printed. Each calendar row is claimed by at most
+    one result, so a re-run re-applies exactly the same facts.
+    """
+    from sqlalchemy import text as _t
+    from config import CRORE_TO_MILLION, fiscal_year
+    res = session.execute(_t(
+        "SELECT tenor_label, issue_date, auction_date, accepted_bdt_crore, cutoff_yield_pct, "
+        "security_type FROM primary_yield_snapshots WHERE issue_date IS NOT NULL "
+        "ORDER BY auction_date")).fetchall()
+    cal = session.query(AuctionEvent).all()
+    by_tenor: dict = {}
+    for a in cal:
+        by_tenor.setdefault(a.tenor_label, []).append(a)
+    cal_start = min((a.auction_date for a in cal if a.auction_date), default=None)
+    claimed: set = set()
+    confirmed = moved = added = 0
+
+    def _apply(a, issue, adate, acc, cutoff):
+        nonlocal confirmed, moved
+        if acc is not None:
+            a.accepted_amount_bdt_crore = float(acc)
+            a.accepted_amount_bdt_mill  = round(float(acc) * CRORE_TO_MILLION, 4)
+            a.outflow_status            = "CONFIRMED"
+        if cutoff is not None:
+            a.weighted_avg_yield_pct = float(cutoff)
+        if a.settlement_date != issue:
+            a.roll_reason = (f"Settled {issue} per BB results (calendar computed "
+                             f"{a.settlement_date}; auction held {adate})")
+            a.settlement_date = issue
+            moved += 1
+        confirmed += 1
+
+    def _d(v):   # SQLite hands raw-SQL dates back as strings
+        return datetime.date.fromisoformat(v[:10]) if isinstance(v, str) else v
+
+    pending = []
+    for tenor, issue, adate, acc, cutoff, stype in res:
+        issue, adate = _d(issue), _d(adate)
+        exact = [a for a in by_tenor.get(tenor, []) if a.auction_date == adate and id(a) not in claimed]
+        if exact:
+            claimed.add(id(exact[0])); _apply(exact[0], issue, adate, acc, cutoff)
+        else:
+            pending.append((tenor, issue, adate, acc, cutoff, stype))
+    for tenor, issue, adate, acc, cutoff, stype in pending:
+        cands = [a for a in by_tenor.get(tenor, [])
+                 if a.auction_date is not None and id(a) not in claimed
+                 and issue - datetime.timedelta(days=10) <= a.auction_date <= issue]
+        if cands:
+            a = max(cands, key=lambda x: x.auction_date)
+            claimed.add(id(a)); _apply(a, issue, adate, acc, cutoff)
+            continue
+        if cal_start is None or adate is None or adate < cal_start or acc is None:
+            continue
+        off = float(acc)   # target size unknown for an ad-hoc auction: plan = actual
+        a = AuctionEvent(
+            fiscal_year=fiscal_year(adate), auction_no=None, auction_date=adate,
+            settlement_date=issue, security_type=stype, tenor_label=tenor,
+            offered_amount_bdt_crore=off, offered_amount_bdt_mill=round(off * CRORE_TO_MILLION, 4),
+            outflow_status="PLANNED", roll_days=0,
+            roll_reason=f"Not in auction calendar; created from BB results (issued {issue})",
+            source="BB treasury results (uncalendared auction)", data_quality="OK")
+        session.add(a)
+        by_tenor.setdefault(tenor, []).append(a)
+        claimed.add(id(a)); _apply(a, issue, adate, acc, cutoff)
+        added += 1
+    session.flush()
+    log.info("Auction results linked: %d calendar auctions confirmed, %d settlement dates "
+             "corrected from BB issue dates, %d uncalendared auctions added", confirmed, moved, added)
+    return {"confirmed": confirmed, "moved": moved, "added": added}
+
+
 def _upsert_primary_yield(session, row: dict):
     """Insert or update a primary yield point (unique per tenor + auction_date)."""
     from sqlalchemy import select
@@ -201,6 +290,7 @@ def _upsert_primary_yield(session, row: dict):
     ).scalar_one_or_none()
     if existing:
         existing.snapshot_date      = row["snapshot_date"]
+        existing.issue_date         = row.get("issue_date") or existing.issue_date
         existing.cutoff_yield_pct   = row["cutoff_yield_pct"]
         existing.offered_bdt_crore  = row.get("offered_bdt_crore")
         existing.accepted_bdt_crore = row.get("accepted_bdt_crore")
@@ -209,6 +299,7 @@ def _upsert_primary_yield(session, row: dict):
         session.add(PrimaryYieldSnapshot(
             snapshot_date      = row["snapshot_date"],
             auction_date       = row["auction_date"],
+            issue_date         = row.get("issue_date"),
             security_type      = row["security_type"],
             tenor_label        = row["tenor_label"],
             tenor_years        = row.get("tenor_years"),
@@ -388,6 +479,7 @@ def _store_omo_txns(session, txns: list, now: datetime.datetime) -> tuple:
     dropping it. Extracted from run_omo_fetch so it is unit-testable.
     """
     from collections import defaultdict
+    from sqlalchemy import text
 
     def _pub(x) -> datetime.date:
         return x.get("source_pub_date") or datetime.date.min
@@ -414,11 +506,39 @@ def _store_omo_txns(session, txns: list, now: datetime.datetime) -> tuple:
     for r in txns:
         by_date[r["transaction_date"]].append(r)
 
+    # Row-set signatures of every stored operation, for the duplicate-content
+    # guard below. (instrument, tenor, accepted, maturity) per row — an entire
+    # table copied verbatim onto another date matches exactly.
+    def _sig(rs):
+        return tuple(sorted((x[0], int(x[1] or 0), round(float(x[2] or 0), 2), round(float(x[3] or 0), 2))
+                            for x in rs))
+    stored_sigs: dict = {}
+    for r in session.execute(text("SELECT transaction_date, instrument, tenor_days, accepted_bdt_crore, "
+                                  "COALESCE(maturity_bdt_crore, 0) FROM omo_transactions")).fetchall():
+        dd = datetime.date.fromisoformat(r[0][:10]) if isinstance(r[0], str) else r[0]
+        stored_sigs.setdefault(dd, []).append(r[1:])
+    stored_sigs = {dd: _sig(rs) for dd, rs in stored_sigs.items()}
+
     saved = superseded = 0
     for d, rows in by_date.items():
         latest_pub = max((_pub(x) for x in rows), default=datetime.date.min)
         keep = [x for x in rows if _pub(x) == latest_pub]   # drop older release if both in batch
         if not keep:
+            continue
+
+        # ── Duplicate-content guard: a release whose WHOLE table equals another
+        # date's operation is a re-published stale file, not a new operation.
+        # BB's "as on 04 May 2026" (pr14062) was the 05-Apr table verbatim; it
+        # put a phantom 2,587 cr IBLF tranche into outstanding for 28 days. Never
+        # store it (and never let a re-fetch overwrite the reconstruction).
+        inc_sig = _sig([(x["instrument"], x.get("tenor_days"), x["accepted_bdt_crore"],
+                         x.get("maturity_bdt_crore")) for x in keep])
+        twin = next((dd for dd, sg in stored_sigs.items() if dd != d and sg == inc_sig and len(sg) >= 3), None)
+        if twin is not None:
+            log.error("OMO duplicate-content guard: release 'as on %s' (%s) is a verbatim copy of the "
+                      "%s operation — BB re-published a stale table. NOT stored; the %s operation "
+                      "must be reconstructed from BB's printed maturities.",
+                      d, keep[0].get("source_pdf", "?"), twin, d)
             continue
 
         # Within-batch, no-lag variant: this fetch pulled BOTH releases for date d
@@ -605,6 +725,7 @@ def run_primary_yield_history(months_back: int = 8) -> dict:
     init_db()
     session = get_session()
     try:
+        _load_holidays(session)   # auction_date = previous working day of the printed issue date
         rows = fetch_primary_yields_history(months_back=months_back)
         for r in rows:
             _upsert_primary_yield(session, r)
@@ -719,6 +840,10 @@ def run_pipeline(
             _upsert_auction(session, evt)
         session.commit()
         summary["auctions"] = len(auction_events)
+
+        # ── 6b. Results → calendar: actual accepted amounts and issue dates ──
+        confirm_auctions_from_results(session)
+        session.commit()
 
         # Primary yield history is fetched separately via the sidebar button
         # (fetch_primary_yields_history) — not run here to keep pipeline fast.

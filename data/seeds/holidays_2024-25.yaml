@@ -1,0 +1,13 @@
+fiscal_year: "2024-25"
+# NOT a full holiday list for FY2024-25 (pre-dates the flow history, which
+# starts 2025-07-01). Only the declared WORKING weekend days are recorded so
+# that the market data printed on them is recognised as genuine.
+holidays:
+  # Saturdays declared working days to compensate for the extended Eid ul Adha
+  # 2025 break (5-14 Jun). Call money traded on both.
+  - date: "2025-05-17"
+    name: "Declared working day (Saturday; data-confirmed)"
+    type: WORKING_DAY
+  - date: "2025-05-24"
+    name: "Declared working day (Saturday; data-confirmed)"
+    type: WORKING_DAY

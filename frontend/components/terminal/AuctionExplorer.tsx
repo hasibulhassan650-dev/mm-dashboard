@@ -96,16 +96,17 @@ export default function AuctionExplorer({ bounds }: { bounds: { min: string | nu
 
       <div className="table-wrap" style={{ maxHeight: 360, overflowY: "auto", marginTop: 14 }}>
         <table className="dt">
-          <thead><tr><th>Auction Date</th><th>Type</th><th>Tenor</th><th className="r">Yield</th><th className="r">Offered (cr)</th><th className="r">Accepted (cr)</th><th className="r">B/C</th></tr></thead>
+          <thead><tr><th>Auction Date</th><th>Issue Date</th><th>Type</th><th>Tenor</th><th className="r">Yield</th><th className="r">Offered (cr)</th><th className="r">Accepted (cr)</th><th className="r">B/C</th></tr></thead>
           <tbody>
             {rows.length === 0 && !loading && (
-              <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--fg-mute)", height: 80 }}>No auctions in this window.</td></tr>
+              <tr><td colSpan={8} style={{ textAlign: "center", color: "var(--fg-mute)", height: 80 }}>No auctions in this window.</td></tr>
             )}
             {rows.map((r, i) => {
               const bc = bidToCover(r);
               return (
                 <tr key={i}>
                   <td>{fmtDate(r.auction_date)}</td>
+                  <td className="mono" style={{ color: "var(--fg-mute)" }}>{r.issue_date ? fmtDate(r.issue_date) : "—"}</td>
                   <td><span className="pill-inst">{r.security_type}</span></td>
                   <td className="mono">{r.tenor_label}</td>
                   <td className="r mono">{r.cutoff_yield_pct.toFixed(4)}%</td>

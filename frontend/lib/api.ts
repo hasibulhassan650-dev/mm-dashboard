@@ -240,6 +240,8 @@ export interface SecondaryYieldRow {
 export interface YieldRow {
   tenor_label: string; tenor_years: number; security_type: string;
   cutoff_yield_pct: number; auction_date: string;
+  /** Issue/settlement date BB prints (T+1 working day after the auction). */
+  issue_date?: string | null;
   offered_bdt_crore?: number; accepted_bdt_crore?: number;
 }
 export interface CurveSlopeRow {

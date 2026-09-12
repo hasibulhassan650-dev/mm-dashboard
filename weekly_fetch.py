@@ -59,7 +59,7 @@ def main():
 
     from db import init_db, fix_all_sequences
     from seeds_loader import load_holiday_file
-    from calendar_utils import load_holidays
+    from calendar_utils import load_calendar_rows
     from db import get_session, HolidayCalendar
     from engines.pipeline import run_pipeline, run_omo_fetch, run_primary_yield_history
 
@@ -67,17 +67,32 @@ def main():
     init_db()
     fix_all_sequences()   # bulletproof: a stale id-sequence can never block a write
 
-    seed = ROOT / "data" / "seeds" / "holidays_2025-26.yaml"
-    if seed.exists():
+    # Every fiscal-year seed file, not just one: the 2026-27 closures (1-Jul
+    # bank closing, 5-Aug, 26-Aug) were reaching the DB only by hand.
+    for seed in sorted((ROOT / "data" / "seeds").glob("holidays_*.yaml")):
         load_holiday_file(str(seed))
 
     session = get_session()
     rows = session.query(HolidayCalendar).all()
-    load_holidays({r.calendar_date for r in rows})
+    load_calendar_rows(rows)
     session.close()
 
     today = datetime.date.today()
     errors = []
+
+    # ── 3. Treasury yield history — runs BEFORE the GSOM pipeline so today's
+    #      auction results are linked to the calendar (confirm_auctions_from_
+    #      results) and daily_net_flow is rebuilt with actual accepted amounts
+    #      in the same run, not the next one.
+    log.info("--- Step 3: Treasury yield history (%d months) ---", TREASURY_MONTHS)
+    try:
+        result = run_primary_yield_history(months_back=TREASURY_MONTHS)
+        log.info("Treasury OK | new_rows=%s", result.get("rows"))
+        if result.get("errors"):
+            errors.extend(result["errors"])
+    except Exception as exc:
+        log.exception("Treasury fetch failed: %s", exc)
+        errors.append(f"treasury: {exc}")
 
     # ── 1. GSOM pipeline ──────────────────────────────────────────────────────
     # Heavy (~27 min: ~7,600 MTM rows + event regen) and BB only updates GSOM
@@ -88,9 +103,12 @@ def main():
     else:
         log.info("--- Step 1: GSOM pipeline ---")
         try:
+            # +400d: every stored future flow row is rebuilt each run. With
+            # +120d the Feb–Jul 2027 rows (written once by an older +365 run)
+            # went stale — 13 days showed half the principal now scheduled.
             summary = run_pipeline(
                 today - datetime.timedelta(days=60),
-                today + datetime.timedelta(days=120),
+                today + datetime.timedelta(days=400),
             )
             log.info(
                 "Pipeline OK | securities=%s coupons=%s maturities=%s auctions=%s",
@@ -116,17 +134,6 @@ def main():
     except Exception as exc:
         log.exception("OMO fetch failed: %s", exc)
         errors.append(f"omo: {exc}")
-
-    # ── 3. Treasury yield history (last 2 months) ─────────────────────────────
-    log.info("--- Step 3: Treasury yield history (%d months) ---", TREASURY_MONTHS)
-    try:
-        result = run_primary_yield_history(months_back=TREASURY_MONTHS)
-        log.info("Treasury OK | new_rows=%s", result.get("rows"))
-        if result.get("errors"):
-            errors.extend(result["errors"])
-    except Exception as exc:
-        log.exception("Treasury fetch failed: %s", exc)
-        errors.append(f"treasury: {exc}")
 
     # ── 4. Call money market rates (last 35 days) ────────────────────────────
     log.info("--- Step 4: Call money market rates (%d days) ---", CALLMONEY_DAYS)

@@ -205,11 +205,23 @@ def _fingerprint(inst: str, tenor_days: int, rate: Optional[float], rate_range: 
 
     Every BB facility prints a signature rate: SDF = corridor floor (~7.5,
     overnight), SLF = ceiling (~11–11.5, overnight), repo/AR = policy rate
-    (~9.5–10), IBLF = an Islamic profit RANGE or fixed ≤5, CM_REPO = 4.75/90D,
-    MLS = 5.25/28D. A block-attribution slip can hand a row the neighbouring
-    instrument's name (Mar–Jun 2026: 55 rows, incl. 13 SDF ABSORPTIONS stored
-    as AR INJECTIONS and the 15-Jun IBLF stored as CB_REPO). The rate is
-    unambiguous, so it wins. Bands tolerate modest policy moves."""
+    (~9.5–10), IBLF = an Islamic profit RANGE or fixed ≤5, CM_REPO = 4.75/90D.
+    A block-attribution slip can hand a row the neighbouring instrument's name
+    (Mar–Jun 2026: 55 rows, incl. 13 SDF ABSORPTIONS stored as AR INJECTIONS
+    and the 15-Jun IBLF stored as CB_REPO). The rate is unambiguous, so it
+    wins. Bands tolerate modest policy moves.
+
+    MLS (Mudaraba Liquidity Support, 28D) has NO rate signature: BB printed it
+    at 9.50 in Jun–Jul 2026 and 5.25 from Aug 2026, so it is never relabelled
+    by rate in either direction — an earlier "MLS = 5.25" rule pushed two
+    genuine MLS rows (10-Jun, 08-Jul) into AR."""
+    if inst == "SLF" and tenor_days > 1:
+        # SLF is an overnight standing facility. BB prints IBLF's first row as
+        # an unlabelled "7-Days"/"14-Days" line directly under "SLF 1-Day" (the
+        # IBLF label wraps BELOW its block), so a multi-day "SLF" line — with a
+        # rate (5.25) or a maturity-only line with none — is IBLF's. Filing it
+        # as SLF hid IBLF maturities and made live IBLF tranches look phantom.
+        return ("IBLF", "INJECTION")
     if rate is None:
         return None
     lo = None
@@ -220,9 +232,8 @@ def _fingerprint(inst: str, tenor_days: int, rate: Optional[float], rate_range: 
     elif tenor_days == 1 and 10.5 <= rate <= 12.0:             want = ("SLF", "INJECTION")
     elif rate_range and lo is not None and lo <= 7.0:          want = ("IBLF", "INJECTION")
     elif tenor_days == 90 and abs(rate - 4.75) < 1e-6:         want = ("CM_REPO", "INJECTION")
-    elif tenor_days == 28 and abs(rate - 5.25) < 1e-6:         want = ("MLS", "INJECTION")
     elif rate <= 5.0 and inst in ("AR", "CB_REPO", "SLF"):     want = ("IBLF", "INJECTION")
-    elif 9.0 <= rate <= 10.5 and not rate_range and inst in ("IBLF", "MLS", "SLF", "SDF"):
+    elif 9.0 <= rate <= 10.5 and not rate_range and inst in ("IBLF", "SLF", "SDF"):
         want = (("CB_REPO" if txn_date.weekday() == 1 else "AR"), "INJECTION")   # CB Repo is the Tuesday op
     else:
         return None

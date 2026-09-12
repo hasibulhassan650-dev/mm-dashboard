@@ -142,7 +142,13 @@ class PrimaryYieldSnapshot(Base):
     __table_args__ = (UniqueConstraint("tenor_label", "auction_date"),)
     id                 = Column(Integer, primary_key=True, autoincrement=True)
     snapshot_date      = Column(Date, nullable=False)
+    # auction_date = the day bids were taken (T). BB's treasury results page
+    # prints only the ISSUE date (T+1 working day) — that is kept in issue_date
+    # and auction_date is derived as the previous working day. Until Sep-2026
+    # the issue date was stored AS the auction date, so every auction sat one
+    # working day late and never matched the auction calendar.
     auction_date       = Column(Date)
+    issue_date         = Column(Date)
     security_type      = Column(String(10))
     tenor_label        = Column(String(15))
     tenor_years        = Column(Float)
@@ -511,6 +517,7 @@ def init_db():
         "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS source_pub_date DATE",
         "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS source_serial VARCHAR(40)",
         "ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS quality TEXT",
+        "ALTER TABLE primary_yield_snapshots ADD COLUMN IF NOT EXISTS issue_date DATE",
         # Forecast tables: the unique keys are what keep a re-run idempotent —
         # run_forecast.py looks up on exactly these columns before writing, and
         # the index stops a concurrent/partial run from double-inserting. If a

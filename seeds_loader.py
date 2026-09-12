@@ -39,9 +39,19 @@ def load_holiday_file(path: str) -> int:
             ))
         count += 1
 
+    # The seed file is the source of truth for its fiscal year: a date removed
+    # from the YAML must leave the DB too. Upsert-only loading is how the wrong
+    # "approximate" Eid dates outlived their correction (Sep-2026 audit).
+    file_dates = {datetime.date.fromisoformat(i["date"]) for i in items}
+    stale = [r for r in session.query(HolidayCalendar).filter_by(fiscal_year=fy).all()
+             if r.calendar_date not in file_dates]
+    for r in stale:
+        log.warning("Removing %s (%s) — no longer in %s", r.calendar_date, r.holiday_name, path)
+        session.delete(r)
+
     session.commit()
     session.close()
-    log.info("Loaded %d holidays for FY %s", count, fy)
+    log.info("Loaded %d holidays for FY %s (%d stale removed)", count, fy, len(stale))
     return count
 
 

@@ -89,7 +89,10 @@ def _parse_table(html: str) -> List[Dict]:
 
         # Data row: 7 cells
         if len(cells) >= 7 and current_date:
+            # BB's 2021 pages print "overnight" in lower case; one label or the
+            # overnight series splits in two.
             product      = cells[0].strip()
+            product      = "Overnight" if product.lower() == "overnight" else product
             mat_str      = cells[1].strip()
             amount       = _parse_float(cells[2])
             highest      = _parse_float(cells[3])

@@ -5,7 +5,44 @@ fiscal_year: "2025-26"
 # 07-Jun). Every date below is cross-checked against actual market activity:
 # a listed holiday must show NO call-money, NO reference-rate and NO OMO prints.
 # INFERRED_CLOSURE = confirmed from that market-wide silence on a weekday.
+# WORKING_DAY = a Fri/Sat the government declared a working day (the market
+# traded: call money, reference rates, FX auction all printed). Settlements
+# falling on it are paid THAT day — calendar_utils treats it as working.
 holidays:
+  # ── FY2025-26 H1: all data-confirmed (market-wide silence on a weekday) ──
+  - date: "2025-07-01"
+    name: "Bank holiday - half-yearly closing (data-confirmed)"
+    type: INFERRED_CLOSURE
+  - date: "2025-07-06"
+    name: "Ashura (data-confirmed)"
+    type: INFERRED_CLOSURE
+  - date: "2025-08-05"
+    name: "July Mass Uprising Day (data-confirmed)"
+    type: INFERRED_CLOSURE
+  - date: "2025-10-01"
+    name: "Durga Puja - Maha Navami (data-confirmed)"
+    type: INFERRED_CLOSURE
+  - date: "2025-10-02"
+    name: "Durga Puja - Bijoya Dashami (data-confirmed)"
+    type: INFERRED_CLOSURE
+  - date: "2025-12-16"
+    name: "Victory Day (data-confirmed)"
+    type: INFERRED_CLOSURE
+  - date: "2025-12-25"
+    name: "Christmas Day (data-confirmed)"
+    type: INFERRED_CLOSURE
+  - date: "2025-12-31"
+    name: "Bank holiday - yearly closing (data-confirmed)"
+    type: INFERRED_CLOSURE
+  - date: "2026-02-04"
+    name: "Shab-e-Barat (data-confirmed; confirm gazette name)"
+    type: INFERRED_CLOSURE
+  - date: "2026-02-11"
+    name: "Market closed (data-confirmed; 13th parliamentary election period)"
+    type: INFERRED_CLOSURE
+  - date: "2026-02-12"
+    name: "Market closed (data-confirmed; 13th parliamentary election day)"
+    type: INFERRED_CLOSURE
   - date: "2026-02-21"
     name: "Shaheed Dibosh & International Mother Language Day"
     type: GOVT_GAZETTE
@@ -50,3 +87,8 @@ holidays:
   - date: "2026-05-31"
     name: "Market closed (data-confirmed; Eid ul Adha block)"
     type: INFERRED_CLOSURE
+  # Saturday declared a working day to compensate for the Eid ul Adha block:
+  # call money, reference rates and an FX auction all printed on 23-May.
+  - date: "2026-05-23"
+    name: "Declared working day (Saturday; data-confirmed)"
+    type: WORKING_DAY

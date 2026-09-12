@@ -1,0 +1,12 @@
+fiscal_year: "2021-22"
+# NOT a full holiday list. Only the declared WORKING weekend days are recorded
+# so that the call-money prints on them are recognised as genuine.
+holidays:
+  # Fri/Sat before Eid ul Fitr 2022: banks kept open for salary/bonus
+  # settlement; the call money market traded on both days.
+  - date: "2022-04-29"
+    name: "Declared working day (Friday; data-confirmed)"
+    type: WORKING_DAY
+  - date: "2022-04-30"
+    name: "Declared working day (Saturday; data-confirmed)"
+    type: WORKING_DAY

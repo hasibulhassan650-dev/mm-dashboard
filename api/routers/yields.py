@@ -42,7 +42,7 @@ def get_yields(
             clauses.append("tenor_label = :tenor"); params["tenor"] = tenor.upper()
 
         q = """
-            SELECT snapshot_date, auction_date, security_type, tenor_label,
+            SELECT snapshot_date, auction_date, issue_date, security_type, tenor_label,
                    tenor_years, cutoff_yield_pct, offered_bdt_crore, accepted_bdt_crore
             FROM primary_yield_snapshots
         """
