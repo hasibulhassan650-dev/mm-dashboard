@@ -30,14 +30,14 @@ export default async function DrilldownPage({
     <div className="space-y-6">
       <div className="flex items-center gap-4">
         <Link href={`/drilldown?date=${prevWorkday(date)}`}
-          className="px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-sm text-gray-300">◀ Prev</Link>
+          className="px-3 py-1.5 rounded b-panel2 hover-b-panel2 text-sm t-dim">◀ Prev</Link>
         <div>
-          <h1 className="text-xl font-semibold text-white">Date Drilldown — {date}</h1>
-          <p className="text-sm text-gray-400">All cash flow events on this date</p>
+          <h1 className="text-xl font-semibold t-fg">Date Drilldown — {date}</h1>
+          <p className="text-sm t-dim">All cash flow events on this date</p>
         </div>
         <Link href={`/drilldown?date=${nextWorkday(date)}`}
-          className="px-3 py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-sm text-gray-300">Next ▶</Link>
-        <Link href="/cashflows" className="ml-auto text-xs text-blue-400 hover:underline">← Back to Cash Flows</Link>
+          className="px-3 py-1.5 rounded b-panel2 hover-b-panel2 text-sm t-dim">Next ▶</Link>
+        <Link href="/cashflows" className="ml-auto text-xs t-info hover:underline">← Back to Cash Flows</Link>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
@@ -52,25 +52,25 @@ export default async function DrilldownPage({
 
       <div className="grid md:grid-cols-3 gap-6">
         {/* Maturities */}
-        <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
+        <div className="rounded-xl border bd b-panel p-4">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-medium text-gray-300">Maturities ({data.maturities.length})</h2>
+            <h2 className="text-sm font-medium t-dim">Maturities ({data.maturities.length})</h2>
             {data.maturities.length > 0 && <DownloadButton data={data.maturities} filename={`maturities_${date}`} label="Excel" />}
           </div>
           {data.maturities.length === 0
-            ? <p className="text-xs text-gray-500">No maturities on this date</p>
+            ? <p className="text-xs t-mute">No maturities on this date</p>
             : <table className="w-full text-xs">
-                <thead><tr className="text-gray-400 border-b border-gray-800">
+                <thead><tr className="t-dim border-b bd">
                   <th className="pb-1 pr-2 text-left">ISIN</th>
                   <th className="pb-1 pr-2 text-left">Name</th>
                   <th className="pb-1 text-right">Principal (mn)</th>
                 </tr></thead>
                 <tbody>
                   {data.maturities.map((m, i) => (
-                    <tr key={i} className="border-b border-gray-800/40">
-                      <td className="py-1 pr-2 font-mono text-gray-400">{m.isin}</td>
-                      <td className="py-1 pr-2 text-gray-300 truncate max-w-[120px]">{m.security_name_norm ?? m.isin}</td>
-                      <td className="py-1 text-right text-white font-mono">{(m.principal_bdt_mill ?? 0).toLocaleString()}</td>
+                    <tr key={i} className="border-b bd">
+                      <td className="py-1 pr-2 font-mono t-dim">{m.isin}</td>
+                      <td className="py-1 pr-2 t-dim truncate max-w-[120px]">{m.security_name_norm ?? m.isin}</td>
+                      <td className="py-1 text-right t-fg font-mono">{(m.principal_bdt_mill ?? 0).toLocaleString()}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -79,25 +79,25 @@ export default async function DrilldownPage({
         </div>
 
         {/* Coupons */}
-        <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
+        <div className="rounded-xl border bd b-panel p-4">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-medium text-gray-300">Coupons ({data.coupons.length})</h2>
+            <h2 className="text-sm font-medium t-dim">Coupons ({data.coupons.length})</h2>
             {data.coupons.length > 0 && <DownloadButton data={data.coupons} filename={`coupons_${date}`} label="Excel" />}
           </div>
           {data.coupons.length === 0
-            ? <p className="text-xs text-gray-500">No coupon payments on this date</p>
+            ? <p className="text-xs t-mute">No coupon payments on this date</p>
             : <table className="w-full text-xs">
-                <thead><tr className="text-gray-400 border-b border-gray-800">
+                <thead><tr className="t-dim border-b bd">
                   <th className="pb-1 pr-2 text-left">ISIN</th>
                   <th className="pb-1 pr-2 text-right">Rate</th>
                   <th className="pb-1 text-right">Amount (mn)</th>
                 </tr></thead>
                 <tbody>
                   {data.coupons.map((c, i) => (
-                    <tr key={i} className="border-b border-gray-800/40">
-                      <td className="py-1 pr-2 font-mono text-gray-400">{c.isin}</td>
-                      <td className="py-1 pr-2 text-right text-gray-300">{c.coupon_rate_used_pct}%</td>
-                      <td className="py-1 text-right text-white font-mono">{(c.amount_bdt_mill ?? 0).toFixed(4)}</td>
+                    <tr key={i} className="border-b bd">
+                      <td className="py-1 pr-2 font-mono t-dim">{c.isin}</td>
+                      <td className="py-1 pr-2 text-right t-dim">{c.coupon_rate_used_pct}%</td>
+                      <td className="py-1 text-right t-fg font-mono">{(c.amount_bdt_mill ?? 0).toFixed(4)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -106,15 +106,15 @@ export default async function DrilldownPage({
         </div>
 
         {/* Auctions */}
-        <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
+        <div className="rounded-xl border bd b-panel p-4">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-medium text-gray-300">Auction Settlements ({data.auctions.length})</h2>
+            <h2 className="text-sm font-medium t-dim">Auction Settlements ({data.auctions.length})</h2>
             {data.auctions.length > 0 && <DownloadButton data={data.auctions} filename={`auctions_${date}`} label="Excel" />}
           </div>
           {data.auctions.length === 0
-            ? <p className="text-xs text-gray-500">No auction settlements on this date</p>
+            ? <p className="text-xs t-mute">No auction settlements on this date</p>
             : <table className="w-full text-xs">
-                <thead><tr className="text-gray-400 border-b border-gray-800">
+                <thead><tr className="t-dim border-b bd">
                   <th className="pb-1 pr-2 text-left">Type</th>
                   <th className="pb-1 pr-2 text-left">Tenor</th>
                   <th className="pb-1 pr-2 text-right">Accepted (mn)</th>
@@ -122,14 +122,14 @@ export default async function DrilldownPage({
                 </tr></thead>
                 <tbody>
                   {data.auctions.map((a, i) => (
-                    <tr key={i} className="border-b border-gray-800/40">
-                      <td className="py-1 pr-2 text-gray-300">{a.security_type}</td>
-                      <td className="py-1 pr-2 text-gray-300">{a.tenor_label}</td>
-                      <td className="py-1 pr-2 text-right text-white font-mono">
+                    <tr key={i} className="border-b bd">
+                      <td className="py-1 pr-2 t-dim">{a.security_type}</td>
+                      <td className="py-1 pr-2 t-dim">{a.tenor_label}</td>
+                      <td className="py-1 pr-2 text-right t-fg font-mono">
                         {a.accepted_amount_bdt_mill ? a.accepted_amount_bdt_mill.toLocaleString() : "PLANNED"}
                       </td>
                       <td className="py-1">
-                        <span className={`px-1 py-0.5 rounded text-xs ${a.outflow_status === "CONFIRMED" ? "bg-green-500/20 text-green-300" : "bg-amber-500/20 text-amber-300"}`}>
+                        <span className={`px-1 py-0.5 rounded text-xs ${a.outflow_status === "CONFIRMED" ? "b-pos-soft t-pos" : "b-warn-soft t-warn"}`}>
                           {a.outflow_status}
                         </span>
                       </td>

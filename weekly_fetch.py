@@ -140,23 +140,19 @@ def main():
     try:
         from fetchers.callmoney import fetch_call_money
         from db import CallMoneyRate
+        from engines.pipeline import replace_daily_rows
         rows_cm = fetch_call_money(days_back=CALLMONEY_DAYS)
         import datetime as _dt
         now_utc = _dt.datetime.utcnow()
-        session = get_session()
-        saved_cm = 0
         for r in rows_cm:
             r["ingested_utc"] = now_utc
-            if not session.query(CallMoneyRate).filter_by(
-                trade_date=r["trade_date"],
-                product=r["product"],
-                maturity_days=r["maturity_days"],
-            ).first():
-                session.add(CallMoneyRate(**r))
-                saved_cm += 1
+        session = get_session()
+        # BB's page is a running intraday table — the DB must FOLLOW it, never
+        # freeze the first snapshot (see replace_daily_rows).
+        st = replace_daily_rows(session, CallMoneyRate, rows_cm, ("product", "maturity_days"))
         session.commit()
         session.close()
-        log.info("Call money OK | new_rows=%d (fetched %d)", saved_cm, len(rows_cm))
+        log.info("Call money OK | %s (fetched %d)", st, len(rows_cm))
     except Exception as exc:
         log.exception("Call money fetch failed: %s", exc)
         errors.append(f"callmoney: {exc}")
@@ -192,22 +188,16 @@ def main():
         from fetchers.refrate import fetch_refrate
         from db import RefRate
         import datetime as _dt
+        from engines.pipeline import replace_daily_rows
         rows_rr = fetch_refrate(days_back=REFRATE_DAYS)
         now_utc = _dt.datetime.utcnow()
-        session = get_session()
-        saved_rr = 0
         for r in rows_rr:
             r["ingested_utc"] = now_utc
-            if not session.query(RefRate).filter_by(
-                trade_date=r["trade_date"],
-                rate_type=r["rate_type"],
-                product=r["product"],
-            ).first():
-                session.add(RefRate(**r))
-                saved_rr += 1
+        session = get_session()
+        st = replace_daily_rows(session, RefRate, rows_rr, ("rate_type", "product"))
         session.commit()
         session.close()
-        log.info("RefRate OK | new_rows=%d (fetched %d)", saved_rr, len(rows_rr))
+        log.info("RefRate OK | %s (fetched %d)", st, len(rows_rr))
     except Exception as exc:
         log.exception("RefRate fetch failed: %s", exc)
         errors.append(f"refrate: {exc}")

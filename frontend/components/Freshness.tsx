@@ -18,10 +18,10 @@ export default function Freshness({ updated, label = "Updated" }: { updated: str
   if (!updated) return null;
 
   return (
-    <span className="inline-flex items-center gap-1.5 text-xs text-gray-500" title={fmtDateTime(updated)}>
-      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500/70" />
+    <span className="inline-flex items-center gap-1.5 text-xs t-mute" title={fmtDateTime(updated)}>
+      <span className="w-1.5 h-1.5 rounded-full b-accent" />
       {label} {fmtDateTime(updated)}
-      {ago && <span className="text-gray-600">· {ago}</span>}
+      {ago && <span className="t-mute">· {ago}</span>}
     </span>
   );
 }

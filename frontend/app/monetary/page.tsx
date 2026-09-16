@@ -31,28 +31,28 @@ export default async function MonetaryPage({ searchParams }: { searchParams: Pro
       <div className="kpi-strip" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
         <div className="kpi"><div className="kpi-top"><span className="kpi-label">CPI p2p<InfoTip term="CPI (point-to-point)" /></span></div><div className="kpi-val"><span className="kpi-num" style={{ color: "var(--warn)" }}>{latest?.cpi_p2p != null ? latest.cpi_p2p.toFixed(2) : "—"}</span><span className="kpi-unit">%</span></div><div className="kpi-sub">12-mo avg {fmtPct(latest?.cpi_12mo_avg)}</div></div>
         <div className="kpi"><div className="kpi-top"><span className="kpi-label">Pvt Credit Growth<InfoTip term="Private-sector credit" /></span></div><div className="kpi-val"><span className="kpi-num" style={{ color: "var(--info)" }}>{latest?.private_credit_growth != null ? latest.private_credit_growth.toFixed(2) : "—"}</span><span className="kpi-unit">%</span></div><div className="kpi-sub">M2 {fmtPct(latest?.m2_growth)}</div></div>
-        <div className="kpi"><div className="kpi-top"><span className="kpi-label">Lending−Deposit Spread<InfoTip term="Lending-deposit spread" /></span></div><div className="kpi-val"><span className="kpi-num" style={{ color: "#a78bfa" }}>{spread != null ? spread.toFixed(2) : "—"}</span><span className="kpi-unit">%</span></div><div className="kpi-sub">L {fmtPct(latest?.wavg_lending)} · D {fmtPct(latest?.wavg_deposit)}</div></div>
+        <div className="kpi"><div className="kpi-top"><span className="kpi-label">Lending−Deposit Spread<InfoTip term="Lending-deposit spread" /></span></div><div className="kpi-val"><span className="kpi-num" style={{ color: "var(--s-violet)" }}>{spread != null ? spread.toFixed(2) : "—"}</span><span className="kpi-unit">%</span></div><div className="kpi-sub">L {fmtPct(latest?.wavg_lending)} · D {fmtPct(latest?.wavg_deposit)}</div></div>
         <div className="kpi"><div className="kpi-top"><span className="kpi-label">CRR / SLR<InfoTip term="CRR" /><InfoTip term="SLR" /></span></div><div className="kpi-val"><span className="kpi-num" style={{ color: "var(--accent)" }}>{fmtPct(rr?.crr)}<span style={{ color: "var(--fg-mute)" }}>/</span>{fmtPct(rr?.slr)}</span></div><div className="kpi-sub">{rr ? `eff. ${fmtDate(rr.effective_date)}` : "—"}</div></div>
       </div>
 
       <div className="grid12">
         <Panel title="CPI Inflation" sub="point-to-point vs 12-month average" span={6}>
           <SeriesLineChart data={cd} xKey="m" unit="%" series={[
-            { key: "cpi_p2p", label: "Point-to-point", color: "#fb923c" },
-            { key: "cpi_12mo_avg", label: "12-mo average", color: "#f59e0b", dashed: true },
+            { key: "cpi_p2p", label: "Point-to-point", color: "var(--s-orange)" },
+            { key: "cpi_12mo_avg", label: "12-mo average", color: "var(--s-amber)", dashed: true },
           ]} />
         </Panel>
         <Panel title="Monetary Aggregates" sub="YoY growth" span={6}>
           <SeriesLineChart data={cd} xKey="m" unit="%" series={[
-            { key: "m2_growth", label: "Broad money (M2)", color: "#38bdf8" },
-            { key: "reserve_money_growth", label: "Reserve money", color: "#a78bfa" },
-            { key: "private_credit_growth", label: "Private credit", color: "#34d399" },
+            { key: "m2_growth", label: "Broad money (M2)", color: "var(--s-sky)" },
+            { key: "reserve_money_growth", label: "Reserve money", color: "var(--s-violet)" },
+            { key: "private_credit_growth", label: "Private credit", color: "var(--s-green)" },
           ]} />
         </Panel>
         <Panel title="Banking-System Rates" sub="weighted-average lending vs deposit" span={12}>
           <SeriesLineChart data={cd} xKey="m" unit="%" series={[
-            { key: "wavg_lending", label: "Lending rate", color: "#f87171" },
-            { key: "wavg_deposit", label: "Deposit rate", color: "#4ade80" },
+            { key: "wavg_lending", label: "Lending rate", color: "var(--s-red)" },
+            { key: "wavg_deposit", label: "Deposit rate", color: "var(--s-green)" },
           ]} />
         </Panel>
         <Panel title="Monthly History" sub={`${rows.length} months`} span={12} pad={false}

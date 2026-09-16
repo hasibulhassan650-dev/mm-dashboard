@@ -56,10 +56,18 @@ def get_callmoney(days: int = Query(90, ge=0, le=3650)):
                 ORDER BY product, maturity_days
             """), {"dt": str(latest_date)}).fetchall()
 
+        # BB's call-money page is a RUNNING table for the current Dhaka day —
+        # the totals and the weighted average keep moving until the day closes.
+        # The refresh follows it (replace-by-date), so today's figures are
+        # correct as of the last fetch but not final; say so.
+        dhaka_today = (datetime.datetime.utcnow() + datetime.timedelta(hours=6)).date()
+        ld = latest_date if isinstance(latest_date, datetime.date) else (
+            datetime.date.fromisoformat(str(latest_date)[:10]) if latest_date else None)
         return {
             "daily_summary":    [dict(r._mapping) for r in daily],
             "latest_breakdown": [dict(r._mapping) for r in breakdown],
             "latest_date":      str(latest_date) if latest_date else None,
+            "latest_is_provisional": bool(ld and ld >= dhaka_today),
         }
     finally:
         session.close()

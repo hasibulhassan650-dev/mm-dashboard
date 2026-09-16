@@ -4,14 +4,14 @@ import { ScatterChart, Scatter, XAxis, YAxis, Tooltip, ResponsiveContainer, Cart
 import { YieldRow, SecondaryYieldRow } from "@/lib/api";
 
 const TYPE_COLOR: Record<string, string> = {
-  T_BILL: "#0d9488",
-  T_BOND: "#1f6feb",
-  FRTB:   "#d1780f",
+  T_BILL: "var(--s-teal)",
+  T_BOND: "var(--s-blue)",
+  FRTB:   "var(--s-orange)",
 };
 
 const CURVE_SERIES = [
-  { key: "secondary", label: "Secondary (MTM)",    color: "#94a3b8" },
-  { key: "primary",   label: "Primary (Auction)",  color: "#e5e7eb" },
+  { key: "secondary", label: "Secondary (MTM)",    color: "var(--fg-dim)" },
+  { key: "primary",   label: "Primary (Auction)",  color: "var(--fg)" },
 ];
 
 interface DotProps { cx?: number; cy?: number; fill?: string }
@@ -42,13 +42,13 @@ function YieldTooltip({ active, payload }: TooltipProps) {
   const p = payload[0].payload;
   const isPrimary = p.series.endsWith("_pri");
   return (
-    <div style={{ background: "#111827", border: "1px solid #374151", borderRadius: 8, padding: "8px 12px", fontSize: 12 }}>
-      <div style={{ color: "#e5e7eb", marginBottom: 4, maxWidth: 220 }}>{p.label}</div>
-      <div style={{ color: "#9ca3af", marginBottom: 2 }}>{isPrimary ? "Primary — BB Treasury" : "Secondary — GSOM MTM"}</div>
-      <div style={{ color: "#fff", fontFamily: "monospace" }}>
+    <div style={{ background: "var(--tip-bg)", border: "1px solid var(--border)", borderRadius: 8, padding: "8px 12px", fontSize: 12 }}>
+      <div style={{ color: "var(--fg)", marginBottom: 4, maxWidth: 220 }}>{p.label}</div>
+      <div style={{ color: "var(--fg-mute)", marginBottom: 2 }}>{isPrimary ? "Primary — BB Treasury" : "Secondary — GSOM MTM"}</div>
+      <div style={{ color: "var(--fg)", fontFamily: "monospace" }}>
         {isPrimary ? `Tenor: ${p.x.toFixed(2)} yr` : `Rem. maturity: ${p.x.toFixed(2)} yr`}
       </div>
-      <div style={{ color: "#fff", fontFamily: "monospace" }}>Yield: {p.y.toFixed(4)}%</div>
+      <div style={{ color: "var(--fg)", fontFamily: "monospace" }}>Yield: {p.y.toFixed(4)}%</div>
     </div>
   );
 }
@@ -91,18 +91,18 @@ export default function YieldCurveChartFull({ primary, secondary }: Props) {
             return (
               <button key={s.key} onClick={() => toggle(s.key)}
                 className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border transition-all"
-                style={{ background: active ? s.color + "22" : "transparent", borderColor: active ? s.color + "88" : "#374151", color: active ? s.color : "#4b5563" }}>
-                <span className="inline-block" style={{ width: 14, height: 2, background: active ? s.color : "#4b5563", marginBottom: 1 }} />
+                style={{ background: active ? `color-mix(in oklab, ${s.color} 14%, transparent)` : "transparent", borderColor: active ? `color-mix(in oklab, ${s.color} 55%, transparent)` : "var(--border)", color: active ? s.color : "var(--fg-mute)" }}>
+                <span className="inline-block" style={{ width: 14, height: 2, background: active ? s.color : "var(--fg-mute)", marginBottom: 1 }} />
                 {s.label}
               </button>
             );
           })}
         </div>
-        <div className="flex flex-wrap gap-3 text-xs text-gray-500 ml-auto">
+        <div className="flex flex-wrap gap-3 text-xs t-mute ml-auto">
           {types.map(t => (
             <span key={t} className="flex items-center gap-1.5">
-              <span style={{ background: TYPE_COLOR[t] ?? "#888", width: 16, height: 2, display: "inline-block" }} />
-              <span style={{ color: TYPE_COLOR[t] ?? "#888" }}>{t}</span>
+              <span style={{ background: TYPE_COLOR[t] ?? "var(--fg-mute)", width: 16, height: 2, display: "inline-block" }} />
+              <span style={{ color: TYPE_COLOR[t] ?? "var(--fg-mute)" }}>{t}</span>
             </span>
           ))}
         </div>
@@ -112,7 +112,7 @@ export default function YieldCurveChartFull({ primary, secondary }: Props) {
         const pri = [...(priByType[t] ?? [])].sort((a, b) => (a.tenor_years ?? 0) - (b.tenor_years ?? 0));
         const sec = [...(secByType[t] ?? [])].sort((a, b) => a.remaining_years - b.remaining_years);
         if (!pri.length && !sec.length) return null;
-        const color = TYPE_COLOR[t] ?? "#888";
+        const color = TYPE_COLOR[t] ?? "var(--fg-mute)";
 
         const priData = pri.map(r => ({ x: r.tenor_years ?? 0, y: r.cutoff_yield_pct, label: r.tenor_label, series: `${t}_pri` }));
         const secData = sec.map(r => ({ x: r.remaining_years, y: r.market_yield_pct, label: r.security_name_norm ?? r.isin, series: `${t}_sec` }));
@@ -135,11 +135,11 @@ export default function YieldCurveChartFull({ primary, secondary }: Props) {
             <div className="text-xs font-medium mb-1 ml-1" style={{ color }}>{t}</div>
             <ResponsiveContainer width="100%" height={180}>
               <ScatterChart margin={{ top: 4, right: 16, bottom: 8, left: 4 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />
                 <XAxis type="number" dataKey="x" name="Maturity (yr)" domain={[xMin, xMax]}
-                  tick={{ fill: "#9ca3af", fontSize: 10 }} tickFormatter={v => `${Number(v).toFixed(1)}yr`} />
+                  tick={{ fill: "var(--fg-mute)", fontSize: 10 }} tickFormatter={v => `${Number(v).toFixed(1)}yr`} />
                 <YAxis type="number" dataKey="y" name="Yield (%)" domain={[yMin, yMax]}
-                  tick={{ fill: "#9ca3af", fontSize: 10 }} tickFormatter={v => `${Number(v).toFixed(1)}%`} width={42} />
+                  tick={{ fill: "var(--fg-mute)", fontSize: 10 }} tickFormatter={v => `${Number(v).toFixed(1)}%`} width={42} />
                 <Tooltip content={<YieldTooltip />} />
                 {showSecondary && secData.length > 0 && (
                   <Scatter name={`${t} Secondary`} data={secData} fill={color}

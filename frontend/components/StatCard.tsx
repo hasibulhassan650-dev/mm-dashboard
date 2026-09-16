@@ -5,19 +5,21 @@ interface Props {
   color?: "blue" | "green" | "amber" | "red";
 }
 
-const colors = {
-  blue:  "border-blue-500/40 bg-blue-500/10",
-  green: "border-green-500/40 bg-green-500/10",
-  amber: "border-amber-500/40 bg-amber-500/10",
-  red:   "border-red-500/40 bg-red-500/10",
+// Semantic tone → theme token, so the tint follows light/dark like every panel.
+const TONE: Record<NonNullable<Props["color"]>, string> = {
+  blue: "var(--info)", green: "var(--pos)", amber: "var(--warn)", red: "var(--neg)",
 };
 
 export default function StatCard({ label, value, sub, color = "blue" }: Props) {
+  const tone = TONE[color];
   return (
-    <div className={`rounded-xl border p-4 ${colors[color]}`}>
-      <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">{label}</p>
-      <p className="text-2xl font-bold text-white">{value}</p>
-      {sub && <p className="text-xs text-gray-400 mt-1">{sub}</p>}
+    <div className="rounded-xl border p-4" style={{
+      borderColor: `color-mix(in oklab, ${tone} 40%, transparent)`,
+      background: `color-mix(in oklab, ${tone} 10%, var(--panel))`,
+    }}>
+      <p className="text-xs t-dim uppercase tracking-wide mb-1">{label}</p>
+      <p className="text-2xl font-bold t-fg">{value}</p>
+      {sub && <p className="text-xs t-dim mt-1">{sub}</p>}
     </div>
   );
 }

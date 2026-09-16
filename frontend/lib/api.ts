@@ -297,6 +297,8 @@ export interface CallMoneyResult {
   daily_summary: CallMoneyDailySummary[];
   latest_breakdown: CallMoneyBreakdownRow[];
   latest_date: string | null;
+  /** true while latest_date is the current Dhaka day: BB's table is still running. */
+  latest_is_provisional?: boolean;
 }
 
 export interface RefRateRow {

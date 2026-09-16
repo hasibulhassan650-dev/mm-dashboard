@@ -24,9 +24,9 @@ import { fmtPct, fmtDate } from "@/lib/format";
 // stay colourblind-safe. OLS and Blend are still fully visible in the scoreboard
 // table below; this chart is for the comparison you actually act on.
 const MODELS: { key: ForecastModel; label: string; color: string }[] = [
-  { key: "curve",    label: "Curve carry", color: "#1f9e6e" },  // --accent
-  { key: "naive",    label: "Naive",       color: "#4f8ff7" },  // --info
-  { key: "momentum", label: "Momentum",    color: "#c2703c" },  // validated 3rd hue
+  { key: "curve",    label: "Curve carry", color: "var(--accent)" },  // --accent
+  { key: "naive",    label: "Naive",       color: "var(--info)" },  // --info
+  { key: "momentum", label: "Momentum",    color: "var(--s-orange)" },  // validated 3rd hue
 ];
 
 const ROW_H = 58;

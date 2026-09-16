@@ -30,6 +30,10 @@ html[data-theme="dark"] {
   --kpi-grad: linear-gradient(180deg, rgba(255,255,255,0.018), transparent);
   --shadow: 0 1px 2px rgba(0,0,0,0.4);
   --warline: #d99a1f;
+  /* chart series palette — same hues as light, lifted for a dark ground */
+  --s-blue: #60a5fa; --s-indigo: #818cf8; --s-sky: #38bdf8; --s-cyan: #22d3ee; --s-teal: #2dd4bf;
+  --s-green: #34d399; --s-lime: #a3e635; --s-amber: #fbbf24; --s-orange: #fb923c; --s-red: #f87171;
+  --s-maroon: #c56a6a; --s-pink: #f472b6; --s-violet: #a78bfa; --s-grey: #8b98a5;
 }
 html[data-theme="light"] {
   --bg: #efece4; --bg-elev: #f6f4ee; --panel: #ffffff; --panel-2: #f8f6f1;
@@ -41,6 +45,10 @@ html[data-theme="light"] {
   --kpi-grad: linear-gradient(180deg, rgba(0,0,0,0.012), transparent);
   --shadow: 0 1px 2px rgba(120,110,90,0.12);
   --warline: #c47f12;
+  /* chart series palette — deeper versions of the same hues for a light ground */
+  --s-blue: #1d5fd1; --s-indigo: #4f5fcf; --s-sky: #0b7fc0; --s-cyan: #0e8aa8; --s-teal: #0f8a80;
+  --s-green: #1a8f4f; --s-lime: #5b8f00; --s-amber: #b7791f; --s-orange: #d2600f; --s-red: #c53030;
+  --s-maroon: #7f1d1d; --s-pink: #c0357a; --s-violet: #6d4fd1; --s-grey: #5a6570;
 }
 /* density */
 html[data-density="compact"] { --pad: 12px; --gap: 12px; --row-h: 30px; --kpi-num: 25px; }
@@ -61,6 +69,13 @@ a { color: inherit; text-decoration: none; }
 .chart-tip-label { fill: var(--fg-dim); font-size: 11px; }
 .chart-tip-val { fill: var(--fg); font-family: var(--mono); font-size: 11px; font-weight: 500; }
 .pos { color: var(--pos); } .neg { color: var(--neg); }
+/* token utilities — use these instead of Tailwind greys so both themes hold */
+.t-fg { color: var(--fg); } .t-dim { color: var(--fg-dim); } .t-mute { color: var(--fg-mute); }
+.t-accent { color: var(--accent); } .t-pos { color: var(--pos); } .t-warn { color: var(--warn); } .t-info { color: var(--info); }
+.b-panel { background: var(--panel); } .b-panel2 { background: var(--panel-2); } .b-accent { background: var(--accent); color: #fff; }
+.b-pos-soft { background: color-mix(in oklab, var(--pos) 18%, transparent); } .b-warn-soft { background: color-mix(in oklab, var(--warn) 18%, transparent); }
+.bd { border-color: var(--border); } .bd-soft { border-color: var(--border-soft); } .bd-accent { border-color: var(--accent); }
+.hover-fg:hover { color: var(--fg); } .hover-bd-accent:hover { border-color: var(--accent); } .hover-b-panel2:hover { background: var(--panel-2); }
 
 /* scrollbar */
 ::-webkit-scrollbar { width: 9px; height: 9px; }

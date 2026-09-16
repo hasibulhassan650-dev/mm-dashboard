@@ -24,9 +24,9 @@ import { fmtDateShort, fmtPct } from "@/lib/format";
 // dark surface (L .73 vs .67 cap); the burnt orange clears the lightness band
 // and the CVD checks in both themes.
 const SERIES: { key: ForecastModel; label: string; color: string }[] = [
-  { key: "curve",    label: "Curve carry", color: "#1f9e6e" },   // --accent
-  { key: "naive",    label: "Naive",       color: "#4f8ff7" },   // --info
-  { key: "momentum", label: "Momentum",    color: "#c2703c" },
+  { key: "curve",    label: "Curve carry", color: "var(--accent)" },   // --accent
+  { key: "naive",    label: "Naive",       color: "var(--info)" },   // --info
+  { key: "momentum", label: "Momentum",    color: "var(--s-orange)" },
 ];
 
 type Row = { date: string; actual: number | null } & Partial<Record<ForecastModel, number | null>>;

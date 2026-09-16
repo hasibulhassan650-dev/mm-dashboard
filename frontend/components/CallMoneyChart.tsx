@@ -10,11 +10,11 @@ import { fmtDateShort, fmtCrore, fmtPct } from "@/lib/format";
 export interface Corridor { repo: number | null; sdf: number | null; slf: number | null }
 
 const SERIES = [
-  { key: "avg",      label: "Avg Rate",  color: "#f59e0b" },
-  { key: "high",     label: "High Rate", color: "#dc2626" },
-  { key: "low",      label: "Low Rate",  color: "#16a34a" },
-  { key: "volume",   label: "Volume",    color: "#4b5563" },
-  { key: "corridor", label: "Corridor",  color: "#5eead4" },
+  { key: "avg",      label: "Avg Rate",  color: "var(--s-amber)" },
+  { key: "high",     label: "High Rate", color: "var(--s-red)" },
+  { key: "low",      label: "Low Rate",  color: "var(--s-green)" },
+  { key: "volume",   label: "Volume",    color: "var(--fg-mute)" },
+  { key: "corridor", label: "Corridor",  color: "var(--s-teal)" },
 ];
 
 interface TooltipProps { active?: boolean; payload?: { value: number; name: string; color: string }[]; label?: string }
@@ -22,8 +22,8 @@ interface TooltipProps { active?: boolean; payload?: { value: number; name: stri
 function CMTooltip({ active, payload, label }: TooltipProps) {
   if (!active || !payload?.length) return null;
   return (
-    <div style={{ background: "#111827", border: "1px solid #374151", borderRadius: 8, padding: "8px 12px", fontSize: 12 }}>
-      <div style={{ color: "#e5e7eb", marginBottom: 6, fontWeight: 600 }}>{label}</div>
+    <div style={{ background: "var(--tip-bg)", border: "1px solid var(--border)", borderRadius: 8, padding: "8px 12px", fontSize: 12 }}>
+      <div style={{ color: "var(--fg)", marginBottom: 6, fontWeight: 600 }}>{label}</div>
       {payload.map((p, i) => (
         <div key={i} style={{ color: p.color, fontFamily: "monospace" }}>
           {p.name}: {p.name.includes("Volume") ? fmtCrore(Number(p.value)) : fmtPct(Number(p.value))}
@@ -66,8 +66,8 @@ export default function CallMoneyChart({ data, corridor }: { data: CallMoneyDail
           return (
             <button key={s.key} onClick={() => toggle(s.key)}
               className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border transition-all"
-              style={{ background: active ? s.color + "22" : "transparent", borderColor: active ? s.color + "88" : "#374151", color: active ? s.color : "#4b5563" }}>
-              <span className="w-2 h-2 rounded-full inline-block" style={{ background: active ? s.color : "#4b5563" }} />
+              style={{ background: active ? `color-mix(in oklab, ${s.color} 14%, transparent)` : "transparent", borderColor: active ? `color-mix(in oklab, ${s.color} 55%, transparent)` : "var(--border)", color: active ? s.color : "var(--fg-mute)" }}>
+              <span className="w-2 h-2 rounded-full inline-block" style={{ background: active ? s.color : "var(--fg-mute)" }} />
               {s.label}
             </button>
           );
@@ -75,35 +75,35 @@ export default function CallMoneyChart({ data, corridor }: { data: CallMoneyDail
       </div>
       <ResponsiveContainer width="100%" height={280}>
         <ComposedChart data={chartData} margin={{ top: 4, right: 48, bottom: 4, left: 4 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
-          <XAxis dataKey="date" tick={{ fill: "#9ca3af", fontSize: 10 }} interval="preserveStartEnd" />
-          <YAxis yAxisId="rate" domain={[yMin, yMax]} tick={{ fill: "#9ca3af", fontSize: 10 }} tickFormatter={v => `${v}%`} width={42} />
-          <YAxis yAxisId="vol" orientation="right" tick={{ fill: "#374151", fontSize: 10 }} tickFormatter={v => `${(v/1000).toFixed(0)}k`} width={40} />
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />
+          <XAxis dataKey="date" tick={{ fill: "var(--fg-mute)", fontSize: 10 }} interval="preserveStartEnd" />
+          <YAxis yAxisId="rate" domain={[yMin, yMax]} tick={{ fill: "var(--fg-mute)", fontSize: 10 }} tickFormatter={v => `${v}%`} width={42} />
+          <YAxis yAxisId="vol" orientation="right" tick={{ fill: "var(--border)", fontSize: 10 }} tickFormatter={v => `${(v/1000).toFixed(0)}k`} width={40} />
           <Tooltip content={<CMTooltip />} />
           {showCorridor && corridor!.slf != null && (
-            <ReferenceLine yAxisId="rate" y={corridor!.slf} stroke="#f87171" strokeDasharray="5 3" strokeOpacity={0.7}
-              label={{ value: `SLF ${corridor!.slf}%`, position: "insideTopRight", fill: "#f87171", fontSize: 9 }} />
+            <ReferenceLine yAxisId="rate" y={corridor!.slf} stroke="var(--s-red)" strokeDasharray="5 3" strokeOpacity={0.7}
+              label={{ value: `SLF ${corridor!.slf}%`, position: "insideTopRight", fill: "var(--s-red)", fontSize: 9 }} />
           )}
           {showCorridor && corridor!.repo != null && (
-            <ReferenceLine yAxisId="rate" y={corridor!.repo} stroke="#5eead4" strokeDasharray="5 3" strokeOpacity={0.8}
-              label={{ value: `Repo ${corridor!.repo}%`, position: "insideTopRight", fill: "#5eead4", fontSize: 9 }} />
+            <ReferenceLine yAxisId="rate" y={corridor!.repo} stroke="var(--s-teal)" strokeDasharray="5 3" strokeOpacity={0.8}
+              label={{ value: `Repo ${corridor!.repo}%`, position: "insideTopRight", fill: "var(--s-teal)", fontSize: 9 }} />
           )}
           {showCorridor && corridor!.sdf != null && (
-            <ReferenceLine yAxisId="rate" y={corridor!.sdf} stroke="#4ade80" strokeDasharray="5 3" strokeOpacity={0.7}
-              label={{ value: `SDF ${corridor!.sdf}%`, position: "insideBottomRight", fill: "#4ade80", fontSize: 9 }} />
+            <ReferenceLine yAxisId="rate" y={corridor!.sdf} stroke="var(--s-green)" strokeDasharray="5 3" strokeOpacity={0.7}
+              label={{ value: `SDF ${corridor!.sdf}%`, position: "insideBottomRight", fill: "var(--s-green)", fontSize: 9 }} />
           )}
           <Area yAxisId="vol" type="monotone" dataKey="volume" name="Overnight Volume"
-            fill="#1f2937" stroke="#374151" fillOpacity={0.4} strokeWidth={1} dot={false}
+            fill="var(--grid)" stroke="var(--border)" fillOpacity={0.4} strokeWidth={1} dot={false}
             hide={hidden.has("volume")} />
           <Line yAxisId="rate" type="monotone" dataKey="high" name="High rate"
-            stroke="#dc2626" strokeWidth={1} strokeDasharray="3 2" dot={false} connectNulls
+            stroke="var(--s-red)" strokeWidth={1} strokeDasharray="3 2" dot={false} connectNulls
             hide={hidden.has("high")} />
           <Line yAxisId="rate" type="monotone" dataKey="low" name="Low rate"
-            stroke="#16a34a" strokeWidth={1} strokeDasharray="3 2" dot={false} connectNulls
+            stroke="var(--s-green)" strokeWidth={1} strokeDasharray="3 2" dot={false} connectNulls
             hide={hidden.has("low")} />
           <Line yAxisId="rate" type="monotone" dataKey="avg" name="Avg rate"
-            stroke="#f59e0b" strokeWidth={2.5}
-            dot={{ r: 3, fill: "#f59e0b", stroke: "white", strokeWidth: 1 }} connectNulls
+            stroke="var(--s-amber)" strokeWidth={2.5}
+            dot={{ r: 3, fill: "var(--s-amber)", stroke: "var(--panel)", strokeWidth: 1 }} connectNulls
             hide={hidden.has("avg")} />
         </ComposedChart>
       </ResponsiveContainer>

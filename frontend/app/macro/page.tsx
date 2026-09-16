@@ -29,7 +29,7 @@ export default async function MacroPage({ searchParams }: { searchParams: Promis
       <div className="kpi-strip" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
         <div className="kpi"><div className="kpi-top"><span className="kpi-label">Gross Reserves<InfoTip term="Gross reserves" /></span></div><div className="kpi-val"><span className="kpi-num" style={{ color: "var(--info)" }}>{latest?.gross_reserves_usd_bn?.toFixed(2) ?? "—"}</span><span className="kpi-unit">B$</span></div><div className="kpi-sub">{latest ? fmtMonth(latest.month) : ""}</div></div>
         <div className="kpi"><div className="kpi-top"><span className="kpi-label">Net (BPM6)<InfoTip term="Net reserves (BPM6)" /></span></div><div className="kpi-val"><span className="kpi-num" style={{ color: "var(--accent)" }}>{latest?.net_reserves_bpm6_usd_bn?.toFixed(2) ?? "—"}</span><span className="kpi-unit">B$</span></div><div className="kpi-sub">IMF basis</div></div>
-        <div className="kpi"><div className="kpi-top"><span className="kpi-label">Remittance<InfoTip term="Remittance" /></span></div><div className="kpi-val"><span className="kpi-num" style={{ color: "#a78bfa" }}>{latest?.remittance_usd_mn?.toLocaleString() ?? "—"}</span><span className="kpi-unit">M$</span></div><div className="kpi-sub">{latest ? fmtMonth(latest.month) : ""}</div></div>
+        <div className="kpi"><div className="kpi-top"><span className="kpi-label">Remittance<InfoTip term="Remittance" /></span></div><div className="kpi-val"><span className="kpi-num" style={{ color: "var(--s-violet)" }}>{latest?.remittance_usd_mn?.toLocaleString() ?? "—"}</span><span className="kpi-unit">M$</span></div><div className="kpi-sub">{latest ? fmtMonth(latest.month) : ""}</div></div>
         <div className="kpi"><div className="kpi-top"><span className="kpi-label">Remittance MoM</span></div><div className="kpi-val"><span className={"kpi-num " + (remDeltaPct != null ? (remDeltaPct >= 0 ? "pos" : "neg") : "")}>{remDeltaPct != null ? `${remDeltaPct >= 0 ? "+" : ""}${remDeltaPct.toFixed(1)}` : "—"}</span><span className="kpi-unit">%</span></div><div className="kpi-sub">vs {prev ? fmtMonth(prev.month) : "—"}</div></div>
       </div>
 
@@ -47,7 +47,7 @@ export default async function MacroPage({ searchParams }: { searchParams: Promis
                     <td>{fmtMonth(r.month)}</td>
                     <td className="r mono" style={{ color: "var(--info)" }}>{r.gross_reserves_usd_bn?.toFixed(2) ?? "—"}</td>
                     <td className="r mono" style={{ color: "var(--accent)" }}>{r.net_reserves_bpm6_usd_bn?.toFixed(2) ?? "—"}</td>
-                    <td className="r mono" style={{ color: "#a78bfa" }}>{r.remittance_usd_mn?.toLocaleString() ?? "—"}</td>
+                    <td className="r mono" style={{ color: "var(--s-violet)" }}>{r.remittance_usd_mn?.toLocaleString() ?? "—"}</td>
                   </tr>
                 ))}
               </tbody>

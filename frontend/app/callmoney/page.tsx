@@ -39,7 +39,7 @@ export default async function CallMoneyPage({ searchParams }: { searchParams: Pr
         <div className="kpi">
           <div className="kpi-top"><span className="kpi-label">Overnight WAR</span>{rateDelta != null && <span className={"delta " + (rateDelta <= 0 ? "pos" : "neg")}><svg viewBox="0 0 12 12" width="9" height="9" style={{ transform: rateDelta >= 0 ? "none" : "rotate(180deg)" }}><path d="M6 2 L10 8 L2 8 Z" fill="currentColor" /></svg>{Math.abs(rateDelta).toFixed(2)}</span>}</div>
           <div className="kpi-val"><span className="kpi-num">{rateNow != null ? rateNow.toFixed(2) : "—"}</span><span className="kpi-unit">%</span></div>
-          <div className="kpi-sub">weighted avg rate</div>
+          <div className="kpi-sub">{data.latest_is_provisional ? <span style={{ color: "var(--warn)" }}>intraday · provisional</span> : "weighted avg rate"}{data.latest_date ? ` · ${fmtDate(data.latest_date)}` : ""}</div>
         </div>
         <div className="kpi">
           <div className="kpi-top"><span className="kpi-label">O/N High / Low</span></div>

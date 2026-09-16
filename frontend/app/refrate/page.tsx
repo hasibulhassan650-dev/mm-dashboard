@@ -61,11 +61,11 @@ export default async function RefRatePage({ searchParams }: { searchParams: Prom
         </div>
         <div className="kpi">
           <div className="kpi-top"><span className="kpi-label">BOFR · O/N<InfoTip term="BOFR" /></span>{bof != null && <span className={"delta " + (bof <= 0 ? "pos" : "neg")}><svg viewBox="0 0 12 12" width="9" height="9" style={{ transform: bof >= 0 ? "none" : "rotate(180deg)" }}><path d="M6 2 L10 8 L2 8 Z" fill="currentColor" /></svg>{Math.abs(bof).toFixed(2)}</span>}</div>
-          <div className="kpi-val"><span className="kpi-num" style={{ color: "#a78bfa" }}>{at("BOFR", "Overnight", latestDate)?.toFixed(2) ?? "—"}</span><span className="kpi-unit">%</span></div>
+          <div className="kpi-val"><span className="kpi-num" style={{ color: "var(--s-violet)" }}>{at("BOFR", "Overnight", latestDate)?.toFixed(2) ?? "—"}</span><span className="kpi-unit">%</span></div>
           <div className="kpi-sub">bank overnight</div>
         </div>
         <div className="kpi"><div className="kpi-top"><span className="kpi-label">DOMMR — 1W/1M/3M</span></div>{miniList("DOMMR", "var(--info)")}</div>
-        <div className="kpi"><div className="kpi-top"><span className="kpi-label">BOFR — 1W/1M/3M</span></div>{miniList("BOFR", "#a78bfa")}</div>
+        <div className="kpi"><div className="kpi-top"><span className="kpi-label">BOFR — 1W/1M/3M</span></div>{miniList("BOFR", "var(--s-violet)")}</div>
       </div>
 
       <div className="grid12">
@@ -81,7 +81,7 @@ export default async function RefRatePage({ searchParams }: { searchParams: Prom
                   <thead><tr><th>Product</th><th className="r">Rate</th><th className="r">Amount (cr)</th><th className="r">Deals</th></tr></thead>
                   <tbody>
                     {latest.map((r, i) => (
-                      <tr key={i}><td>{r.product}</td><td className="r mono" style={{ color: rtype === "DOMMR" ? "var(--info)" : "#a78bfa" }}>{r.rate_pct?.toFixed(2) ?? "—"}%</td><td className="r mono">{r.amount_crore?.toLocaleString() ?? "—"}</td><td className="r mono">{r.num_deals ?? "—"}</td></tr>
+                      <tr key={i}><td>{r.product}</td><td className="r mono" style={{ color: rtype === "DOMMR" ? "var(--info)" : "var(--s-violet)" }}>{r.rate_pct?.toFixed(2) ?? "—"}%</td><td className="r mono">{r.amount_crore?.toLocaleString() ?? "—"}</td><td className="r mono">{r.num_deals ?? "—"}</td></tr>
                     ))}
                   </tbody>
                 </table>
@@ -100,7 +100,7 @@ export default async function RefRatePage({ searchParams }: { searchParams: Prom
                   {rows.map((r, i) => (
                     <tr key={i}>
                       <td>{fmtDate(r.trade_date)}</td>
-                      <td><span style={{ color: r.rate_type === "DOMMR" ? "var(--info)" : "#a78bfa", fontWeight: 600, fontSize: 11 }}>{r.rate_type}</span></td>
+                      <td><span style={{ color: r.rate_type === "DOMMR" ? "var(--info)" : "var(--s-violet)", fontWeight: 600, fontSize: 11 }}>{r.rate_type}</span></td>
                       <td>{r.product}</td>
                       <td className="r mono">{r.rate_pct?.toFixed(2) ?? "—"}%</td>
                       <td className="r mono">{r.amount_crore?.toLocaleString() ?? "—"}</td>

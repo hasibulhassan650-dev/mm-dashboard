@@ -318,3 +318,34 @@ def test_multi_day_slf_line_is_iblf_even_without_a_rate():
     assert _fingerprint("SLF", 7, None, None, D(2026, 4, 26)) == ("IBLF", "INJECTION")
     assert _fingerprint("SLF", 14, None, None, D(2026, 3, 12)) == ("IBLF", "INJECTION")
     assert _fingerprint("SLF", 1, None, None, D(2026, 4, 26)) is None
+
+
+# ── 9. BB's call-money page is a running intraday table ──────────────────────
+
+def test_call_money_store_follows_the_page_not_the_first_snapshot():
+    # 14-Sep-2026: the first hourly fetch froze 2,148 cr / 35 deals / 8.65%;
+    # BB's final line is 6,100.47 / 81 / 8.75. And a "15-Sep" Short Notice 3D
+    # row existed only in an intraday carry-over — BB's final page has none.
+    from engines.pipeline import replace_daily_rows
+    eng, s = _mem()
+    d14, d15, d10 = D(2026, 9, 14), D(2026, 9, 15), D(2026, 9, 10)
+    s.add(CallMoneyRate(trade_date=d14, product="Overnight", maturity_days=1, amount_crore=2148.0,
+                        highest_rate_pct=10.0, lowest_rate_pct=8.5, average_rate_pct=8.65, num_deals=35))
+    s.add(CallMoneyRate(trade_date=d15, product="Short Notice", maturity_days=3, amount_crore=180.0,
+                        highest_rate_pct=8.8, lowest_rate_pct=8.75, average_rate_pct=8.76, num_deals=3))
+    s.add(CallMoneyRate(trade_date=d10, product="Overnight", maturity_days=1, amount_crore=5739.49,
+                        highest_rate_pct=11.0, lowest_rate_pct=8.5, average_rate_pct=8.69, num_deals=72))
+    s.commit()
+    page = [
+        {"trade_date": d14, "product": "Overnight", "maturity_days": 1, "amount_crore": 6100.47,
+         "highest_rate_pct": 11.0, "lowest_rate_pct": 8.5, "average_rate_pct": 8.75, "num_deals": 81},
+        {"trade_date": d15, "product": "Overnight", "maturity_days": 1, "amount_crore": 4760.46,
+         "highest_rate_pct": 11.0, "lowest_rate_pct": 8.45, "average_rate_pct": 8.71, "num_deals": 71},
+    ]   # 10-Sep not on this page: must be left alone
+    st = replace_daily_rows(s, CallMoneyRate, page, ("product", "maturity_days")); s.commit()
+    assert st == {"updated": 1, "inserted": 1, "deleted": 1, "unchanged": 0}
+    on14 = s.query(CallMoneyRate).filter_by(trade_date=d14, product="Overnight").one()
+    assert (on14.amount_crore, on14.num_deals, on14.average_rate_pct) == (6100.47, 81, 8.75)
+    assert s.query(CallMoneyRate).filter_by(trade_date=d15).count() == 1          # carry-over row gone
+    assert s.query(CallMoneyRate).filter_by(trade_date=d15).one().average_rate_pct == 8.71
+    assert s.query(CallMoneyRate).filter_by(trade_date=d10).one().amount_crore == 5739.49

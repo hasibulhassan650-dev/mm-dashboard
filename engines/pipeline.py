@@ -189,6 +189,56 @@ def _upsert_auction(session, event: dict):
                "rd":rd,"rr":rr,"src":src,"dq":dq})
 
 
+def replace_daily_rows(session, model, rows: list, key_fields: tuple,
+                       date_field: str = "trade_date") -> dict:
+    """Make the DB match BB's page for every date the page returned.
+
+    BB's call-money page is a RUNNING intraday table: the first hourly fetch of
+    a day captures a partial total (14-Sep-2026 overnight: 2,148 cr / 35 deals
+    stored, 6,100 cr / 81 deals final), and for a while the new day's header can
+    sit over the previous day's rows. Insert-only storage froze every such
+    snapshot for good (22 of the last 52 rows were wrong). So, per date on the
+    page: update rows whose figures changed, insert new ones, delete ones the
+    page no longer has. Dates absent from the page are left alone — a truncated
+    response must never wipe history — and a date is only touched when the page
+    holds at least one row for it.
+    """
+    by_date: dict = {}
+    for r in rows:
+        by_date.setdefault(r[date_field], []).append(r)
+    stats = {"updated": 0, "inserted": 0, "deleted": 0, "unchanged": 0}
+    for d, page_rows in by_date.items():
+        if not page_rows:
+            continue
+        existing = session.query(model).filter(getattr(model, date_field) == d).all()
+        ex_by_key = {tuple(getattr(e, k) for k in key_fields): e for e in existing}
+        seen = set()
+        for r in page_rows:
+            key = tuple(r.get(k) for k in key_fields)
+            seen.add(key)
+            e = ex_by_key.get(key)
+            if e is None:
+                session.add(model(**r)); stats["inserted"] += 1
+                continue
+            changed = False
+            for f, v in r.items():
+                if f in ("ingested_utc", "id") or not hasattr(e, f):
+                    continue
+                if getattr(e, f) != v:
+                    setattr(e, f, v); changed = True
+            if changed:
+                if hasattr(e, "ingested_utc") and "ingested_utc" in r:
+                    e.ingested_utc = r["ingested_utc"]
+                stats["updated"] += 1
+            else:
+                stats["unchanged"] += 1
+        for key, e in ex_by_key.items():
+            if key not in seen:
+                session.delete(e); stats["deleted"] += 1
+    session.flush()
+    return stats
+
+
 def confirm_auctions_from_results(session) -> dict:
     """Attach BB's published auction RESULTS to the calendar auctions they settle.
 

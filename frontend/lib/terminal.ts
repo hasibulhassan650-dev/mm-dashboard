@@ -19,19 +19,19 @@ export interface OmoInstrument extends StackCat {
   direction: OmoDirection;   // INJECTION adds market liquidity; ABSORPTION mops it up
 }
 export const OMO_INSTRUMENTS: OmoInstrument[] = [
-  { key: "CB_REPO", label: "Repo",         full: "Central Bank Repo",                color: "#60a5fa", direction: "INJECTION",  desc: "BB lends cash to banks against securities (injection)" },
-  { key: "AR",      label: "Assured Repo", full: "Assured Repo",                     color: "#34d399", direction: "INJECTION",  desc: "Term liquidity-support repo, usually longer-dated (injection)" },
-  { key: "IBLF",    label: "IBLF",         full: "Islamic Banks Liquidity Facility", color: "#a78bfa", direction: "INJECTION",  desc: "Short-term funds for Shariah-compliant banks (injection)" },
-  { key: "SLF",     label: "SLF",          full: "Standing Lending Facility",        color: "#fbbf24", direction: "INJECTION",  desc: "Overnight borrowing from BB at the corridor ceiling (injection)" },
-  { key: "MLS",     label: "MLS",          full: "Mudaraba Liquidity Support",       color: "#f472b6", direction: "INJECTION",  desc: "Shariah (Mudaraba) liquidity support for Islamic banks (injection)" },
-  { key: "SLS",     label: "SLS",          full: "Special Liquidity Support",        color: "#22d3ee", direction: "INJECTION",  desc: "Ad-hoc special liquidity support beyond standing facilities (injection)" },
-  { key: "SRF",     label: "SRF",          full: "Special Repo Facility",            color: "#fb923c", direction: "INJECTION",  desc: "Special repo outside the regular CB repo line (injection)" },
-  { key: "CM_REPO", label: "CM Repo",      full: "Capital Market Repo",              color: "#a3e635", direction: "INJECTION",  desc: "Repo supporting banks' capital-market liquidity (injection)" },
-  { key: "SDF",     label: "SDF",          full: "Standing Deposit Facility",        color: "#f87171", direction: "ABSORPTION", desc: "Banks park surplus at BB at the corridor floor (mop-up)" },
+  { key: "CB_REPO", label: "Repo",         full: "Central Bank Repo",                color: "var(--s-blue)", direction: "INJECTION",  desc: "BB lends cash to banks against securities (injection)" },
+  { key: "AR",      label: "Assured Repo", full: "Assured Repo",                     color: "var(--s-green)", direction: "INJECTION",  desc: "Term liquidity-support repo, usually longer-dated (injection)" },
+  { key: "IBLF",    label: "IBLF",         full: "Islamic Banks Liquidity Facility", color: "var(--s-violet)", direction: "INJECTION",  desc: "Short-term funds for Shariah-compliant banks (injection)" },
+  { key: "SLF",     label: "SLF",          full: "Standing Lending Facility",        color: "var(--s-amber)", direction: "INJECTION",  desc: "Overnight borrowing from BB at the corridor ceiling (injection)" },
+  { key: "MLS",     label: "MLS",          full: "Mudaraba Liquidity Support",       color: "var(--s-pink)", direction: "INJECTION",  desc: "Shariah (Mudaraba) liquidity support for Islamic banks (injection)" },
+  { key: "SLS",     label: "SLS",          full: "Special Liquidity Support",        color: "var(--s-cyan)", direction: "INJECTION",  desc: "Ad-hoc special liquidity support beyond standing facilities (injection)" },
+  { key: "SRF",     label: "SRF",          full: "Special Repo Facility",            color: "var(--s-orange)", direction: "INJECTION",  desc: "Special repo outside the regular CB repo line (injection)" },
+  { key: "CM_REPO", label: "CM Repo",      full: "Capital Market Repo",              color: "var(--s-lime)", direction: "INJECTION",  desc: "Repo supporting banks' capital-market liquidity (injection)" },
+  { key: "SDF",     label: "SDF",          full: "Standing Deposit Facility",        color: "var(--s-red)", direction: "ABSORPTION", desc: "Banks park surplus at BB at the corridor floor (mop-up)" },
 ];
 export const OMO_ABSORPTION_KEYS = new Set(OMO_INSTRUMENTS.filter((i) => i.direction === "ABSORPTION").map((i) => i.key));
 const OMO_META = new Map(OMO_INSTRUMENTS.map((i) => [i.key, i]));
-const OMO_FALLBACK_COLORS = ["#818cf8", "#2dd4bf", "#facc15", "#c084fc", "#fb7185", "#38bdf8"];
+const OMO_FALLBACK_COLORS = ["var(--s-indigo)", "var(--s-teal)", "var(--s-amber)", "var(--s-violet)", "var(--s-red)", "var(--s-sky)"];
 
 // Back-compat: the full category list (all instruments), StackCat-shaped.
 export const OMO_CATS: StackCat[] = OMO_INSTRUMENTS.map(({ key, label, color, desc }) => ({ key, label, color, desc }));
