@@ -61,11 +61,13 @@ jobs:
           n=$(gh issue list --repo "$GITHUB_REPOSITORY" --label digest --state open \
                 --json number --jq '.[0].number // empty')
           if [ -z "$n" ]; then
-            n=$(gh issue create --repo "$GITHUB_REPOSITORY" \
-                  --title "Daily data digest" --label digest \
-                  --body "Every morning this issue receives a report of what the data pipeline did overnight. **If a day passes with no new comment here, the automation itself is down.**" \
-                  --json number --jq .number 2>/dev/null \
-                || gh issue list --repo "$GITHUB_REPOSITORY" --label digest --state open --json number --jq '.[0].number')
+            # `gh issue create` prints a URL and does NOT support --json, so ask
+            # for the number separately instead of parsing its output.
+            gh issue create --repo "$GITHUB_REPOSITORY" \
+              --title "Daily data digest" --label digest \
+              --body "Every morning this issue receives a report of what the data pipeline did overnight. **If a day passes with no new comment here, the automation itself is down.**" >/dev/null
+            n=$(gh issue list --repo "$GITHUB_REPOSITORY" --label digest --state open \
+                  --json number --jq '.[0].number')
           fi
           gh issue comment "$n" --repo "$GITHUB_REPOSITORY" --body-file digest.md
           echo "posted to issue #$n"

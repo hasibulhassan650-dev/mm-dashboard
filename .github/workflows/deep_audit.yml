@@ -59,9 +59,11 @@ jobs:
           n=$(gh issue list --repo "$GITHUB_REPOSITORY" --label digest --state open \
                 --json number --jq '.[0].number // empty')
           if [ -z "$n" ]; then
-            n=$(gh issue create --repo "$GITHUB_REPOSITORY" --title "Daily data digest" \
-                  --label digest --body "Data pipeline reports land here." --json number --jq .number 2>/dev/null \
-                || gh issue list --repo "$GITHUB_REPOSITORY" --label digest --state open --json number --jq '.[0].number')
+            # `gh issue create` prints a URL and does NOT support --json.
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "Daily data digest" \
+              --label digest --body "Data pipeline reports land here." >/dev/null
+            n=$(gh issue list --repo "$GITHUB_REPOSITORY" --label digest --state open \
+                  --json number --jq '.[0].number')
           fi
           gh issue comment "$n" --repo "$GITHUB_REPOSITORY" --body-file deep_audit.md
           echo "posted to issue #$n"
