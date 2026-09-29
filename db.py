@@ -199,6 +199,66 @@ class FxAuctionResult(Base):
     ingested_utc             = Column(DateTime)
 
 
+class InterbankFx(Base):
+    """One trading day of one interbank FX segment (SPOT / FORWARD / SWAP).
+
+    BB prints rates only for SPOT; forward and swap report turnover alone, so
+    their rate columns stay NULL rather than inheriting the spot rate.
+    """
+    __tablename__ = "interbank_fx"
+    __table_args__ = (UniqueConstraint("trade_date", "segment"),)
+    id             = Column(Integer, primary_key=True, autoincrement=True)
+    trade_date     = Column(Date, nullable=False)
+    segment        = Column(String(10))        # SPOT | FORWARD | SWAP
+    num_deals      = Column(Integer)
+    volume_usd_mn  = Column(Float)
+    high_rate      = Column(Float)             # SPOT only
+    low_rate       = Column(Float)             # SPOT only
+    war_rate       = Column(Float)             # SPOT only — the market mid
+    ingested_utc   = Column(DateTime)
+
+
+class FxRateDaily(Base):
+    """BB's published exchange rate of the Taka, one row per currency per day.
+
+    rate_date is the day the rates DESCRIBE; published_date is the day BB put
+    them up. They differ by one business day (BB's own note: "Dhaka close on
+    the previous business day"), and conflating them would repeat the
+    auction-date/issue-date error the Sep-2026 audit had to unwind.
+    Mid = (bid + ask) / 2 is computed at read time, never stored.
+    """
+    __tablename__ = "fx_rates_daily"
+    __table_args__ = (UniqueConstraint("rate_date", "currency"),)
+    id             = Column(Integer, primary_key=True, autoincrement=True)
+    rate_date      = Column(Date, nullable=False)
+    published_date = Column(Date)
+    currency       = Column(String(3))
+    bid_rate       = Column(Float)
+    ask_rate       = Column(Float)
+    war_rate       = Column(Float)             # USD only
+    ingested_utc   = Column(DateTime)
+
+
+class InterbankRepo(Base):
+    """One trading day of the interbank (secured) repo market.
+
+    BB publishes tenor and rate as RANGES ("1-7", "8.50-8.95"), so both bounds
+    are stored explicitly instead of being flattened to one number.
+    """
+    __tablename__ = "interbank_repo"
+    __table_args__ = (UniqueConstraint("trade_date"),)
+    id             = Column(Integer, primary_key=True, autoincrement=True)
+    trade_date     = Column(Date, nullable=False)
+    num_deals      = Column(Integer)
+    amount_crore   = Column(Float)
+    tenor_min_days = Column(Integer)
+    tenor_max_days = Column(Integer)
+    rate_min_pct   = Column(Float)
+    rate_max_pct   = Column(Float)
+    war_pct        = Column(Float)
+    ingested_utc   = Column(DateTime)
+
+
 class CallMoneyRate(Base):
     __tablename__ = "call_money_rates"
     __table_args__ = (UniqueConstraint("trade_date", "product", "maturity_days"),)
@@ -531,6 +591,12 @@ def init_db():
         "ALTER TABLE omo_transactions ADD CONSTRAINT ck_omo_maturity_after_txn CHECK (maturity_date >= transaction_date) NOT VALID",
         "ALTER TABLE omo_transactions VALIDATE CONSTRAINT ck_omo_maturity_after_txn",
         "ALTER TABLE call_money_rates ADD CONSTRAINT ck_cm_rate_band CHECK (lowest_rate_pct <= average_rate_pct AND average_rate_pct <= highest_rate_pct) NOT VALID",
+        "ALTER TABLE interbank_repo ADD CONSTRAINT ck_repo_rate_band CHECK (rate_min_pct <= war_pct AND war_pct <= rate_max_pct) NOT VALID",
+        "ALTER TABLE interbank_repo VALIDATE CONSTRAINT ck_repo_rate_band",
+        "ALTER TABLE fx_rates_daily ADD CONSTRAINT ck_fx_bid_le_ask CHECK (bid_rate <= ask_rate) NOT VALID",
+        "ALTER TABLE fx_rates_daily VALIDATE CONSTRAINT ck_fx_bid_le_ask",
+        "ALTER TABLE interbank_fx ADD CONSTRAINT ck_ibfx_rate_band CHECK (low_rate <= war_rate AND war_rate <= high_rate) NOT VALID",
+        "ALTER TABLE interbank_fx VALIDATE CONSTRAINT ck_ibfx_rate_band",
         "ALTER TABLE call_money_rates VALIDATE CONSTRAINT ck_cm_rate_band",
         # Forecast tables: the unique keys are what keep a re-run idempotent —
         # run_forecast.py looks up on exactly these columns before writing, and

@@ -13,7 +13,8 @@ router = APIRouter()
 # the automation is broken, not that Bangladesh Bank published nothing.
 RUN_STALE_HOURS = 14
 
-_DAILY_SERIES = {"callmoney", "refrate", "secondary", "flows"}
+_DAILY_SERIES = {"callmoney", "refrate", "secondary", "flows",
+                 "fxmarket", "fxrates", "repo"}
 _EVENT_SERIES = {"yields", "omo", "fx"}      # auctions / OMO / FX interventions — not daily
 # (securities is master data → treated like an event series: fresh if checked)
 
@@ -43,6 +44,9 @@ _SOURCES = {
     "secondary":  ("mtm_snapshots",           "ingested_utc",    "settlement_date", "Secondary (GSOM)"),
     "securities": ("securities",              "last_updated_utc", None,             "Securities Master"),
     "flows":      ("daily_net_flow",          "computed_utc",    "flow_date",       "Cash Flows"),
+    "fxmarket":   ("interbank_fx",           "ingested_utc",    "trade_date",      "Interbank FX"),
+    "fxrates":    ("fx_rates_daily",         "ingested_utc",    "rate_date",       "Exchange Rates"),
+    "repo":       ("interbank_repo",         "ingested_utc",    "trade_date",      "Interbank Repo"),
 }
 
 

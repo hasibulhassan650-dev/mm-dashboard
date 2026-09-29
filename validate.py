@@ -451,6 +451,52 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
                    "WHERE weighted_avg_rate IS NOT NULL AND (weighted_avg_rate < 80 OR weighted_avg_rate > 200)"):
             add("fx", f"{r[0]} USD/BDT {r[1]} implausible")
 
+        # ---- interbank FX market ----
+        # BDT/USD has traded 80-140 for a decade; anything outside 50-300 is a
+        # parse error, not a market move. The rate-band invariant (low<=war<=high)
+        # is a DB constraint, so it cannot be violated here — this catches scale.
+        for r in q("SELECT trade_date, segment, war_rate, high_rate, low_rate FROM interbank_fx "
+                   "WHERE war_rate IS NOT NULL AND (war_rate < 50 OR war_rate > 300)"):
+            add("fxmarket", f"{r[0]} {r[1]} spot rate {r[2]} implausible for BDT/USD")
+        for r in q("SELECT DISTINCT segment FROM interbank_fx"):
+            if r[0] not in ("SPOT", "FORWARD", "SWAP"):
+                add("fxmarket", f"unknown FX segment '{r[0]}' — BB publishes only SPOT/FORWARD/SWAP")
+        # BB prints no rates for forward/swap; a rate there means the parser put
+        # spot's numbers on the wrong table.
+        for r in q("SELECT trade_date, segment FROM interbank_fx "
+                   "WHERE segment <> 'SPOT' AND war_rate IS NOT NULL"):
+            add("fxmarket", f"{r[0]} {r[1]} carries a rate — BB publishes rates for SPOT only, "
+                            f"so this row was mis-attributed")
+        for r in q("SELECT trade_date, segment, volume_usd_mn FROM interbank_fx "
+                   "WHERE volume_usd_mn < 0"):
+            add("fxmarket", f"{r[0]} {r[1]} negative turnover {r[2]}")
+
+        # ---- published exchange rates ----
+        # rate_date is the trading day, published_date the day BB put it up. If
+        # they ever coincide the fetcher has stopped applying BB's own
+        # "previous business day" rule and every rate is a day late.
+        for r in q("SELECT rate_date, published_date, currency FROM fx_rates_daily "
+                   "WHERE published_date IS NOT NULL AND published_date <= rate_date"):
+            add("fxrates", f"{r[2]} {r[0]}: published {r[1]} is not after the trade date — "
+                           f"the publication/trade date distinction has been lost")
+        for r in q("SELECT rate_date, currency, bid_rate, ask_rate FROM fx_rates_daily "
+                   "WHERE bid_rate <= 0 OR ask_rate <= 0"):
+            add("fxrates", f"{r[1]} {r[0]} non-positive bid/ask {r[2]}/{r[3]}")
+        _CCY = {"USD", "EUR", "GBP", "AUD", "JPY", "CAD", "SEK", "SGD", "CNH", "INR", "LKR"}
+        for r in q("SELECT DISTINCT currency FROM fx_rates_daily"):
+            if r[0] not in _CCY:
+                add("fxrates", f"unexpected currency '{r[0]}' — BB publishes {len(_CCY)} on this page")
+
+        # ---- interbank repo ----
+        for r in q("SELECT trade_date, war_pct FROM interbank_repo "
+                   "WHERE war_pct IS NOT NULL AND (war_pct <= 0 OR war_pct > 30)"):
+            add("repo", f"{r[0]} repo WAR {r[1]}% out of range")
+        for r in q("SELECT trade_date, amount_crore FROM interbank_repo WHERE amount_crore < 0"):
+            add("repo", f"{r[0]} negative repo turnover {r[1]}")
+        for r in q("SELECT trade_date, tenor_min_days, tenor_max_days FROM interbank_repo "
+                   "WHERE tenor_min_days < 1 OR tenor_max_days > 365 OR tenor_min_days > tenor_max_days"):
+            add("repo", f"{r[0]} implausible repo tenor range {r[1]}-{r[2]} days")
+
         # ---- freshness expectations (catch silent-stale failures) ----
         # A fetch that "succeeds" but stores nothing new must FAIL here, not
         # pass unnoticed (July 2026: FY-rollover left the auction calendar
@@ -466,6 +512,15 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
             ("auctions_forward", "SELECT MAX(settlement_date) FROM auction_events",
              today + datetime.timedelta(days=7),
              "no planned auction ≥7 days ahead — BB auctions T-bills weekly; calendar likely stale"),
+            ("fxmarket", "SELECT MAX(trade_date) FROM interbank_fx",
+             today - datetime.timedelta(days=5),
+             "interbank FX turnover stale >5 days"),
+            ("fxrates", "SELECT MAX(rate_date) FROM fx_rates_daily",
+             today - datetime.timedelta(days=5),
+             "published exchange rates stale >5 days"),
+            ("repo", "SELECT MAX(trade_date) FROM interbank_repo",
+             today - datetime.timedelta(days=5),
+             "interbank repo stale >5 days"),
             ("secondary", "SELECT MAX(settlement_date) FROM mtm_snapshots",
              today - datetime.timedelta(days=4),
              "secondary MTM stale >4 days (weekend+holiday buffer)"),
@@ -540,6 +595,46 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
                                                 f"{sdf_floor}-{slf_ceil}% — data error or extreme dislocation")
         except Exception:
             pass  # policy_rate_snapshots not populated yet
+
+        # Two BB pages, one fact: the published USD bid/ask/WAR for a trading day
+        # IS the interbank spot low/high/WAR for that day (verified to the paisa
+        # on 28-Sep-2026: 122.75 / 122.85 / 122.81 on both). A disagreement means
+        # one of the two parsers has drifted — including the date rule that says
+        # the exchange-rate page describes the PREVIOUS business day.
+        try:
+            for r in q("""SELECT f.rate_date, f.bid_rate, f.ask_rate, f.war_rate,
+                                 i.low_rate, i.high_rate, i.war_rate
+                          FROM fx_rates_daily f
+                          JOIN interbank_fx i ON i.trade_date = f.rate_date AND i.segment = 'SPOT'
+                          WHERE f.currency = 'USD' AND f.rate_date >= :lo
+                            AND i.war_rate IS NOT NULL AND f.war_rate IS NOT NULL""",
+                       lo=today - datetime.timedelta(days=45)):
+                for label, a, b in (("bid vs spot low", r[1], r[4]),
+                                    ("ask vs spot high", r[2], r[5]),
+                                    ("WAR", r[3], r[6])):
+                    if a is not None and b is not None and abs(float(a) - float(b)) > 0.0051:
+                        add("cross-source", f"{r[0]} USD {label}: exchange-rate page {a} vs interbank "
+                                            f"spot {b} — the two BB pages disagree about the same day")
+        except Exception:
+            pass   # one of the two tables not populated yet
+
+        # Repo vs call money. BB's repo tenor is a 1-7 day RANGE, so trading a
+        # little ABOVE overnight call is normal term premium (observed +1 to
+        # +13bp) — this is a dislocation check, not a "secured must be cheaper"
+        # rule, so the band is deliberately wide.
+        try:
+            for r in q("""SELECT r.trade_date, r.war_pct, c.average_rate_pct
+                          FROM interbank_repo r
+                          JOIN call_money_rates c ON c.trade_date = r.trade_date
+                                                 AND c.product = 'Overnight'
+                          WHERE r.trade_date >= :lo""",
+                       lo=today - datetime.timedelta(days=45)):
+                gap = float(r[1]) - float(r[2])
+                if abs(gap) > 2.0:
+                    add("cross-source", f"{r[0]} repo WAR {r[1]}% vs call o/n {r[2]}% "
+                                        f"({gap:+.2f}pp) — parse error or a real dislocation")
+        except Exception:
+            pass
 
         # ---- reserves / remittance ----
         for r in q("SELECT month, gross_reserves_usd_mn, net_reserves_bpm6_usd_mn FROM reserves_monthly "

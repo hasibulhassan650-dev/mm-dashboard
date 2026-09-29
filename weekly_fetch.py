@@ -34,6 +34,7 @@ OMO_MAX_FILES   = int(os.environ.get("OMO_MAX_FILES", "220"))
 TREASURY_MONTHS = int(os.environ.get("TREASURY_MONTHS", "2"))
 CALLMONEY_DAYS  = int(os.environ.get("CALLMONEY_DAYS", "90"))
 REFRATE_DAYS    = int(os.environ.get("REFRATE_DAYS", "90"))
+IBFX_MONTHS     = int(os.environ.get("IBFX_MONTHS", "1"))   # interbank FX history depth per run
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 LOG_DIR = ROOT / "logs"
@@ -348,6 +349,72 @@ def main():
     except Exception as exc:
         log.exception("Monetary fetch failed: %s", exc)
         errors.append(f"monetary: {exc}")
+
+    # ── 11. Interbank FX market — spot / forward / swap turnover ─────────────
+    # BB's page is a live daily table, so replace-by-date (never insert-only):
+    # an insert-only writer froze intraday call-money rows at their first
+    # snapshot for weeks before anyone noticed.
+    log.info("--- Step 11: Interbank FX market (%d months) ---", IBFX_MONTHS)
+    try:
+        from fetchers.interbank_fx import fetch_interbank_fx
+        from db import InterbankFx
+        from engines.pipeline import replace_daily_rows
+        import datetime as _dt
+        rows_fx = fetch_interbank_fx(months_back=IBFX_MONTHS)
+        now_utc = _dt.datetime.utcnow()
+        for r in rows_fx:
+            r["ingested_utc"] = now_utc
+        session = get_session()
+        st = replace_daily_rows(session, InterbankFx, rows_fx, ("segment",))
+        session.commit()
+        session.close()
+        log.info("Interbank FX OK | %s (fetched %d)", st, len(rows_fx))
+    except Exception as exc:
+        log.exception("Interbank FX fetch failed: %s", exc)
+        errors.append(f"interbank_fx: {exc}")
+
+    # ── 12. Exchange rate of the Taka — all currencies ───────────────────────
+    # One snapshot per run; rate_date is the PREVIOUS business day (BB's note),
+    # not the publication date — see fetchers/fxrates.py.
+    log.info("--- Step 12: Exchange rates (all currencies) ---")
+    try:
+        from fetchers.fxrates import fetch_fx_rates
+        from db import FxRateDaily
+        from engines.pipeline import replace_daily_rows
+        import datetime as _dt
+        rows_fr = fetch_fx_rates()
+        now_utc = _dt.datetime.utcnow()
+        for r in rows_fr:
+            r["ingested_utc"] = now_utc
+        session = get_session()
+        st = replace_daily_rows(session, FxRateDaily, rows_fr, ("currency",),
+                                date_field="rate_date")
+        session.commit()
+        session.close()
+        log.info("FX rates OK | %s (fetched %d)", st, len(rows_fr))
+    except Exception as exc:
+        log.exception("FX rates fetch failed: %s", exc)
+        errors.append(f"fxrates: {exc}")
+
+    # ── 13. Interbank repo — the secured money market ────────────────────────
+    log.info("--- Step 13: Interbank repo ---")
+    try:
+        from fetchers.interbank_repo import fetch_interbank_repo
+        from db import InterbankRepo
+        from engines.pipeline import replace_daily_rows
+        import datetime as _dt
+        rows_rp = fetch_interbank_repo()
+        now_utc = _dt.datetime.utcnow()
+        for r in rows_rp:
+            r["ingested_utc"] = now_utc
+        session = get_session()
+        st = replace_daily_rows(session, InterbankRepo, rows_rp, ())
+        session.commit()
+        session.close()
+        log.info("Interbank repo OK | %s (fetched %d)", st, len(rows_rp))
+    except Exception as exc:
+        log.exception("Interbank repo fetch failed: %s", exc)
+        errors.append(f"interbank_repo: {exc}")
 
     # ── Summary ───────────────────────────────────────────────────────────────
     elapsed = (datetime.datetime.now() - start).seconds

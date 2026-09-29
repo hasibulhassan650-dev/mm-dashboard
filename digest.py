@@ -30,6 +30,9 @@ _SERIES = [
     ("Call money", "call_money_rates", "trade_date"),
     ("Reference rates", "ref_rates", "trade_date"),
     ("FX auctions", "fx_auction_results", "auction_date"),
+    ("Interbank FX", "interbank_fx", "trade_date"),
+    ("Exchange rates", "fx_rates_daily", "rate_date"),
+    ("Interbank repo", "interbank_repo", "trade_date"),
     ("Secondary (GSOM)", "mtm_snapshots", "settlement_date"),
     ("Cash flows", "daily_net_flow", "flow_date"),
 ]
