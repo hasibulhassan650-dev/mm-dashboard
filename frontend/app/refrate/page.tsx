@@ -9,6 +9,7 @@ import Freshness from "@/components/Freshness";
 import InfoTip from "@/components/InfoTip";
 import RelatedLinks from "@/components/RelatedLinks";
 import type { RefRateRow } from "@/lib/api";
+import { DataWarning } from "@/components/DataWarning";
 
 export const revalidate = 300;
 
@@ -44,6 +45,7 @@ export default async function RefRatePage({ searchParams }: { searchParams: Prom
 
   return (
     <>
+      <DataWarning dataset={["refrate"]} />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: "var(--gap)", flexWrap: "wrap" }}>
         <Freshness updated={fresh.refrate} />
         <DateRangeControl min={range.min} max={range.max} from={range.from} to={range.to} />

@@ -1,0 +1,67 @@
+# .github/workflows/digest.yml
+#
+# The morning report — the one alarm that fires whether or not anything is wrong.
+#
+# Every other check here is exception-based: it speaks only when something
+# breaks. That leaves a hole nothing else covers — when the alarm itself stops,
+# silence is indistinguishable from health. It looked exactly like health for
+# five days in Sep-2026 while every data job was dying at startup.
+#
+# So this posts a digest EVERY morning, pass or fail, as a comment on one
+# pinned issue (which emails the repo owner). Because it arrives daily, its
+# ABSENCE is the signal: no digest in your inbox = the automation is down.
+
+name: Daily Data Digest
+
+on:
+  schedule:
+    - cron: "0 1 * * *"     # 01:00 UTC = 07:00 Bangladesh, before the desk opens
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: digest
+  cancel-in-progress: false
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build the digest
+        run: python digest.py
+
+      - name: Post it to the pinned digest issue
+        run: |
+          set -e
+          gh label create digest --color 0E8A16 --description "Daily data digest" --force >/dev/null 2>&1 || true
+          n=$(gh issue list --repo "$GITHUB_REPOSITORY" --label digest --state open \
+                --json number --jq '.[0].number // empty')
+          if [ -z "$n" ]; then
+            n=$(gh issue create --repo "$GITHUB_REPOSITORY" \
+                  --title "Daily data digest" --label digest \
+                  --body "Every morning this issue receives a report of what the data pipeline did overnight. **If a day passes with no new comment here, the automation itself is down.**" \
+                  --json number --jq .number 2>/dev/null \
+                || gh issue list --repo "$GITHUB_REPOSITORY" --label digest --state open --json number --jq '.[0].number')
+          fi
+          gh issue comment "$n" --repo "$GITHUB_REPOSITORY" --body-file digest.md
+          echo "posted to issue #$n"

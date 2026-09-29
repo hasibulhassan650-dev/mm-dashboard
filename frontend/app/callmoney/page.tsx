@@ -10,6 +10,7 @@ import DownloadButton from "@/components/DownloadButton";
 import Freshness from "@/components/Freshness";
 import InfoTip from "@/components/InfoTip";
 import RelatedLinks from "@/components/RelatedLinks";
+import { DataWarning } from "@/components/DataWarning";
 
 export const revalidate = 300;
 
@@ -30,6 +31,7 @@ export default async function CallMoneyPage({ searchParams }: { searchParams: Pr
 
   return (
     <>
+      <DataWarning dataset={["callmoney", "cross-source"]} />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: "var(--gap)", flexWrap: "wrap" }}>
         <Freshness updated={fresh.callmoney} />
         <DateRangeControl min={range.min} max={range.max} from={range.from} to={range.to} />

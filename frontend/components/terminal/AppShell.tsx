@@ -135,6 +135,8 @@ function TweaksPanel() {
 }
 
 // ---------------- App shell ----------------
+import { StaleDataBanner } from "@/components/DataWarning";
+
 export function AppShell({ children, ticker, sub }: { children: React.ReactNode; ticker: TickItem[]; sub?: string }) {
   const path = usePathname();
   const cur = navByPath(path);
@@ -158,6 +160,7 @@ export function AppShell({ children, ticker, sub }: { children: React.ReactNode;
               <span className="meta-dot" /> Live · cloud-refreshed daily
             </div>
           </div>
+          <StaleDataBanner />
           {children}
         </div>
       </div>

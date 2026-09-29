@@ -7,6 +7,7 @@ import { OMO_INSTRUMENTS, pivotOmo, omoCatsFromData } from "@/lib/terminal";
 import { netLiquiditySeries } from "@/lib/analytics";
 import Freshness from "@/components/Freshness";
 import OmoView, { type OmoOpRow } from "@/components/terminal/views/OmoView";
+import { DataWarning } from "@/components/DataWarning";
 
 export const revalidate = 300;
 
@@ -54,6 +55,7 @@ export default async function OmoPage({ searchParams }: { searchParams: Promise<
 
   return (
     <>
+      <DataWarning dataset={["omo", "omo-ledger", "omo-policy"]} />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: "var(--gap)", flexWrap: "wrap" }}>
         <Freshness updated={fresh.omo} />
         <DateRangeControl min={range.min} max={range.max} from={range.from} to={range.to} />

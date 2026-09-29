@@ -9,6 +9,10 @@ router = APIRouter()
 # working day's data. Event datasets (auctions / OMO operations) only exist on
 # the days BB actually transacts, so "current" means the job has *checked*
 # recently — there may simply be nothing newer to fetch.
+# The refresh runs 3x/day, every day; missing all of them for this long means
+# the automation is broken, not that Bangladesh Bank published nothing.
+RUN_STALE_HOURS = 14
+
 _DAILY_SERIES = {"callmoney", "refrate", "secondary", "flows"}
 _EVENT_SERIES = {"yields", "omo", "fx"}      # auctions / OMO / FX interventions — not daily
 # (securities is master data → treated like an event series: fresh if checked)
@@ -127,9 +131,19 @@ def get_status():
                 "kind": "daily" if key in _DAILY_SERIES else "event",
             }
 
+        # data_health is the verdict RECORDED BY THE LAST RUN — when the pipeline
+        # dies it freezes, and the UI kept presenting that frozen opinion as
+        # current (Sep-2026: a five-day-old "32 issues" banner while the real
+        # state was "nothing has run at all"). Always ship its age so the page
+        # can lead with the outage instead of the stale detail.
+        run_age = _hours_since(last_run_dt)
         return {"datasets": datasets, "last_run": last_run, "last_run_errors": last_errors,
                 "data_health": data_health, "cadence": "Auto-refreshed 3×/day",
                 "checked_recently": checked_recently,
+                "pipeline_alive": bool(run_age < RUN_STALE_HOURS),
+                "run_age_hours": None if run_age == float("inf") else round(run_age, 1),
+                "health_as_of": last_run,
+                "health_stale": bool(data_health is not None and run_age >= RUN_STALE_HOURS),
                 "as_of": str(today), "last_working_day": str(lwd)}
     finally:
         session.close()

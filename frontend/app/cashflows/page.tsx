@@ -8,6 +8,7 @@ import { resolveRange, inRange } from "@/lib/daterange";
 import DownloadButton from "@/components/DownloadButton";
 import Freshness from "@/components/Freshness";
 import RelatedLinks from "@/components/RelatedLinks";
+import { DataWarning } from "@/components/DataWarning";
 
 export const revalidate = 300;
 
@@ -25,6 +26,7 @@ export default async function CashFlowsPage({ searchParams }: { searchParams: Pr
 
   return (
     <>
+      <DataWarning dataset={["flows", "ladder-recon", "coupons", "maturities", "events-roll", "calendar"]} />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: "var(--gap)", flexWrap: "wrap" }}>
         <Freshness updated={fresh.flows} />
         <DateRangeControl min={range.min} max={range.max} from={range.from} to={range.to} />

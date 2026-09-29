@@ -204,6 +204,12 @@ export interface MetaStatus {
   data_health?: DataHealth | null;
   cadence: string;
   checked_recently?: boolean;
+  /** false = the refresh itself has stopped; every figure is at least run_age_hours old. */
+  pipeline_alive?: boolean;
+  run_age_hours?: number | null;
+  /** data_health is the verdict recorded by that run — this is when it was taken. */
+  health_as_of?: string | null;
+  health_stale?: boolean;
   as_of?: string;
   last_working_day?: string;
 }

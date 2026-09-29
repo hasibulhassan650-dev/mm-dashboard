@@ -13,6 +13,7 @@ import BidCoverChart from "@/components/BidCoverChart";
 import DownloadButton from "@/components/DownloadButton";
 import Freshness from "@/components/Freshness";
 import InfoTip from "@/components/InfoTip";
+import { DataWarning } from "@/components/DataWarning";
 
 export const revalidate = 300;
 
@@ -47,6 +48,7 @@ export default async function YieldsPage() {
 
   return (
     <>
+      <DataWarning dataset={["yields", "auctions"]} />
       <div style={{ marginBottom: "var(--gap)" }}><Freshness updated={fresh.yields} /></div>
 
       <div className="kpi-strip" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
