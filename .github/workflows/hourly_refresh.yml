@@ -32,6 +32,7 @@ jobs:
       TREASURY_MONTHS: "1"
       CALLMONEY_DAYS: "20"
       REFRATE_DAYS: "20"
+      IBFX_MONTHS: "1"    # interbank FX: current month + 1 back
 
     steps:
       - name: Checkout code
