@@ -4,6 +4,7 @@ Change values here only — never hardcode in other modules.
 """
 import os
 import datetime
+import logging
 from pathlib import Path
 
 # Load .env file if present (local development)
@@ -31,10 +32,38 @@ def _get_db_url_from_secrets():
     except Exception:
         return ""
 
+def _normalise_pg_driver(url: str) -> str:
+    """Point a Postgres URL at a driver that is actually installed.
+
+    The connection string is stored by hand in three places (GitHub secret,
+    Vercel env, Streamlit secrets) and can be rotated from the Supabase UI,
+    which hands out several spellings. In Sep-2026 the CI secret came back as
+    'postgresql+psycopg://' (psycopg v3) while only psycopg2 was installed:
+    every cloud data job then died inside init_db() before a single fetch ran,
+    and did so for five days. The driver a URL *names* is a deployment detail,
+    not data — so adapt to whatever is importable and say so loudly, instead of
+    trusting the string and crashing the whole pipeline.
+    """
+    import importlib.util
+    if "://" not in url or not url.startswith("postgres"):
+        return url
+    scheme, rest = url.split("://", 1)
+    want = scheme.split("+", 1)[1] if "+" in scheme else "psycopg2"   # bare postgresql:// = psycopg2
+    if importlib.util.find_spec(want) is not None:
+        return url
+    have = next((d for d in ("psycopg2", "psycopg") if importlib.util.find_spec(d) is not None), None)
+    if have is None:
+        return url                                   # nothing installed — let SQLAlchemy raise clearly
+    logging.getLogger(__name__).warning(
+        "DATABASE_URL asks for the '%s' driver, which is not installed — using '%s' instead. "
+        "Fix the connection string or add the driver to requirements.txt.", want, have)
+    return f"postgresql+{have}://{rest}"
+
+
 _db_url_env = os.environ.get("DATABASE_URL", "") or _get_db_url_from_secrets()
 if _db_url_env:
     # Supabase (and some other hosts) give "postgres://" — SQLAlchemy needs "postgresql://"
-    DB_URL  = _db_url_env.replace("postgres://", "postgresql://", 1)
+    DB_URL  = _normalise_pg_driver(_db_url_env.replace("postgres://", "postgresql://", 1))
     DB_PATH = None          # not used with Postgres
 else:
     # Local SQLite
