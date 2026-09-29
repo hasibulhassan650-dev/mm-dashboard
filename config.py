@@ -33,31 +33,37 @@ def _get_db_url_from_secrets():
         return ""
 
 def _normalise_pg_driver(url: str) -> str:
-    """Point a Postgres URL at a driver that is actually installed.
+    """Name the Postgres driver EXPLICITLY, and only one that is installed.
 
-    The connection string is stored by hand in three places (GitHub secret,
-    Vercel env, Streamlit secrets) and can be rotated from the Supabase UI,
-    which hands out several spellings. In Sep-2026 the CI secret came back as
-    'postgresql+psycopg://' (psycopg v3) while only psycopg2 was installed:
-    every cloud data job then died inside init_db() before a single fetch ran,
-    and did so for five days. The driver a URL *names* is a deployment detail,
-    not data — so adapt to whatever is importable and say so loudly, instead of
-    trusting the string and crashing the whole pipeline.
+    A bare 'postgresql://' URL lets the library choose the driver, and that
+    choice is not stable: SQLAlchemy 2.1 changed the default from psycopg2 to
+    psycopg (v3). requirements.txt said '>=2.0.36' with no upper bound, so on
+    24-Sep-2026 CI silently installed 2.1.1 and EVERY cloud data job died in
+    init_db() with ModuleNotFoundError before a single fetch ran — for five
+    days, while the site stayed up and the uptime sentinel reported green.
+
+    So: never inherit a default. Resolve the driver here against what is
+    actually importable, whatever the URL says and whatever the library
+    version prefers, and log loudly when the two disagree.
     """
     import importlib.util
     if "://" not in url or not url.startswith("postgres"):
         return url
     scheme, rest = url.split("://", 1)
-    want = scheme.split("+", 1)[1] if "+" in scheme else "psycopg2"   # bare postgresql:// = psycopg2
-    if importlib.util.find_spec(want) is not None:
-        return url
-    have = next((d for d in ("psycopg2", "psycopg") if importlib.util.find_spec(d) is not None), None)
-    if have is None:
-        return url                                   # nothing installed — let SQLAlchemy raise clearly
-    logging.getLogger(__name__).warning(
-        "DATABASE_URL asks for the '%s' driver, which is not installed — using '%s' instead. "
-        "Fix the connection string or add the driver to requirements.txt.", want, have)
-    return f"postgresql+{have}://{rest}"
+    named = scheme.split("+", 1)[1] if "+" in scheme else None
+    have = [d for d in ("psycopg2", "psycopg") if importlib.util.find_spec(d) is not None]
+    if not have:
+        return url                      # nothing installed — let SQLAlchemy raise clearly
+    if named in have:
+        return url                      # explicit and present: leave it exactly as given
+    log = logging.getLogger(__name__)
+    if named:
+        log.warning("DATABASE_URL names the '%s' driver, which is not installed — using '%s'. "
+                    "Fix the connection string or add the driver to requirements.txt.", named, have[0])
+    else:
+        log.info("DATABASE_URL names no driver; pinning it to '%s' so a library "
+                 "default cannot change it underneath us.", have[0])
+    return f"postgresql+{have[0]}://{rest}"
 
 
 _db_url_env = os.environ.get("DATABASE_URL", "") or _get_db_url_from_secrets()

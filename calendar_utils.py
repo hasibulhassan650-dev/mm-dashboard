@@ -33,7 +33,13 @@ _WEEKEND_DAYS     = {4, 5}             # Fri, Sat
 _MAX_ITER         = 14                 # safety: no holiday block should exceed 14 days
 
 # ── In-memory holiday set (loaded from DB or seed file at startup) ─────────────
-_holiday_set: Set[datetime.date] = set()
+# None = NEVER LOADED, which is NOT the same as "no holidays". An empty default
+# is what let reconcile.py date auctions onto Victory Day for months: it never
+# called load_calendar_rows(), so every working-day question was answered as if
+# no holiday had ever existed — a confident, plausible, wrong answer. A process
+# that has not loaded the calendar now gets the calendar loaded for it, or an
+# exception; never a guess.
+_holiday_set: Optional[Set[datetime.date]] = None
 # Weekend dates the government declared WORKING (e.g. Sat 23-May-2026 to
 # compensate for the Eid ul Adha block; Sat 17/24-May-2025). The money market
 # traded on them — call money, reference rates and an FX auction all printed —
@@ -41,6 +47,59 @@ _holiday_set: Set[datetime.date] = set()
 # Stored in holiday_calendar with holiday_type = WORKING_DAY.
 WORKING_DAY_TYPE = "WORKING_DAY"
 _working_weekend_set: Set[datetime.date] = set()
+
+
+class CalendarNotLoaded(RuntimeError):
+    """Raised when working-day logic is used with no calendar available."""
+
+
+_warned_years: Set[int] = set()
+
+
+def _ensure_loaded() -> Set[datetime.date]:
+    """The in-memory holiday set, loading it from the DB on first use.
+
+    Any entry point may ask a working-day question; requiring each one to
+    remember load_calendar_rows() first is exactly the coupling that failed.
+    """
+    global _holiday_set
+    if _holiday_set is not None:
+        return _holiday_set
+    try:
+        from db import get_session, HolidayCalendar
+        session = get_session()
+        try:
+            load_calendar_rows(session.query(HolidayCalendar).all())
+            log.info("Holiday calendar auto-loaded from the database on first use")
+        finally:
+            session.close()
+    except Exception as exc:
+        raise CalendarNotLoaded(
+            "Working-day logic used before the holiday calendar was loaded, and "
+            f"loading it from the database failed ({exc}). Call "
+            "calendar_utils.load_calendar_rows(...) explicitly, or fix the DB "
+            "connection — guessing that there are no holidays produces wrong "
+            "settlement, coupon and auction dates."
+        ) from exc
+    return _holiday_set if _holiday_set is not None else set()
+
+
+def _warn_if_year_uncovered(d: datetime.date) -> None:
+    """Warn once per year when the calendar holds nothing for a year we settle in.
+
+    Scope is deliberately narrow — this year and next. Pre-2025 history genuinely
+    has no seeded holidays (the 2007-2019 treasury backfill depends on that being
+    allowed), and coupon projections run to 2045, so warning on every uncovered
+    year buried the signal under 40 lines of noise. A gap in the year the desk
+    actually settles in is the one that matters, and validate.py escalates it.
+    """
+    this_year = datetime.date.today().year
+    if d.year in _warned_years or not _holiday_set or not (this_year <= d.year <= this_year + 1):
+        return
+    if not any(h.year == d.year for h in _holiday_set):
+        _warned_years.add(d.year)
+        log.warning("Holiday calendar has NO entries for %d — working-day results for that "
+                    "year assume weekends only. Seed data/seeds/holidays_*.yaml.", d.year)
 
 
 def load_holidays(holidays: Set[datetime.date],
@@ -69,10 +128,11 @@ def load_calendar_rows(rows) -> None:
 
 
 def get_loaded_holidays() -> frozenset:
-    return frozenset(_holiday_set)
+    return frozenset(_ensure_loaded())
 
 
 def get_loaded_working_weekends() -> frozenset:
+    _ensure_loaded()
     return frozenset(_working_weekend_set)
 
 
@@ -106,7 +166,8 @@ def get_next_working_day(
         ValueError if no working day found within _MAX_ITER days.
         This indicates a gap in the holiday calendar.
     """
-    hols = holidays if holidays is not None else _holiday_set
+    hols = holidays if holidays is not None else _ensure_loaded()
+    _warn_if_year_uncovered(date)
     candidate = date
     skipped   = []
 
@@ -170,7 +231,7 @@ def auction_settlement_date(
     roll_reason   = human-readable string of every day skipped and why
     debug_dict    = full output from get_next_working_day for logging
     """
-    hols       = holidays if holidays is not None else _holiday_set
+    hols       = holidays if holidays is not None else _ensure_loaded()
     start_date = auction_date + datetime.timedelta(days=1)   # strict T+1 start
     result     = get_next_working_day(start_date, hols)
 
@@ -196,7 +257,7 @@ def roll_date(raw_date: datetime.date, holidays: Set[datetime.date] = None) -> t
     Roll a coupon or maturity date forward to next working day (inclusive).
     Returns (payment_date, roll_days, roll_reason).
     """
-    hols   = holidays if holidays is not None else _holiday_set
+    hols   = holidays if holidays is not None else _ensure_loaded()
     result = get_next_working_day(raw_date, hols)
 
     payment   = result["result_date"]
@@ -214,14 +275,15 @@ def roll_date(raw_date: datetime.date, holidays: Set[datetime.date] = None) -> t
 
 def is_working_day(d: datetime.date, holidays: Set[datetime.date] = None) -> bool:
     """Return True if d is a valid Bangladesh working day."""
-    hols = holidays if holidays is not None else _holiday_set
+    hols = holidays if holidays is not None else _ensure_loaded()
     return (d.weekday() in _WORKING_WEEKDAYS or d in _working_weekend_set) and d not in hols
 
 
 def previous_working_day(d: datetime.date, holidays: Set[datetime.date] = None) -> datetime.date:
     """The last working day STRICTLY before d. Used to recover an auction date
     (T) from the issue date BB prints (T+1 working day)."""
-    hols = holidays if holidays is not None else _holiday_set
+    hols = holidays if holidays is not None else _ensure_loaded()
+    _warn_if_year_uncovered(d)
     c = d - datetime.timedelta(days=1)
     for _ in range(_MAX_ITER):
         if is_working_day(c, hols):
@@ -237,7 +299,7 @@ def is_weekend(d: datetime.date) -> bool:
 def working_day_range(start: datetime.date, end: datetime.date,
                       holidays: Set[datetime.date] = None):
     """Yield every working day from start to end inclusive."""
-    hols = holidays if holidays is not None else _holiday_set
+    hols = holidays if holidays is not None else _ensure_loaded()
     d = start
     while d <= end:
         if is_working_day(d, hols):
