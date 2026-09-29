@@ -25,6 +25,10 @@ log = logging.getLogger("reconcile")
 from sqlalchemy import text
 from db import get_session, init_db, PipelineRun, fix_all_sequences
 from fetchers.treasury import fetch_primary_yields_months, month_range
+# Write through the ONE supported upsert: it stores issue_date and keeps
+# auction_date as the derived trading day. The hand-written INSERT this used to
+# carry omitted issue_date and dated auctions onto holidays (32 bad rows).
+from engines.pipeline import upsert_primary_yield
 
 COVID_LO = datetime.date(2020, 9, 1)
 COVID_HI = datetime.date(2021, 10, 31)
@@ -94,12 +98,7 @@ def main():
                     "SELECT id, cutoff_yield_pct FROM primary_yield_snapshots "
                     "WHERE tenor_label=:t AND auction_date=:d"), {"t": tl, "d": ad}).fetchone()
                 if ex is None:
-                    r["ingested_utc"] = now
-                    s.execute(text(
-                        "INSERT INTO primary_yield_snapshots (snapshot_date,auction_date,security_type,tenor_label,"
-                        "tenor_years,cutoff_yield_pct,offered_bdt_crore,accepted_bdt_crore,source,ingested_utc) "
-                        "VALUES (:snapshot_date,:auction_date,:security_type,:tenor_label,:tenor_years,"
-                        ":cutoff_yield_pct,:offered_bdt_crore,:accepted_bdt_crore,:source,:ingested_utc)"), r)
+                    upsert_primary_yield(s, r)
                     stats["inserted"] += 1
                 else:
                     old = ex[1]
@@ -107,10 +106,10 @@ def main():
                         continue
                     if old <= 0 or old > 30 or (old < 1.0 and not (COVID_LO <= ad <= COVID_HI)):
                         # stored value is implausible → correct it
-                        s.execute(text("UPDATE primary_yield_snapshots SET cutoff_yield_pct=:c WHERE id=:i"), {"c": cy, "i": ex[0]})
+                        upsert_primary_yield(s, r)
                         stats["corrected"] += 1
                     elif abs(old - cy) < REVISION:
-                        s.execute(text("UPDATE primary_yield_snapshots SET cutoff_yield_pct=:c WHERE id=:i"), {"c": cy, "i": ex[0]})
+                        upsert_primary_yield(s, r)
                         stats["revised"] += 1
                     else:
                         stats["flagged"] += 1
@@ -124,6 +123,18 @@ def main():
     log.info("RECONCILE %s | flagged samples: %s", stats, flagged_samples[:25])
     if stats["flagged"]:
         log.warning("%d mismatch(es) flagged for review — re-run a narrower range to investigate.", stats["flagged"])
+
+    # Self-heal: this job re-fetches 19 years of history, so anything it just
+    # wrote gets the same deterministic repairs the refresh applies.
+    try:
+        from engines.repair import self_heal
+        s = get_session()
+        healed = self_heal(s)
+        s.commit(); s.close()
+        if healed.get("total"):
+            log.warning("Self-heal repaired %d row(s): %s", healed["total"], healed["repaired"])
+    except Exception as exc:
+        log.exception("Self-heal failed: %s", exc)
 
     # data-integrity monitor
     try:

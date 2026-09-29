@@ -422,33 +422,17 @@ def load_omo_transactions(days_back: int = 60):
 
 
 def _save_primary_yields(rows: list):
-    """Persist a list of yield-point dicts to PrimaryYieldSnapshot."""
-    from sqlalchemy import select
+    """Persist a list of yield-point dicts via the ONE supported upsert.
+
+    Hand-rolled copies of this write are how rows lost their issue_date; the
+    canonical path in engines/pipeline.py is the only one that sets it.
+    """
+    from engines.pipeline import upsert_primary_yield
     session = get_session()
-    now = datetime.datetime.utcnow()
     saved = 0
     for row in rows:
-        existing = session.execute(
-            select(PrimaryYieldSnapshot).where(
-                PrimaryYieldSnapshot.tenor_label  == row["tenor_label"],
-                PrimaryYieldSnapshot.auction_date == row["auction_date"],
-            )
-        ).scalar_one_or_none()
-        if existing:
-            existing.cutoff_yield_pct  = row["cutoff_yield_pct"]
-            existing.snapshot_date     = row["snapshot_date"]
-            existing.ingested_utc      = now
-        else:
-            session.add(PrimaryYieldSnapshot(
-                snapshot_date      = row["snapshot_date"],
-                auction_date       = row["auction_date"],
-                security_type      = row["security_type"],
-                tenor_label        = row["tenor_label"],
-                tenor_years        = row["tenor_years"],
-                cutoff_yield_pct   = row["cutoff_yield_pct"],
-                source             = "manual_entry",
-                ingested_utc       = now,
-            ))
+        row.setdefault("source", "manual_entry")
+        upsert_primary_yield(session, row)
         saved += 1
     session.commit()
     session.close()

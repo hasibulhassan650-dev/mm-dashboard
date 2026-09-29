@@ -328,10 +328,31 @@ def confirm_auctions_from_results(session) -> dict:
     return {"confirmed": confirmed, "moved": moved, "added": added}
 
 
-def _upsert_primary_yield(session, row: dict):
+def upsert_primary_yield(session, row: dict):
+    """THE single supported way to write a yield row. Every writer must use it.
+
+    It is the only path that stores `issue_date` (what BB actually prints) and
+    keeps `auction_date` as the derived trading day. reconcile.py bypassed it
+    with a hand-written INSERT and produced 32 bad rows over two weeks; the
+    repo-scan test in tests/test_selfsustaining.py now fails CI if a second
+    writer appears.
+    """
     """Insert or update a primary yield point (unique per tenor + auction_date)."""
     from sqlalchemy import select
     now = datetime.datetime.utcnow()
+    # issue_date is the column the whole auction/settlement join hangs off, and a
+    # NULL one is the defect the Sep-2026 audit chased. If a caller cannot supply
+    # it, derive it here (T+1 working day) rather than store a hole — that also
+    # means the NOT NULL constraint in db.py can never block a legitimate write.
+    if not row.get("issue_date") and row.get("auction_date"):
+        try:
+            row = dict(row)
+            row["issue_date"] = calendar_utils.get_next_working_day(
+                row["auction_date"] + datetime.timedelta(days=1))["result_date"]
+        except Exception as exc:
+            log.warning("could not derive issue_date for %s %s: %s",
+                        row.get("tenor_label"), row.get("auction_date"), exc)
+
     existing = session.execute(
         select(PrimaryYieldSnapshot).where(
             PrimaryYieldSnapshot.tenor_label  == row["tenor_label"],
@@ -778,7 +799,7 @@ def run_primary_yield_history(months_back: int = 8) -> dict:
         _load_holidays(session)   # auction_date = previous working day of the printed issue date
         rows = fetch_primary_yields_history(months_back=months_back)
         for r in rows:
-            _upsert_primary_yield(session, r)
+            upsert_primary_yield(session, r)
         session.commit()
         log.info("Primary yield history: stored %d rows (%d months)", len(rows), months_back)
         return {"rows": len(rows), "months": months_back, "errors": []}

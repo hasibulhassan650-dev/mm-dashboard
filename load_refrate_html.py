@@ -30,18 +30,13 @@ print(f"Parsed {len(rows)} rows")
 
 now = datetime.datetime.utcnow()
 session = get_session()
-saved = skipped = 0
 for r in rows:
     r["ingested_utc"] = now
-    if not session.query(RefRate).filter_by(
-        trade_date=r["trade_date"],
-        rate_type=r["rate_type"],
-        product=r["product"],
-    ).first():
-        session.add(RefRate(**r))
-        saved += 1
-    else:
-        skipped += 1
+# One canonical daily-series writer: make the DB match the page for these dates
+# (insert-only storage is what froze intraday rows at their first snapshot).
+from engines.pipeline import replace_daily_rows
+_st = replace_daily_rows(session, RefRate, rows, ("rate_type", "product"))
+saved, skipped = _st["inserted"] + _st["updated"], _st["unchanged"]
 
 session.commit()
 from sqlalchemy import text

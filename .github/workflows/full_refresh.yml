@@ -86,38 +86,10 @@ jobs:
       # (email notification) — silent data rot is not an acceptable state.
       - name: Data integrity gate
         if: always()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          python validate.py > integrity.json || true
-          cat integrity.json
-          ok=$(python -c "import json;print(json.load(open('integrity.json'))['ok'])")
-          if [ "$ok" = "True" ]; then
-            echo "Integrity OK"
-            # auto-close a previously opened alert, if any
-            n=$(gh issue list --repo "$GITHUB_REPOSITORY" --label data-integrity --state open --json number --jq '.[0].number // empty')
-            if [ -n "$n" ]; then
-              gh issue close "$n" --repo "$GITHUB_REPOSITORY" \
-                --comment "Integrity checks passing again as of run ${GITHUB_RUN_ID}. Auto-closing."
-            fi
-            exit 0
-          fi
-          echo "Integrity FAILED — filing alert issue"
-          body="Automated data-integrity alert from run [${GITHUB_RUN_ID}](https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}):
-
-          \`\`\`json
-          $(cat integrity.json)
-          \`\`\`"
-          n=$(gh issue list --repo "$GITHUB_REPOSITORY" --label data-integrity --state open --json number --jq '.[0].number // empty')
-          if [ -n "$n" ]; then
-            gh issue comment "$n" --repo "$GITHUB_REPOSITORY" --body "$body"
-          else
-            gh issue create --repo "$GITHUB_REPOSITORY" \
-              --title "DATA INTEGRITY ALERT: checks failing" \
-              --label data-integrity --body "$body"
-          fi
-          exit 1
-
+        uses: ./.github/actions/integrity-gate
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          context: "full refresh"
       - name: Summarise log
         if: always()
         run: |

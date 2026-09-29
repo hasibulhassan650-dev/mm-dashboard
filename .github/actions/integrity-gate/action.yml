@@ -1,0 +1,73 @@
+name: "Data integrity gate"
+description: >
+  Run validate.py, file/update/close the data-integrity alert issue, and fail
+  the job when the stored data is wrong or stale. ONE copy of this logic, used
+  by every workflow that writes to the database — reconcile.yml silently had no
+  gate at all and wrote 32 bad rows over two weeks before anyone noticed.
+
+inputs:
+  github-token:
+    description: "Token with issues:write, for filing the alert"
+    required: true
+  context:
+    description: "Short label for the calling job, shown in the issue body"
+    required: false
+    default: "refresh"
+
+runs:
+  using: composite
+  steps:
+    - name: Run integrity checks
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        CONTEXT: ${{ inputs.context }}
+      run: |
+        set -o pipefail
+        # validate.py must ALWAYS leave parseable JSON behind: when it crashes
+        # (it did, for five days, on an import error) an empty file made the
+        # next line fail with a confusing JSONDecodeError instead of saying so.
+        python validate.py > integrity.json 2> integrity.err || true
+        if ! python -c "import json;json.load(open('integrity.json'))" 2>/dev/null; then
+          echo "::error::validate.py produced no verdict — it crashed before checking anything."
+          sed -n '1,40p' integrity.err || true
+          python - <<'PY'
+        import json
+        err = ""
+        try:
+            err = open("integrity.err", encoding="utf-8", errors="replace").read()[-1500:]
+        except Exception:
+            pass
+        json.dump({"ok": False, "issue_count": 1, "by_table": {"validator": 1},
+                   "issues": ["validator: validate.py crashed before running any check — "
+                              + (err.strip().splitlines() or ["no output"])[-1]]},
+                  open("integrity.json", "w"))
+        PY
+        fi
+        cat integrity.json
+        ok=$(python -c "import json;print(json.load(open('integrity.json'))['ok'])")
+
+        n=$(gh issue list --repo "$GITHUB_REPOSITORY" --label data-integrity --state open --json number --jq '.[0].number // empty')
+        if [ "$ok" = "True" ]; then
+          echo "Integrity OK"
+          if [ -n "$n" ]; then
+            gh issue close "$n" --repo "$GITHUB_REPOSITORY" \
+              --comment "Integrity checks passing again as of ${CONTEXT} run ${GITHUB_RUN_ID}. Auto-closing."
+          fi
+          exit 0
+        fi
+
+        echo "Integrity FAILED — filing alert issue"
+        body="Automated data-integrity alert from ${CONTEXT} run [${GITHUB_RUN_ID}](https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}):
+
+        \`\`\`json
+        $(cat integrity.json)
+        \`\`\`"
+        if [ -n "$n" ]; then
+          gh issue comment "$n" --repo "$GITHUB_REPOSITORY" --body "$body"
+        else
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "DATA INTEGRITY ALERT: checks failing" \
+            --label data-integrity --body "$body"
+        fi
+        exit 1

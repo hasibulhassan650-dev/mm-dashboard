@@ -518,6 +518,20 @@ def init_db():
         "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS source_serial VARCHAR(40)",
         "ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS quality TEXT",
         "ALTER TABLE primary_yield_snapshots ADD COLUMN IF NOT EXISTS issue_date DATE",
+        # ── Invariants: the layer BELOW every code path, so a writer that skips
+        # the canonical upsert (reconcile.py did, for months) cannot land a broken
+        # row. Postgres-only syntax; on SQLite each one no-ops and the loop moves
+        # on. NOT VALID then VALIDATE, so adding them proves the existing rows.
+        "ALTER TABLE primary_yield_snapshots ADD CONSTRAINT ck_pys_issue_date_present CHECK (issue_date IS NOT NULL) NOT VALID",
+        "ALTER TABLE primary_yield_snapshots VALIDATE CONSTRAINT ck_pys_issue_date_present",
+        # >= not >: two 2007 rows are legacy cases where BB published a single
+        # date, so auction == issue. An INVERTED pair is always a parse error.
+        "ALTER TABLE primary_yield_snapshots ADD CONSTRAINT ck_pys_issue_after_auction CHECK (issue_date >= auction_date) NOT VALID",
+        "ALTER TABLE primary_yield_snapshots VALIDATE CONSTRAINT ck_pys_issue_after_auction",
+        "ALTER TABLE omo_transactions ADD CONSTRAINT ck_omo_maturity_after_txn CHECK (maturity_date >= transaction_date) NOT VALID",
+        "ALTER TABLE omo_transactions VALIDATE CONSTRAINT ck_omo_maturity_after_txn",
+        "ALTER TABLE call_money_rates ADD CONSTRAINT ck_cm_rate_band CHECK (lowest_rate_pct <= average_rate_pct AND average_rate_pct <= highest_rate_pct) NOT VALID",
+        "ALTER TABLE call_money_rates VALIDATE CONSTRAINT ck_cm_rate_band",
         # Forecast tables: the unique keys are what keep a re-run idempotent —
         # run_forecast.py looks up on exactly these columns before writing, and
         # the index stops a concurrent/partial run from double-inserting. If a

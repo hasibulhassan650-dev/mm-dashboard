@@ -27,6 +27,9 @@ concurrency:
 jobs:
   reconcile:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write          # the integrity gate files/closes the alert
     timeout-minutes: 60
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -57,3 +60,10 @@ jobs:
         run: |
           xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" \
             python reconcile.py ${{ inputs.start_year }} ${{ inputs.end_year }}
+
+      - name: Data integrity gate
+        if: always()
+        uses: ./.github/actions/integrity-gate
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          context: "reconcile"

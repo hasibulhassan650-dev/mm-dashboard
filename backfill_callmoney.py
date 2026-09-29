@@ -46,21 +46,19 @@ def quarters(start: datetime.date, end: datetime.date):
 
 
 def upsert(session, rows: list[dict]) -> int:
-    """Insert rows not already present. Returns how many were new."""
+    """Make the DB match BB's page for every date in `rows`.
+
+    Insert-only storage is what froze a running intraday call-money table at its
+    first snapshot (14-Sep-2026 overnight: 2,148 cr / 8.65% stored against a
+    final 6,100 cr / 8.75%), so this uses the one canonical daily-series writer.
+    """
+    from engines.pipeline import replace_daily_rows
     now = datetime.datetime.utcnow()
-    saved = 0
     for r in rows:
-        exists = session.query(CallMoneyRate).filter_by(
-            trade_date=r["trade_date"], product=r["product"],
-            maturity_days=r["maturity_days"]).first()
-        if exists:
-            continue
-        r = dict(r)
         r["ingested_utc"] = now
-        session.add(CallMoneyRate(**r))
-        saved += 1
+    st = replace_daily_rows(session, CallMoneyRate, rows, ("product", "maturity_days"))
     session.commit()
-    return saved
+    return st["inserted"] + st["updated"]
 
 
 def main() -> int:

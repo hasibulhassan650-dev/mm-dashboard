@@ -80,6 +80,22 @@ def main():
     today = datetime.date.today()
     errors = []
 
+    # ── 0. Self-heal — repair the deterministic breakage classes BEFORE fetching.
+    # Detection alone left 32 flagged rows sitting untouched for two weeks; every
+    # run now fixes what is derivable with certainty and reports the rest.
+    healed = {}
+    try:
+        from engines.repair import self_heal
+        session = get_session()
+        healed = self_heal(session)
+        session.commit()
+        session.close()
+        if healed.get("total"):
+            log.warning("Self-heal repaired %d row(s): %s", healed["total"], healed["repaired"])
+    except Exception as exc:
+        log.exception("Self-heal failed: %s", exc)
+        errors.append(f"self_heal: {exc}")
+
     # ── 3. Treasury yield history — runs BEFORE the GSOM pipeline so today's
     #      auction results are linked to the calendar (confirm_auctions_from_
     #      results) and daily_net_flow is rebuilt with actual accepted amounts
@@ -355,6 +371,9 @@ def main():
     except Exception as exc:
         quality = {"ok": None, "error": str(exc)}
         log.warning("integrity_check failed: %s", exc)
+    if isinstance(quality, dict) and healed:
+        quality["repaired"] = healed.get("repaired") or {}
+        quality["repair_review"] = healed.get("skipped") or []
 
     # Record the run so the dashboard can show "last refreshed at X" honestly,
     # even when a run found no new rows.

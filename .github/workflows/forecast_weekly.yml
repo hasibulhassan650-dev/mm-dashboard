@@ -28,6 +28,9 @@ on:
 jobs:
   forecast:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write        # the integrity gate files/closes the alert
     timeout-minutes: 15
 
     env:
@@ -68,6 +71,13 @@ jobs:
         # above has already been written and must not be marked failed.
         continue-on-error: true
         run: python forecast/run_diagnostics.py
+
+      - name: Data integrity gate
+        if: always()
+        uses: ./.github/actions/integrity-gate
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          context: "forecast"
 
       - name: Log result
         if: always()

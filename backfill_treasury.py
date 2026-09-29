@@ -73,12 +73,13 @@ def upsert(rows) -> int:
     saved = 0
     try:
         for r in rows:
-            r["ingested_utc"] = now
             exists = session.query(PrimaryYieldSnapshot).filter_by(
                 tenor_label=r["tenor_label"], auction_date=r["auction_date"]
             ).first()
             if not exists:
-                session.add(PrimaryYieldSnapshot(**r))
+                # canonical upsert only — it is what stores issue_date
+                from engines.pipeline import upsert_primary_yield
+                upsert_primary_yield(session, r)
                 saved += 1
         session.commit()
     finally:

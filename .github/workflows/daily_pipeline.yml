@@ -17,6 +17,9 @@ on:
 jobs:
   pipeline:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write        # the integrity gate files/closes the alert
     timeout-minutes: 45    # GSOM writes ~7,600 rows to remote Postgres (~27 min)
 
     env:
@@ -50,6 +53,13 @@ jobs:
               print('ERRORS:', result['errors'])
               exit(1)
           PY
+
+      - name: Data integrity gate
+        if: always()
+        uses: ./.github/actions/integrity-gate
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          context: "daily pipeline"
 
       - name: Log result
         if: always()
