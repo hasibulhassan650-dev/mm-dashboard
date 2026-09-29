@@ -1,4 +1,5 @@
 import { api } from "@/lib/api";
+import NextAuction from "@/components/NextAuction";
 import { fmtDate } from "@/lib/format";
 import { OMO_INSTRUMENTS, pivotOmo, omoNetSeries, omoCatsFromData, buildCurve, tenorSeries, fxRateSeries } from "@/lib/terminal";
 import OverviewView, { type OverviewData, type OmoAuctionRow, type SecAuctionRow } from "@/components/terminal/views/OverviewView";
@@ -14,7 +15,7 @@ function delta(series: number[]): number | null {
 }
 
 export default async function Home() {
-  const [summary, curve, history, outstanding, txns, cm, fx, policy, macro, fresh, ibfx] = await Promise.all([
+  const [summary, curve, history, outstanding, txns, cm, fx, policy, macro, fresh, ibfx, nextAuction] = await Promise.all([
     api.omoSummary().catch(() => []),
     api.yieldCurve().catch(() => []),
     api.yields(6).catch(() => []),
@@ -26,6 +27,7 @@ export default async function Home() {
     api.macro(),
     api.freshness(),
     api.interbankFx(365),
+    api.nextAuction(),
   ]);
 
   const omoSeries = pivotOmo(outstanding);
@@ -93,6 +95,7 @@ export default async function Home() {
   return (
     <>
       <div style={{ marginBottom: "var(--gap)" }}><Freshness updated={fresh.omo} /></div>
+      <NextAuction data={nextAuction} />
       <OverviewView d={data} />
     </>
   );

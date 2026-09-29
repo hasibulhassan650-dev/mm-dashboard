@@ -46,6 +46,10 @@ export const api = {
   interbankRepo:   async (days = 365): Promise<InterbankRepoRow[]> => {
     try { return await get<InterbankRepoRow[]>("/api/repo", { days }); } catch { return []; }
   },
+  nextAuction:     async (): Promise<NextAuctionResult> => {
+    try { return await get<NextAuctionResult>("/api/securities/next-auction"); }
+    catch { return { as_of: "", calendar_through: null, published: false, next: null, following: [] }; }
+  },
   drilldown:       (date: string) => get<DrilldownResult>(`/api/flows/drilldown`, { date }),
   // New endpoint — degrade to empty until the backend is deployed with /api/flows/forecast.
   flowsForecast:   async (days = 28): Promise<LiquidityForecast> => {
@@ -270,6 +274,27 @@ export interface InterbankRepoRow {
   rate_min_pct: number | null;
   rate_max_pct: number | null;
   war_pct: number | null;
+}
+
+/** One scheduled auction day from BB's published calendar. */
+export interface UpcomingAuction {
+  auction_date: string;
+  settlement_date: string | null;
+  tenors: string[];
+  security_types: string[];
+  offered_total_crore: number;
+  days_away: number;
+  /** The scheduled day is a known closure — BB will move it, and we do not guess where. */
+  is_holiday: boolean;
+  holiday_name: string | null;
+}
+export interface NextAuctionResult {
+  as_of: string;
+  /** The last auction date BB's calendar reaches — how far ahead they have published. */
+  calendar_through: string | null;
+  published: boolean;
+  next: UpcomingAuction | null;
+  following: UpcomingAuction[];
 }
 
 export interface OmoSummaryRow {
