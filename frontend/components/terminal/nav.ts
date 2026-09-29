@@ -10,6 +10,8 @@ export const NAV: NavItem[] = [
   { href: "/omo",         label: "OMO",         icon: "layers" },
   { href: "/yields",      label: "Yields",      icon: "curve" },
   { href: "/callmoney",   label: "Call Money",  icon: "pulse" },
+  { href: "/repo",        label: "Repo",        icon: "layers" },
+  { href: "/fxmarket",    label: "FX Market",   icon: "swap" },
   { href: "/fx",          label: "FX Auctions", icon: "swap" },
   { href: "/refrate",     label: "Ref Rates",   icon: "ruler" },
   { href: "/macro",       label: "External",    icon: "globe" },

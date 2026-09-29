@@ -21,6 +21,7 @@ export default function ExportAll() {
       // failure doesn't sink the whole export.
       const [
         yields, omoTxns, omoOut, cm, fx, refrate, securities, flows, macro, monetary,
+        ibfx, fxrates, repo,
       ] = await Promise.all([
         api.yieldsRange(yFrom, yTo).catch(() => []),
         api.omoTransactions(3650).catch(() => []),
@@ -32,6 +33,9 @@ export default function ExportAll() {
         api.flows(120).catch(() => []),
         api.macro().catch(() => ({ series: [], latest: null })),
         api.monetary().catch(() => ({ monthly: [], latest: null, reserve_requirements: { current: null, history: [] } })),
+        api.interbankFx(0),
+        api.fxRates(0),
+        api.interbankRepo(0),
       ]);
 
       const wb = XLSX.utils.book_new();
@@ -51,6 +55,9 @@ export default function ExportAll() {
       add("Reserves & Remittance", macro.series as unknown as Record<string, unknown>[]);
       add("Monetary & Prices", monetary.monthly as unknown as Record<string, unknown>[]);
       add("Reserve Requirements", monetary.reserve_requirements.history as unknown as Record<string, unknown>[]);
+      add("Interbank FX", ibfx as unknown as Record<string, unknown>[]);
+      add("Exchange Rates", fxrates as unknown as Record<string, unknown>[]);
+      add("Interbank Repo", repo as unknown as Record<string, unknown>[]);
 
       if (wb.SheetNames.length === 0) {
         // nothing came back — still give the user a clear, empty workbook

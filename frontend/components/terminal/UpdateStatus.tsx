@@ -4,7 +4,8 @@ import { api, type MetaStatus } from "@/lib/api";
 import { timeAgo, fmtDate } from "@/lib/format";
 
 // Order datasets by importance for the panel.
-const ORDER = ["yields", "omo", "callmoney", "fx", "refrate", "flows", "secondary", "securities"];
+const ORDER = ["yields", "omo", "callmoney", "repo", "fx", "fxmarket", "fxrates",
+               "refrate", "flows", "secondary", "securities"];
 
 function hoursSince(iso: string | null): number {
   if (!iso) return Infinity;

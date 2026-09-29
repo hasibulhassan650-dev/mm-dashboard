@@ -36,6 +36,16 @@ export const api = {
   callmoney:       (days = 90)  => get<CallMoneyResult>("/api/callmoney", { days }),
   fx:              (days = 365) => get<FxAuctionRow[]>("/api/fx", { days }),
   refrate:         (days = 90)  => get<RefRateRow[]>("/api/refrate", { days }),
+  // New endpoints — degrade to empty until the backend redeploys with them.
+  interbankFx:     async (days = 365): Promise<InterbankFxRow[]> => {
+    try { return await get<InterbankFxRow[]>("/api/fxmarket", { days }); } catch { return []; }
+  },
+  fxRates:         async (days = 365): Promise<FxRateRow[]> => {
+    try { return await get<FxRateRow[]>("/api/fxmarket/rates", { days }); } catch { return []; }
+  },
+  interbankRepo:   async (days = 365): Promise<InterbankRepoRow[]> => {
+    try { return await get<InterbankRepoRow[]>("/api/repo", { days }); } catch { return []; }
+  },
   drilldown:       (date: string) => get<DrilldownResult>(`/api/flows/drilldown`, { date }),
   // New endpoint — degrade to empty until the backend is deployed with /api/flows/forecast.
   flowsForecast:   async (days = 28): Promise<LiquidityForecast> => {
@@ -216,13 +226,51 @@ export interface MetaStatus {
 
 export type FreshnessKey =
   | "securities" | "yields" | "secondary" | "omo"
-  | "fx" | "callmoney" | "refrate" | "flows";
+  | "fx" | "callmoney" | "refrate" | "flows"
+  | "fxmarket" | "fxrates" | "repo";
 export type Freshness = Record<FreshnessKey, string | null>;
 
 const EMPTY_FRESHNESS: Freshness = {
   securities: null, yields: null, secondary: null, omo: null,
   fx: null, callmoney: null, refrate: null, flows: null,
+  fxmarket: null, fxrates: null, repo: null,
 };
+
+/** Interbank FX turnover. Rates are SPOT-only — BB publishes none for
+ *  forward or swap, so those arrive null rather than copied from spot. */
+export interface InterbankFxRow {
+  trade_date: string;
+  segment: "SPOT" | "FORWARD" | "SWAP";
+  num_deals: number | null;
+  volume_usd_mn: number | null;
+  high_rate: number | null;
+  low_rate: number | null;
+  war_rate: number | null;
+}
+
+/** BB's published exchange rate of the Taka.
+ *  `rate_date` is the trading day the rates DESCRIBE; `published_date` is when
+ *  BB put them up — one business day apart, and not interchangeable. */
+export interface FxRateRow {
+  rate_date: string;
+  published_date: string | null;
+  currency: string;
+  bid_rate: number | null;
+  ask_rate: number | null;
+  war_rate: number | null;
+  mid_rate: number | null;
+}
+
+export interface InterbankRepoRow {
+  trade_date: string;
+  num_deals: number | null;
+  amount_crore: number | null;
+  tenor_min_days: number | null;
+  tenor_max_days: number | null;
+  rate_min_pct: number | null;
+  rate_max_pct: number | null;
+  war_pct: number | null;
+}
 
 export interface OmoSummaryRow {
   instrument: string; direction: string; tranches: number;

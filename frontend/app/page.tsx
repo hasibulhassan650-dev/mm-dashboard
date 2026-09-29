@@ -14,7 +14,7 @@ function delta(series: number[]): number | null {
 }
 
 export default async function Home() {
-  const [summary, curve, history, outstanding, txns, cm, fx, policy, macro, fresh] = await Promise.all([
+  const [summary, curve, history, outstanding, txns, cm, fx, policy, macro, fresh, ibfx] = await Promise.all([
     api.omoSummary().catch(() => []),
     api.yieldCurve().catch(() => []),
     api.yields(6).catch(() => []),
@@ -25,6 +25,7 @@ export default async function Home() {
     api.policy(),
     api.macro(),
     api.freshness(),
+    api.interbankFx(365),
   ]);
 
   const omoSeries = pivotOmo(outstanding);
@@ -42,6 +43,10 @@ export default async function Home() {
   const fxS = fxRateSeries(fx);
   const resSeries = macro.series.map((m) => m.gross_reserves_usd_bn).filter((v): v is number => v != null).slice(-24);
   const lastFx = fxS.length ? fxS[fxS.length - 1] : null;
+  // Interbank spot, oldest-first for the sparkline (the API returns newest-first).
+  const spotS = ibfx.filter((r) => r.segment === "SPOT" && r.war_rate != null)
+    .map((r) => r.war_rate as number).reverse();
+  const lastSpot = spotS.length ? spotS[spotS.length - 1] : null;
   const lastRes = macro.latest?.gross_reserves_usd_bn ?? null;
 
   const kpis: Kpi[] = [
@@ -49,7 +54,13 @@ export default async function Home() {
     { id: "war", label: "Call Money WAR", value: warSeries.length ? warSeries[warSeries.length - 1].toFixed(2) : "—", unit: "%", sub: "weighted avg rate", delta: delta(warSeries), dir: "up", series: warSeries.slice(-30), href: "/callmoney" },
     { id: "tb91", label: "91D T-Bill", value: tb91 ? tb91.cutoff_yield_pct.toFixed(2) : "—", unit: "%", sub: tb91 ? `cut-off · ${fmtDate(tb91.auction_date)}` : "", delta: delta(s91), dir: "up", series: s91, href: "/yields" },
     { id: "tb10y", label: "10Y T-Bond", value: tb10y ? tb10y.cutoff_yield_pct.toFixed(2) : "—", unit: "%", sub: tb10y ? `cut-off · ${fmtDate(tb10y.auction_date)}` : "", delta: delta(s10y), dir: "up", series: s10y, href: "/yields" },
-    { id: "fx", label: "USD / BDT", value: lastFx != null ? lastFx.toFixed(2) : "—", sub: "auction wtd-avg", delta: delta(fxS), dir: "down", series: fxS, href: "/fx" },
+    // Prefer the INTERBANK spot rate: it prints every trading day and is where
+    // the taka is actually priced. BB's FX auction rate is an occasional
+    // intervention price (62 prints in two years) — a fair fallback, but it
+    // should not be labelled as the market rate while a market rate exists.
+    ...(spotS.length
+      ? [{ id: "fx", label: "USD / BDT", value: lastSpot != null ? lastSpot.toFixed(2) : "—", sub: "interbank spot WAR", delta: delta(spotS), dir: "down" as const, series: spotS, href: "/fxmarket" }]
+      : [{ id: "fx", label: "USD / BDT", value: lastFx != null ? lastFx.toFixed(2) : "—", sub: "auction wtd-avg", delta: delta(fxS), dir: "down" as const, series: fxS, href: "/fx" }]),
     { id: "res", label: "FX Reserve", value: lastRes != null ? lastRes.toFixed(2) : "—", unit: "B$", sub: "gross · BB", delta: delta(resSeries), dir: "up", series: resSeries, href: "/macro" },
   ];
 

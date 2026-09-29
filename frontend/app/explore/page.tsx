@@ -7,7 +7,7 @@ import type { MacroRow } from "@/lib/api";
 export const revalidate = 300;
 
 export default async function ExplorePage() {
-  const [omoOut, cm, yh, fx, macro, rr, flows, fresh] = await Promise.all([
+  const [omoOut, cm, yh, fx, macro, rr, flows, fresh, ibfx, fxrates, repo] = await Promise.all([
     api.omoOutstanding(365).catch(() => []),
     // 5 years: the call-money series was backfilled from 2021, so the
     // correlation grid is no longer limited to the ~5 months it once held.
@@ -18,6 +18,9 @@ export default async function ExplorePage() {
     api.refrate(730).catch(() => []),
     api.flows(24).catch(() => []),
     api.freshness(),
+    api.interbankFx(1095),
+    api.fxRates(1095),
+    api.interbankRepo(1095),
   ]);
   const today = new Date().toISOString().slice(0, 10);
 
@@ -131,6 +134,18 @@ export default async function ExplorePage() {
     { key: "cf_coupon", label: "Coupon inflow", group: "G-Sec Cashflows", unit: "mn", points: pastFlow("coupon_inflow_bdt_mill") },
     { key: "cf_principal", label: "Maturity inflow", group: "G-Sec Cashflows", unit: "mn", points: pastFlow("principal_inflow_bdt_mill") },
     { key: "fx", label: "USD / BDT", group: "FX & Macro", unit: "৳", points: mk(fx.map((r) => [r.auction_date, r.weighted_avg_rate])) },
+    { key: "fx_spot_war", label: "USD/BDT interbank spot", group: "FX & Macro", unit: "৳",
+      points: mk(ibfx.filter((r) => r.segment === "SPOT").map((r) => [r.trade_date, r.war_rate])) },
+    { key: "fx_spot_vol", label: "Spot turnover", group: "FX & Macro", unit: "$m",
+      points: mk(ibfx.filter((r) => r.segment === "SPOT").map((r) => [r.trade_date, r.volume_usd_mn])) },
+    { key: "fx_swap_vol", label: "Swap turnover", group: "FX & Macro", unit: "$m",
+      points: mk(ibfx.filter((r) => r.segment === "SWAP").map((r) => [r.trade_date, r.volume_usd_mn])) },
+    { key: "fx_eur", label: "EUR / BDT mid", group: "FX & Macro", unit: "৳",
+      points: mk(fxrates.filter((r) => r.currency === "EUR").map((r) => [r.rate_date, r.mid_rate])) },
+    { key: "repo_war", label: "Interbank repo WAR", group: "Money Market", unit: "%",
+      points: mk(repo.map((r) => [r.trade_date, r.war_pct])) },
+    { key: "repo_vol", label: "Repo turnover", group: "Money Market", unit: "cr",
+      points: mk(repo.map((r) => [r.trade_date, r.amount_crore])) },
     { key: "reserves", label: "FX Reserves", group: "FX & Macro", unit: "$bn", points: macroPts("gross_reserves_usd_bn") },
     { key: "remit", label: "Remittance", group: "FX & Macro", unit: "$mn", points: macroPts("remittance_usd_mn") },
   ].filter((v) => Object.keys(v.points).length > 1);
