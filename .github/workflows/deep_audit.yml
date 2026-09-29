@@ -1,0 +1,73 @@
+# .github/workflows/deep_audit.yml
+#
+# The weekly full-history audit.
+#
+# The integrity gate deliberately checks recent windows (OMO ledger 30 days,
+# ladder 60) so every refresh stays fast — but that means an error landing
+# outside the window is never looked at again. Both full-history audits that
+# found the real damage in Sep-2026 were run BY HAND. This runs them on a
+# schedule so nobody has to remember.
+#
+# integrity-gate: read-only — this job only READS; it is itself an audit and
+# reports its own verdict.
+
+name: Weekly Deep Audit
+
+on:
+  schedule:
+    - cron: "30 1 * * 5"    # Friday 01:30 UTC = 07:30 Bangladesh, the weekend
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: deep-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run the full-history audit
+        id: audit
+        continue-on-error: true      # the report must post even when it finds problems
+        run: python deep_audit.py
+
+      - name: Post the report to the digest issue
+        run: |
+          set -e
+          gh label create digest --color 0E8A16 --description "Daily data digest" --force >/dev/null 2>&1 || true
+          n=$(gh issue list --repo "$GITHUB_REPOSITORY" --label digest --state open \
+                --json number --jq '.[0].number // empty')
+          if [ -z "$n" ]; then
+            n=$(gh issue create --repo "$GITHUB_REPOSITORY" --title "Daily data digest" \
+                  --label digest --body "Data pipeline reports land here." --json number --jq .number 2>/dev/null \
+                || gh issue list --repo "$GITHUB_REPOSITORY" --label digest --state open --json number --jq '.[0].number')
+          fi
+          gh issue comment "$n" --repo "$GITHUB_REPOSITORY" --body-file deep_audit.md
+          echo "posted to issue #$n"
+
+      - name: Fail the run if the audit found something
+        if: steps.audit.outcome == 'failure'
+        run: |
+          echo "::error::The weekly deep audit found full-history mismatches — see the digest issue."
+          exit 1
