@@ -33,3 +33,14 @@ frontend/cleanup.log
 
 # uptime sentinel scratch output
 verdict.json
+
+# Local scratch tooling — one-off backfills and previews written during
+# investigations. Never part of the deployed system; keeping them untracked
+# also keeps them out of the 'one writer per table' guard test.
+SETUP.md
+design_preview.html
+backfill_omo.py
+daily_omo.py
+omo_report.py
+setup_callmoney.py
+digest.md

@@ -88,11 +88,17 @@ def test_every_db_writing_workflow_has_the_integrity_gate():
         raw = open(os.path.join(ROOT, rel), encoding="utf-8").read()
         if "DATABASE_URL:" not in raw:          # doesn't touch the database
             continue
+        # A workflow that only READS may opt out, but it has to say so in the file
+        # itself — an allowlist buried inside this test is a place to hide.
+        if "integrity-gate: read-only" in raw:
+            continue
         if "actions/integrity-gate" not in raw:
             missing.append(rel)
     assert not missing, (
         "These workflows write to the database but never check what they wrote — "
-        "reconcile.py ran ungated for months and produced 32 bad rows:\n" + "\n".join(missing))
+        "reconcile.py ran ungated for months and produced 32 bad rows. Add the gate, or "
+        "declare '# integrity-gate: read-only <why>' in the file if it only reads:\n"
+        + "\n".join(missing))
 
 
 def test_integrity_gate_action_exists_and_parses():

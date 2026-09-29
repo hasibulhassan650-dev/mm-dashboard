@@ -18,6 +18,10 @@ on:
     - cron: "0 1 * * *"     # 01:00 UTC = 07:00 Bangladesh, before the desk opens
   workflow_dispatch:
 
+# integrity-gate: read-only — this job only READS the database (it runs
+# integrity_check() itself and reports the verdict). It deliberately has no
+# gate: a gate failing here would stop the report being posted at exactly the
+# moment the report matters most.
 permissions:
   contents: read
   issues: write
