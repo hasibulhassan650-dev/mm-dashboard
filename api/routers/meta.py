@@ -64,6 +64,35 @@ def get_freshness():
         session.close()
 
 
+def _waiting_items(session) -> list:
+    """Open "waiting on Bangladesh Bank" items, with how long we have waited.
+
+    These are NOT defects in our data: BB simply has not published yet, so they
+    never fail a build. They are surfaced anyway — with an age — because the
+    difference between BB being a day late and BB having stopped publishing is
+    exactly the age, and the consequence (a missing auction calendar means the
+    cash-flow ladder has no outflow for those auctions) is real either way.
+    """
+    try:
+        rows = session.execute(text(
+            "SELECT table_name, message, first_seen, occurrences FROM data_issues "
+            "WHERE resolved_at IS NULL AND severity = 'waiting' "
+            "ORDER BY first_seen")).fetchall()
+    except Exception:
+        return []                       # ledger table not created yet
+    out = []
+    now = datetime.datetime.utcnow()
+    for table_name, message, first_seen, occurrences in rows:
+        age_h = _hours_since(first_seen)
+        out.append({
+            "table": table_name, "message": message,
+            "since": first_seen.isoformat() if first_seen is not None else None,
+            "age_days": int(age_h // 24) if age_h != float("inf") else None,
+            "occurrences": occurrences,
+        })
+    return out
+
+
 @router.get("/status")
 def get_status():
     """
@@ -148,6 +177,70 @@ def get_status():
                 "run_age_hours": None if run_age == float("inf") else round(run_age, 1),
                 "health_as_of": last_run,
                 "health_stale": bool(data_health is not None and run_age >= RUN_STALE_HOURS),
+                "waiting": _waiting_items(session),
                 "as_of": str(today), "last_working_day": str(lwd)}
+    finally:
+        session.close()
+
+
+@router.get("/guardian")
+def get_guardian(limit: int = 40):
+    """The issue ledger: what is open, what was resolved, what was auto-repaired.
+
+    `integrity_check()` only ever answers "what is wrong now" and is overwritten
+    each run. This is the memory behind it — every problem with a first-seen
+    date, an age and how long it took to clear — because age is what separates
+    "Bangladesh Bank is a day late" from "Bangladesh Bank has stopped
+    publishing", and a fault that keeps coming back from one that happened once.
+    """
+    session = get_session()
+    now = datetime.datetime.utcnow()
+    try:
+        def _rows(sql, **p):
+            try:
+                return session.execute(text(sql), p).fetchall()
+            except Exception:
+                return []          # ledger tables not created yet
+
+        def _age(ts):
+            h = _hours_since(ts)
+            return None if h == float("inf") else round(h, 1)
+
+        open_rows = []
+        for r in _rows("SELECT fingerprint, table_name, severity, message, first_seen, "
+                       "last_seen, occurrences FROM data_issues WHERE resolved_at IS NULL"):
+            open_rows.append({
+                "fingerprint": r[0], "table": r[1], "severity": r[2], "message": r[3],
+                "first_seen": r[4].isoformat() if r[4] else None,
+                "last_seen": r[5].isoformat() if r[5] else None,
+                "occurrences": r[6], "age_hours": _age(r[4]),
+            })
+        # defects first, then longest-standing
+        open_rows.sort(key=lambda x: (x["severity"] != "defect", -(x["age_hours"] or 0)))
+
+        resolved = [{
+            "table": r[0], "severity": r[1], "message": r[2],
+            "first_seen": r[3].isoformat() if r[3] else None,
+            "resolved_at": r[4].isoformat() if r[4] else None,
+            "resolution": r[5], "occurrences": r[6],
+        } for r in _rows(
+            "SELECT table_name, severity, message, first_seen, resolved_at, resolution, occurrences "
+            "FROM data_issues WHERE resolved_at IS NOT NULL ORDER BY resolved_at DESC LIMIT :n",
+            n=limit)]
+
+        repairs = [{
+            "changed_utc": r[0].isoformat() if r[0] else None,
+            "change_class": r[1], "detail": r[2],
+        } for r in _rows("SELECT changed_utc, change_class, detail FROM data_changes "
+                         "ORDER BY changed_utc DESC LIMIT :n", n=limit)]
+
+        return {
+            "as_of": now.isoformat(),
+            "open": open_rows,
+            "open_defects": sum(1 for r in open_rows if r["severity"] == "defect"),
+            "open_waiting": sum(1 for r in open_rows if r["severity"] == "waiting"),
+            "resolved": resolved,
+            "repairs": repairs,
+        }
     finally:
         session.close()

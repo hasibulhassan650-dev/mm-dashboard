@@ -94,14 +94,36 @@ def build() -> tuple:
         # ── live integrity, not the stored verdict ────────────────────────────
         rep = integrity_check()
         if rep.get("ok"):
-            lines.append("**Integrity:** all checks pass.\n")
+            lines.append("**Our data:** all checks pass.\n")
         else:
             problems.append(f"{rep.get('issue_count')} integrity issue(s)")
             by = ", ".join(f"`{k}`={v}" for k, v in sorted(rep.get("by_table", {}).items(),
                                                            key=lambda x: -x[1]))
-            lines.append(f"**Integrity: {rep.get('issue_count')} issue(s)** — {by}\n")
+            lines.append(f"**Our data: {rep.get('issue_count')} defect(s)** — {by}\n")
             for i in rep.get("issues", [])[:10]:
                 lines.append(f"- {i}")
+            lines.append("")
+
+        # Waiting on BB is reported every single day but is NOT counted as a
+        # problem and does NOT colour the heading: it is not our data and not
+        # ours to fix, and a red heading every day teaches you to stop reading.
+        # The ledger supplies the age, which is what separates "BB is late"
+        # from "BB has stopped publishing".
+        try:
+            from engines.guardian import record, open_issues, fingerprint as _fp
+            record(s, rep)
+            s.commit()
+            ages = {i["fingerprint"]: i for i in open_issues(s)}
+        except Exception as exc:
+            ages, _fp = {}, (lambda x: x)
+            lines.append(f"_(issue ledger unavailable: {exc})_\n")
+        if rep.get("waiting"):
+            lines.append(f"**Waiting on Bangladesh Bank: {rep.get('waiting_count')}** — "
+                         f"not our data and not actionable, listed so it is never forgotten\n")
+            for w in rep["waiting"][:10]:
+                a = ages.get(_fp(w))
+                age = f" _(waiting {a['age_days']}d)_" if a and a.get("age_days") else ""
+                lines.append(f"- {w}{age}")
             lines.append("")
 
         # ── what the self-heal fixed on the last run ─────────────────────────

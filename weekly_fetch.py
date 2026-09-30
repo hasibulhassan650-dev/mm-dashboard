@@ -442,6 +442,24 @@ def main():
         quality["repaired"] = healed.get("repaired") or {}
         quality["repair_review"] = healed.get("skipped") or []
 
+    # Fold this run's verdict into the guardian ledger, so every issue carries a
+    # first-seen date and an age instead of being overwritten each run — and
+    # persist whatever the self-heal changed, so automatic corrections stay
+    # auditable after the fact.
+    try:
+        from engines.guardian import record, record_repairs
+        session = get_session()
+        led = record(session, quality if isinstance(quality, dict) else {})
+        changes = record_repairs(session, healed)
+        session.commit()
+        session.close()
+        if isinstance(quality, dict):
+            quality["ledger"] = led
+        log.info("Guardian ledger: %s | %d repair(s) logged", led, changes)
+    except Exception as exc:
+        log.exception("Guardian ledger failed: %s", exc)
+        errors.append(f"guardian: {exc}")
+
     # Record the run so the dashboard can show "last refreshed at X" honestly,
     # even when a run found no new rows.
     try:

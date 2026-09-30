@@ -61,13 +61,19 @@ jobs:
           n=$(gh issue list --repo "$GITHUB_REPOSITORY" --label digest --state open \
                 --json number --jq '.[0].number // empty')
           if [ -z "$n" ]; then
-            # `gh issue create` prints a URL and does NOT support --json, so ask
-            # for the number separately instead of parsing its output.
-            gh issue create --repo "$GITHUB_REPOSITORY" \
+            # Take the number from the URL `gh issue create` prints. The first
+            # run of this job created the issue and then looked it up by label,
+            # got nothing back, and died on `invalid issue format: ""` — so the
+            # one report designed to be read every morning never arrived. The
+            # create call already knows the answer; don't ask twice.
+            url=$(gh issue create --repo "$GITHUB_REPOSITORY" \
               --title "Daily data digest" --label digest \
-              --body "Every morning this issue receives a report of what the data pipeline did overnight. **If a day passes with no new comment here, the automation itself is down.**" >/dev/null
-            n=$(gh issue list --repo "$GITHUB_REPOSITORY" --label digest --state open \
-                  --json number --jq '.[0].number')
+              --body "Every morning this issue receives a report of what the data pipeline did overnight. **If a day passes with no new comment here, the automation itself is down.**")
+            n="${url##*/}"
+          fi
+          if [ -z "$n" ]; then
+            echo "::error::could not find or create the digest issue — the report has nowhere to go"
+            exit 1
           fi
           gh issue comment "$n" --repo "$GITHUB_REPOSITORY" --body-file digest.md
           echo "posted to issue #$n"

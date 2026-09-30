@@ -135,7 +135,7 @@ function TweaksPanel() {
 }
 
 // ---------------- App shell ----------------
-import { StaleDataBanner } from "@/components/DataWarning";
+import { StaleDataBanner, WaitingNotice } from "@/components/DataWarning";
 
 export function AppShell({ children, ticker, sub }: { children: React.ReactNode; ticker: TickItem[]; sub?: string }) {
   const path = usePathname();
@@ -161,6 +161,7 @@ export function AppShell({ children, ticker, sub }: { children: React.ReactNode;
             </div>
           </div>
           <StaleDataBanner />
+          <WaitingNotice />
           {children}
         </div>
       </div>

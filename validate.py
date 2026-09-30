@@ -29,11 +29,25 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
     s = get_session()
     issues: list[str] = []
     by_table: dict[str, int] = {}
+    waiting: list[str] = []
+    by_table_waiting: dict[str, int] = {}
 
-    def add(table: str, msg: str):
-        by_table[table] = by_table.get(table, 0) + 1
-        if sum(1 for i in issues if i.startswith(table)) < limit_per_rule:
-            issues.append(f"{table}: {msg}")
+    def add(table: str, msg: str, severity: str = "defect"):
+        """Record a finding.
+
+        severity="defect"  — OUR data is wrong. Fails the build. Always.
+        severity="waiting" — Bangladesh Bank has not published something yet.
+                             Visible on the site, in the digest and in the issue
+                             ledger with an age, but it does NOT fail the build:
+                             it is not actionable and it is not a fault in our
+                             data. Before this split, BB being late turned every
+                             refresh red ~28x a day, which is exactly how a real
+                             failure comes to look like the wallpaper.
+        """
+        bucket, counts = (waiting, by_table_waiting) if severity == "waiting" else (issues, by_table)
+        counts[table] = counts.get(table, 0) + 1
+        if sum(1 for i in bucket if i.startswith(table)) < limit_per_rule:
+            bucket.append(f"{table}: {msg}")
 
     def q(sql, **p):
         return s.execute(text(sql), p).fetchall()
@@ -498,56 +512,110 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
             add("repo", f"{r[0]} implausible repo tenor range {r[1]}-{r[2]} days")
 
         # ---- freshness expectations (catch silent-stale failures) ----
-        # A fetch that "succeeds" but stores nothing new must FAIL here, not
+        # A fetch that "succeeds" but stores nothing new must be reported, not
         # pass unnoticed (July 2026: FY-rollover left the auction calendar
         # seed stale → "no auctions next month" presented as fact).
+        #
+        # Stale data has TWO opposite causes needing opposite responses, so the
+        # check asks which one it is instead of treating them alike:
+        #   * our fetch ran and BB has nothing newer → waiting on BB
+        #   * our fetch is failing or not running    → our defect
+        #
+        # The signal is "did OUR fetch step run without error", which is already
+        # recorded: weekly_fetch stores per-step failures on the pipeline_runs
+        # row as "<step>: <exception>". NOT ingested_utc — that only moves when
+        # a row is actually written, so a source BB has not updated looks
+        # un-fetched precisely in the case this has to judge (interbank repo,
+        # fetched hourly, unchanged since 24-Sep, ingested_utc frozen with it).
+        _run = None
+        try:
+            _run = s.execute(text("SELECT run_utc, errors FROM pipeline_runs "
+                                  "ORDER BY run_utc DESC LIMIT 1")).fetchone()
+        except Exception:
+            pass
+
+        def _fetch_is_healthy(step: str) -> bool:
+            if not _run or _run[0] is None:
+                return False
+            ran = _run[0]
+            if isinstance(ran, str):
+                ran = datetime.datetime.fromisoformat(ran[:19])
+            if (datetime.datetime.utcnow() - ran).total_seconds() >= 14 * 3600:
+                return False                      # the refresh itself has stopped
+            try:
+                import json as _json
+                errs = _json.loads(_run[1]) if _run[1] else []
+            except Exception:
+                errs = []
+            return not any(str(e).startswith(f"{step}:") for e in errs)
+
         def _max_date(sql) -> datetime.date | None:
             v = s.execute(text(sql)).scalar()
             if isinstance(v, str):
                 v = datetime.date.fromisoformat(v[:10])
             return v
 
+        # The 5th field names the weekly_fetch STEP that feeds this dataset, so
+        # a stale source can be attributed to BB or to us. None means the rule
+        # is about our own computation and can never be BB's lateness
+        # (flows_forward is a projection we build ourselves).
         FRESHNESS_RULES = [
-            # (dataset, sql for max date, min acceptable, description)
+            # (dataset, sql for max date, min acceptable, description, fetch step)
             ("auctions_forward", "SELECT MAX(settlement_date) FROM auction_events",
              today + datetime.timedelta(days=7),
-             "no planned auction ≥7 days ahead — BB auctions T-bills weekly; calendar likely stale"),
+             "no planned auction ≥7 days ahead — BB auctions T-bills weekly; calendar likely stale",
+             "pipeline"),
             ("fxmarket", "SELECT MAX(trade_date) FROM interbank_fx",
              today - datetime.timedelta(days=5),
-             "interbank FX turnover stale >5 days"),
+             "interbank FX turnover stale >5 days",
+             "interbank_fx"),
             ("fxrates", "SELECT MAX(rate_date) FROM fx_rates_daily",
              today - datetime.timedelta(days=5),
-             "published exchange rates stale >5 days"),
+             "published exchange rates stale >5 days",
+             "fxrates"),
             ("repo", "SELECT MAX(trade_date) FROM interbank_repo",
              today - datetime.timedelta(days=5),
-             "interbank repo stale >5 days"),
+             "interbank repo stale >5 days",
+             "interbank_repo"),
             ("secondary", "SELECT MAX(settlement_date) FROM mtm_snapshots",
              today - datetime.timedelta(days=4),
-             "secondary MTM stale >4 days (weekend+holiday buffer)"),
+             "secondary MTM stale >4 days (weekend+holiday buffer)",
+             "pipeline"),
             ("callmoney", "SELECT MAX(trade_date) FROM call_money_rates",
              today - datetime.timedelta(days=4),
-             "call money stale >4 days"),
+             "call money stale >4 days",
+             "callmoney"),
             ("refrate", "SELECT MAX(trade_date) FROM ref_rates",
              today - datetime.timedelta(days=4),
-             "reference rates stale >4 days"),
+             "reference rates stale >4 days",
+             "refrate"),
             ("omo", "SELECT MAX(transaction_date) FROM omo_transactions",
              today - datetime.timedelta(days=10),
-             "no OMO transaction in 10 days — publication gap this long is implausible"),
+             "no OMO transaction in 10 days — publication gap this long is implausible",
+             "omo"),
             ("yields", "SELECT MAX(auction_date) FROM primary_yield_snapshots",
              today - datetime.timedelta(days=14),
-             "no primary auction result in 14 days"),
+             "no primary auction result in 14 days",
+             "treasury"),
             ("flows_forward", "SELECT MAX(flow_date) FROM daily_net_flow",
              today + datetime.timedelta(days=30),
-             "forward flow window <30 days — coupon/maturity projection broke"),
+             "forward flow window <30 days — coupon/maturity projection broke",
+             None),
         ]
-        for name, sql, min_ok, desc in FRESHNESS_RULES:
+        for name, sql, min_ok, desc, src_table in FRESHNESS_RULES:   # src_table = fetch step
             try:
                 mx = _max_date(sql)
             except Exception as exc:
                 add("freshness", f"{name}: check failed ({exc})")
                 continue
             if mx is None or mx < min_ok:
-                add("freshness", f"{name}: latest={mx} (need ≥{min_ok}) — {desc}")
+                fetched = _fetch_is_healthy(src_table) if src_table else False
+                if fetched:
+                    add("freshness", f"{name}: BB has published nothing newer than {mx} "
+                                     f"(our last successful fetch was within 14h) — {desc}", "waiting")
+                else:
+                    add("freshness", f"{name}: latest={mx} (need ≥{min_ok}) and OUR fetch is not "
+                                     f"current either — {desc}")
 
         # ---- policy corridor freshness (tolerant until first fetch populates it) ----
         # The daily fetcher re-confirms the corridor from BB's homepage; if it
@@ -667,11 +735,17 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
     finally:
         s.close()
 
+    # `ok` / `issues` / `by_table` keep their existing meaning — OUR defects —
+    # so the gate and every current consumer react to exactly what they always
+    # did. Waiting-on-BB travels beside them, never inside them.
     return {
         "ok": len(by_table) == 0,
         "issue_count": sum(by_table.values()),
         "issues": issues,
         "by_table": by_table,
+        "waiting": waiting,
+        "waiting_count": sum(by_table_waiting.values()),
+        "by_table_waiting": by_table_waiting,
     }
 
 

@@ -484,6 +484,42 @@ class PolicyRateHistory(Base):
     ingested_utc   = Column(DateTime)
 
 
+class DataIssue(Base):
+    """The guardian's memory: one row per distinct problem, not per sighting.
+
+    integrity_check() produces a verdict that is overwritten on every run, so
+    nothing recorded that BB's auction calendar had been missing since 27-Sep,
+    or how long anything took to resolve. Age is the whole point: "BB is a day
+    late" and "BB has stopped publishing" look identical without it.
+
+    `fingerprint` normalises digits out of the message, so the same problem
+    seen on successive days is ONE row with a growing age and occurrence count
+    rather than a fresh row every run.
+    """
+    __tablename__ = "data_issues"
+    __table_args__ = (UniqueConstraint("fingerprint"),)
+    id           = Column(Integer, primary_key=True, autoincrement=True)
+    fingerprint  = Column(String(80), nullable=False)
+    table_name   = Column(String(40))       # the check group: omo, yields, freshness…
+    severity     = Column(String(10))       # defect | waiting
+    message      = Column(Text)             # the most recent wording
+    first_seen   = Column(DateTime)
+    last_seen    = Column(DateTime)
+    occurrences  = Column(Integer, default=1)
+    resolved_at  = Column(DateTime)         # NULL = still open
+    resolution   = Column(String(200))
+
+
+class DataChange(Base):
+    """Append-only trail of what the self-heal actually changed, so every
+    automatic correction stays auditable after the fact."""
+    __tablename__ = "data_changes"
+    id           = Column(Integer, primary_key=True, autoincrement=True)
+    changed_utc  = Column(DateTime)
+    change_class = Column(String(40))       # yield_issue_date, coupon_payment_date…
+    detail       = Column(Text)             # human-readable before -> after
+
+
 class HolidayCalendar(Base):
     __tablename__ = "holiday_calendar"
     calendar_date  = Column(Date, primary_key=True)

@@ -46,6 +46,10 @@ export const api = {
   interbankRepo:   async (days = 365): Promise<InterbankRepoRow[]> => {
     try { return await get<InterbankRepoRow[]>("/api/repo", { days }); } catch { return []; }
   },
+  guardian:        async (): Promise<GuardianLedger> => {
+    try { return await get<GuardianLedger>("/api/meta/guardian"); }
+    catch { return { as_of: "", open: [], open_defects: 0, open_waiting: 0, resolved: [], repairs: [] }; }
+  },
   nextAuction:     async (): Promise<NextAuctionResult> => {
     try { return await get<NextAuctionResult>("/api/securities/next-auction"); }
     catch { return { as_of: "", calendar_through: null, published: false, next: null, following: [] }; }
@@ -224,8 +228,47 @@ export interface MetaStatus {
   /** data_health is the verdict recorded by that run — this is when it was taken. */
   health_as_of?: string | null;
   health_stale?: boolean;
+  /** Things Bangladesh Bank has not published yet. NOT defects in our data and
+   *  never a build failure — but shown, with an age, so they cannot be forgotten. */
+  waiting?: WaitingItem[];
   as_of?: string;
   last_working_day?: string;
+}
+
+/** The issue ledger: the guardian's memory. */
+export interface LedgerIssue {
+  fingerprint: string;
+  table: string;
+  severity: "defect" | "waiting";
+  message: string;
+  first_seen: string | null;
+  last_seen: string | null;
+  occurrences: number | null;
+  age_hours: number | null;
+}
+export interface LedgerResolved {
+  table: string; severity: string; message: string;
+  first_seen: string | null; resolved_at: string | null;
+  resolution: string | null; occurrences: number | null;
+}
+export interface LedgerRepair {
+  changed_utc: string | null; change_class: string; detail: string;
+}
+export interface GuardianLedger {
+  as_of: string;
+  open: LedgerIssue[];
+  open_defects: number;
+  open_waiting: number;
+  resolved: LedgerResolved[];
+  repairs: LedgerRepair[];
+}
+
+export interface WaitingItem {
+  table: string;
+  message: string;
+  since: string | null;
+  age_days: number | null;
+  occurrences: number | null;
 }
 
 export type FreshnessKey =

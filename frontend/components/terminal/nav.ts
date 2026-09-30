@@ -18,6 +18,7 @@ export const NAV: NavItem[] = [
   { href: "/monetary",    label: "Monetary",    icon: "bank" },
   { href: "/securities",  label: "Securities",  icon: "doc" },
   { href: "/portfolio",   label: "Portfolio",   icon: "briefcase" },
+  { href: "/guardian",    label: "Guardian",    icon: "pulse" },
   { href: "/glossary",    label: "Glossary",    icon: "book" },
 ];
 

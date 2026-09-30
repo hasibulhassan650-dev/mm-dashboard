@@ -87,3 +87,48 @@ export function DataWarning({ dataset }: { dataset: string | string[] }) {
     </div>
   );
 }
+
+/**
+ * Things Bangladesh Bank has not published yet.
+ *
+ * Deliberately NOT red and deliberately not silent. These are not faults in
+ * our data and nobody can act on them, so failing the build on them (which is
+ * what used to happen, ~28 red runs a day) only taught everyone to ignore red.
+ * But they have consequences worth seeing — a missing auction calendar means
+ * the cash-flow ladder carries no outflow for those auctions — so they are
+ * shown with the age that separates "BB is late" from "BB has stopped".
+ */
+export function WaitingNotice() {
+  const s = useStatus();
+  const items = s?.waiting ?? [];
+  if (!items.length) return null;
+  const label = (m: string) => {
+    const m2 = m.replace(/^freshness:\s*/, "").split(":")[0];
+    return ({ auctions_forward: "auction calendar", repo: "interbank repo",
+              fxmarket: "interbank FX", fxrates: "exchange rates",
+              callmoney: "call money", refrate: "reference rates",
+              omo: "OMO operations", yields: "auction results",
+              secondary: "secondary market" } as Record<string, string>)[m2] ?? m2;
+  };
+  return (
+    <div style={{
+      background: "color-mix(in oklab, var(--info) 8%, var(--panel))",
+      border: "1px solid color-mix(in oklab, var(--info) 32%, transparent)",
+      borderRadius: "var(--radius-sm)", padding: "7px 12px", marginBottom: "var(--gap)",
+      fontSize: 11.5, color: "var(--fg-dim)", display: "flex", gap: 8, flexWrap: "wrap",
+      alignItems: "baseline",
+    }}>
+      <span style={{ color: "var(--info)", fontWeight: 600 }}>Waiting on Bangladesh Bank:</span>
+      <span>
+        {items.map((w, i) => (
+          <span key={i} title={w.message}>
+            {i > 0 && " · "}
+            {label(w.message)}
+            {w.age_days != null && w.age_days > 0 && <span style={{ color: "var(--fg-mute)" }}> ({w.age_days}d)</span>}
+          </span>
+        ))}
+      </span>
+      <span style={{ color: "var(--fg-mute)" }}>— not published yet, so this data is missing rather than zero.</span>
+    </div>
+  );
+}
