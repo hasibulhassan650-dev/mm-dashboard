@@ -31,9 +31,15 @@ concurrency:
   group: full-refresh
   cancel-in-progress: false
 
+# Runner image is PINNED, not ubuntu-latest: that label migrates to Ubuntu 26
+# on 19-Oct-2026, and the BB fetchers ride on the image's preinstalled Chrome
+# plus undetected-chromedriver and xvfb. An OS swapped underneath that stack is
+# the same shape of failure as the unpinned SQLAlchemy default that took every
+# data job down for five days. Migrate deliberately: bump this, run the full
+# refresh manually, and confirm Chrome still clears BB's F5 challenge.
 jobs:
   refresh:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       issues: write     # integrity gate files/closes alert issues
@@ -56,10 +62,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: "pip"
@@ -99,7 +105,7 @@ jobs:
 
       - name: Upload log artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: refresh-log
           path: logs/weekly_fetch.log
