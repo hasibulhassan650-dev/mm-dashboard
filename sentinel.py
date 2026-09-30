@@ -115,8 +115,19 @@ def check():
 
             # Daily series must hold the last working day; the API works that out
             # itself (weekend/holiday aware), so trust its per-dataset verdict.
+            #
+            # But skip anything the integrity checks have already attributed to
+            # Bangladesh Bank not having published: that is not a fault and not
+            # actionable, and raising it here would re-open the same alarm the
+            # severity split exists to quieten — the sentinel would just become
+            # the new place the noise comes from.
+            waiting_keys = set()
+            for w in (s.get("waiting") or []):
+                parts = str(w.get("message", "")).split(":")
+                if len(parts) > 1:
+                    waiting_keys.add(parts[1].strip())
             behind = [d.get("label", k) for k, d in (s.get("datasets") or {}).items()
-                      if d.get("kind") == "daily" and not d.get("current")]
+                      if d.get("kind") == "daily" and not d.get("current") and k not in waiting_keys]
             if behind:
                 problems.append("Daily series behind the last working day: " + ", ".join(sorted(behind)))
 

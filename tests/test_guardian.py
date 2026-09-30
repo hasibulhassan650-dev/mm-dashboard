@@ -180,3 +180,38 @@ class TestLedger:
     def test_fingerprint_ignores_digits_only(self):
         assert fingerprint("repo stale since 2026-09-24") == fingerprint("repo stale since 2026-10-01")
         assert fingerprint("repo stale") != fingerprint("fx stale")
+
+
+class TestSentinelHonoursSeverity:
+    """The sentinel is a separate alarm channel and must not re-introduce the
+    noise the severity split removed — otherwise it simply becomes the new place
+    BB's lateness turns things red."""
+
+    def _payload(self, waiting):
+        ts = datetime.datetime.utcnow().isoformat()
+        return {
+            "last_run": ts, "last_run_errors": [],
+            "data_health": {"ok": True, "issue_count": 0, "by_table": {}},
+            "waiting": waiting,
+            "datasets": {"repo": {"label": "Interbank Repo", "kind": "daily", "current": False}},
+        }
+
+    def _run(self, monkeypatch, payload):
+        import json as _json
+        import sentinel
+        monkeypatch.setattr(sentinel, "_http", lambda url, timeout=25: (
+            (200, _json.dumps(payload)) if "/api/meta/status" in url
+            else (200, _json.dumps({"commitSha": "deadbee"})) if "deploy-status" in url
+            else (200, "ok")))
+        monkeypatch.setattr(sentinel.subprocess, "check_output", lambda *a, **k: b"deadbee")
+        return sentinel.check()
+
+    def test_a_series_behind_because_bb_is_late_is_not_an_alert(self, monkeypatch):
+        v = self._run(monkeypatch, self._payload(
+            [{"message": "freshness: repo: BB has published nothing newer", "age_days": 6}]))
+        assert v["ok"] is True, v["problems"]
+
+    def test_the_same_series_behind_for_any_other_reason_still_alerts(self, monkeypatch):
+        v = self._run(monkeypatch, self._payload([]))
+        assert v["ok"] is False
+        assert any("Interbank Repo" in p for p in v["problems"]), v["problems"]
