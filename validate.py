@@ -65,6 +65,41 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
             if r[0] not in _YIELD_TENORS:
                 add("yields", f"unknown tenor label '{r[0]}'")
 
+        # ---- one auction booked twice in the ladder ----
+        # BB's results page prints ONE date per auction; the other is derived
+        # from it. Which one it prints was settled in Sep-2026: it is the ISSUE
+        # date, and the auction is the previous working day. A parse that reads
+        # that column the other way round stores the auction a day or two out —
+        # and because primary_yield_snapshots is keyed (tenor_label,
+        # auction_date), the wrong pairing does not overwrite the right one, it
+        # lands BESIDE it. confirm_auctions_from_results then gives each row its
+        # own auction_events row, and build_daily_flows sums settlement dates
+        # without de-duplicating: an outflow the desk does not owe.
+        #
+        # 23-May-2026 is the case that exposed it — 90,000 mn of pre-Eid bills
+        # booked twice. The check lives HERE, on the table the ladder reads,
+        # rather than on the yields rows, because the yields table cannot tell
+        # the two apart: BB really does print two auctions of one tenor days
+        # apart with identical amounts and an identical cut-off (364D at 245 cr
+        # and 9.5% in Dec-2011, verified against BB's page). What separates a
+        # real second auction from a parse artifact is that the real one is in
+        # BB's published CALENDAR. A duplicate always has an uncalendared row on
+        # one side, because that row exists only because a result row did.
+        _dt = lambda v: datetime.date.fromisoformat(v[:10]) if isinstance(v, str) else v
+        _booked: dict = {}
+        for r in q("SELECT tenor_label, auction_date, settlement_date, accepted_amount_bdt_mill, "
+                   "weighted_avg_yield_pct, COALESCE(source, '') FROM auction_events "
+                   "WHERE accepted_amount_bdt_mill IS NOT NULL AND weighted_avg_yield_pct "
+                   "IS NOT NULL AND auction_date IS NOT NULL ORDER BY auction_date"):
+            key = (r[0], r[3], r[4])
+            for prev in _booked.get(key, ()):
+                if abs((_dt(r[1]) - _dt(prev[0])).days) <= 7 and ("uncalendared" in r[5]
+                                                                  or "uncalendared" in prev[2]):
+                    add("auctions", f"{r[0]} {r[3]} mn at {r[4]}% booked twice: settles {prev[1]} "
+                                    f"(auction {prev[0]}) and {r[2]} (auction {r[1]}) — one is a "
+                                    f"misread of which date BB printed, and the ladder sums both")
+            _booked.setdefault(key, []).append((r[1], r[2], r[5]))
+
         # ---- OMO rate fingerprint: a label must match the rate it printed ----
         # Every BB facility carries a signature rate: SDF = corridor floor (~7.5,
         # overnight), SLF = ceiling (~11–11.5, overnight), repo/AR = policy rate

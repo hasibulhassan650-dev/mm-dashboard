@@ -32,7 +32,7 @@ from db import (AuctionEvent, PrimaryYieldSnapshot, HolidayCalendar, CallMoneyRa
 import calendar_utils
 import validate
 from fetchers.omo import _fingerprint
-from engines.pipeline import confirm_auctions_from_results
+from engines.pipeline import confirm_auctions_from_results, _UNCALENDARED
 
 D = datetime.date
 TODAY = D.today()
@@ -147,6 +147,57 @@ class TestConfirmAuctions:
         assert extra.accepted_amount_bdt_crore == 5000.0
         assert "uncalendared" in extra.source
 
+    def test_an_uncalendared_row_is_removed_once_its_result_moves(self):
+        # The 23-May-2026 pre-Eid bills, and the reason this check exists.
+        # The yields row first read auction 21-May / issue 23-May, because the
+        # calendar did not yet know 23-May was a declared working Saturday, so
+        # no slot matched and a row was invented from those dates. When the
+        # dates were later corrected to 23-May / 24-May, the genuine calendar
+        # row won the match and the invented one was left behind -- still
+        # CONFIRMED, still booking 90,000 mn on a date BB never settled.
+        # build_daily_flows sums by settlement_date without de-duplicating, so
+        # a stranded row is an outflow the desk does not actually owe.
+        eng, s = _mem()
+        self._cal(s, D(2026, 5, 17), "182D", 2000.0, D(2026, 5, 18))   # sets the calendar era
+        cal = self._cal(s, D(2026, 5, 24), "91D", 3500.0, D(2026, 6, 1))
+        self._res(s, D(2026, 5, 21), D(2026, 5, 23), "91D", 3500.0)
+        s.commit()
+        assert confirm_auctions_from_results(s)["added"] == 1
+        s.commit()
+        orphan = s.query(AuctionEvent).filter_by(auction_date=D(2026, 5, 21)).one()
+        assert orphan.settlement_date == D(2026, 5, 23)
+
+        # BB's results are re-read and the dates come back corrected.
+        row = s.query(PrimaryYieldSnapshot).one()
+        row.auction_date, row.issue_date = D(2026, 5, 23), D(2026, 5, 24)
+        s.commit()
+
+        r = confirm_auctions_from_results(s); s.commit()
+        assert r["orphans_removed"] == 1, r
+        bills = s.query(AuctionEvent).filter_by(tenor_label="91D").all()
+        assert len(bills) == 1 and bills[0].id == cal.id
+        assert bills[0].settlement_date == D(2026, 5, 24)
+        # and the sweep must not keep firing on a clean table
+        assert confirm_auctions_from_results(s)["orphans_removed"] == 0
+
+    def test_a_still_uncalendared_auction_survives_the_sweep(self):
+        # The sweep must only take rows whose result has gone elsewhere. A
+        # genuinely ad-hoc auction -- BB's 5Y on 27-Nov-2025 had no calendar
+        # row at all -- has to keep its invented row on every later run, or the
+        # outflow disappears from the ladder entirely.
+        eng, s = _mem()
+        self._cal(s, D(2025, 11, 20), "91D", 3500.0, D(2025, 11, 23))
+        self._res(s, D(2025, 11, 20), D(2025, 11, 23), "91D", 3500.0)
+        self._res(s, D(2025, 11, 27), D(2025, 11, 30), "5Y", 5000.0)
+        s.commit()
+        assert confirm_auctions_from_results(s)["added"] == 1
+        s.commit()
+        for _ in range(2):
+            assert confirm_auctions_from_results(s)["orphans_removed"] == 0
+            s.commit()
+        a = s.query(AuctionEvent).filter_by(tenor_label="5Y").one()
+        assert a.outflow_status == "CONFIRMED" and a.settlement_date == D(2025, 11, 30)
+
     def test_rerun_is_idempotent(self):
         eng, s = _mem()
         self._cal(s, D(2026, 3, 29), "91D", 3500.0, D(2026, 3, 30))
@@ -155,11 +206,78 @@ class TestConfirmAuctions:
         s.commit()
         confirm_auctions_from_results(s); s.commit()
         r2 = confirm_auctions_from_results(s); s.commit()
-        assert r2 == {"confirmed": 2, "moved": 0, "added": 0}
+        assert r2 == {"confirmed": 2, "moved": 0, "added": 0, "orphans_removed": 0}
         assert s.query(AuctionEvent).count() == 2
 
 
 # ── 4 & 5. OMO fingerprint ───────────────────────────────────────────────────
+
+class TestOneAuctionBookedTwice:
+    """23-May-2026: the pre-Eid bills were booked twice, 90,000 mn of outflow the
+    desk did not owe. primary_yield_snapshots is keyed (tenor_label,
+    auction_date), so a re-parse that derived a different auction date inserted a
+    second row BESIDE the right one; each then claimed its own auction_events
+    row, and build_daily_flows sums settlement dates without de-duplicating.
+
+    The check lives on auction_events, not on the yields rows, and these tests
+    pin down why. The yields table cannot tell a duplicate from a real second
+    auction: BB genuinely prints two auctions of one tenor days apart with
+    identical amounts AND an identical cut-off -- 364D at 245 cr and 9.5% in
+    Dec-2011, confirmed against BB's own page. The first version of this check
+    keyed on those amounts and reported 21 legitimate auctions as broken, which
+    is 21 permanently-red runs and the wallpaper problem all over again.
+
+    What actually separates them: a real second auction is in BB's published
+    CALENDAR. A duplicate always has an uncalendared row on one side, because
+    that row exists only because a result row did."""
+
+    def _ev(self, s, adate, settle, tenor, mill, yld, source):
+        s.add(AuctionEvent(fiscal_year="2026-27", auction_date=adate, settlement_date=settle,
+                           security_type="T_BILL", tenor_label=tenor,
+                           offered_amount_bdt_mill=mill, accepted_amount_bdt_mill=mill,
+                           weighted_avg_yield_pct=yld, outflow_status="CONFIRMED",
+                           source=source))
+
+    def _found(self, rep):
+        return [i for i in rep["issues"] if "booked twice" in i]
+
+    def test_the_duplicate_is_reported(self, monkeypatch):
+        eng, s = _mem()
+        self._ev(s, D(2026, 5, 24), D(2026, 5, 24), "91D", 35000.0, 10.15, "BB auction calendar")
+        self._ev(s, D(2026, 5, 21), D(2026, 5, 23), "91D", 35000.0, 10.15, _UNCALENDARED)
+        s.commit()
+        rep = _run_check(monkeypatch, eng)
+        found = self._found(rep)
+        assert len(found) == 1, rep["issues"]
+        assert "2026-05-23" in found[0] and "2026-05-24" in found[0]
+        assert rep["ok"] is False
+
+    def test_two_calendared_auctions_days_apart_are_left_alone(self, monkeypatch):
+        # Dec-2011: BB really ran 364D twice in four days, 245 cr at 9.5% both
+        # times, and printed both. Our data is right and must stay quiet.
+        eng, s = _mem()
+        self._ev(s, D(2011, 12, 8), D(2011, 12, 11), "364D", 2450.0, 9.5, "BB auction calendar")
+        self._ev(s, D(2011, 12, 11), D(2011, 12, 12), "364D", 2450.0, 9.5, "BB auction calendar")
+        s.commit()
+        assert self._found(_run_check(monkeypatch, eng)) == []
+
+    def test_a_lone_adhoc_auction_is_not_a_duplicate(self, monkeypatch):
+        # BB's 5Y on 27-Nov-2025 had no calendar row at all. One uncalendared
+        # row with nothing to duplicate is a real auction, not an artifact.
+        eng, s = _mem()
+        self._ev(s, D(2025, 11, 27), D(2025, 11, 30), "5Y", 50000.0, 10.6, _UNCALENDARED)
+        s.commit()
+        assert self._found(_run_check(monkeypatch, eng)) == []
+
+    def test_an_uncalendared_twin_more_than_a_week_away_is_left_alone(self, monkeypatch):
+        # Beyond BB's weekly cycle the two cannot be one auction misdated, and
+        # flagging it would mean re-fetching months on no evidence.
+        eng, s = _mem()
+        self._ev(s, D(2026, 5, 24), D(2026, 5, 24), "91D", 35000.0, 10.15, "BB auction calendar")
+        self._ev(s, D(2026, 6, 14), D(2026, 6, 15), "91D", 35000.0, 10.15, _UNCALENDARED)
+        s.commit()
+        assert self._found(_run_check(monkeypatch, eng)) == []
+
 
 class TestFingerprintRegressions:
     def test_mls_at_9_5_is_left_alone(self):

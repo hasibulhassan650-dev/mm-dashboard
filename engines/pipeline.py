@@ -34,6 +34,11 @@ from engines.aggregation import build_daily_flows
 
 log = logging.getLogger(__name__)
 
+# Marks an auction_events row that exists ONLY because a BB result row
+# existed with no calendar slot to attach to. Written on creation and read
+# back when the orphans are swept, so the two can never drift apart.
+_UNCALENDARED = "BB treasury results (uncalendared auction)"
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # DB helpers
@@ -259,6 +264,10 @@ def confirm_auctions_from_results(session) -> dict:
     27-Nov-2025 and 03-Feb-2026): inserted as CONFIRMED so the outflow never
     misses an auction that printed. Each calendar row is claimed by at most
     one result, so a re-run re-applies exactly the same facts.
+
+    Finally, an ad-hoc row whose result has since MOVED to a real calendar slot
+    is swept: it would otherwise keep booking its outflow on a date BB never
+    settled (see the orphan sweep below).
     """
     from sqlalchemy import text as _t
     from config import CRORE_TO_MILLION, fiscal_year
@@ -317,15 +326,43 @@ def confirm_auctions_from_results(session) -> dict:
             offered_amount_bdt_crore=off, offered_amount_bdt_mill=round(off * CRORE_TO_MILLION, 4),
             outflow_status="PLANNED", roll_days=0,
             roll_reason=f"Not in auction calendar; created from BB results (issued {issue})",
-            source="BB treasury results (uncalendared auction)", data_quality="OK")
+            source=_UNCALENDARED, data_quality="OK")
         session.add(a)
         by_tenor.setdefault(tenor, []).append(a)
         claimed.add(id(a)); _apply(a, issue, adate, acc, cutoff)
         added += 1
+
+    # An uncalendared row exists only because a result row existed. If no result
+    # claims it after both passes, that result's dates have MOVED and its auction
+    # has been re-homed onto a real calendar row -- leaving this one behind, still
+    # CONFIRMED, still booking its accepted amount on its old settlement date.
+    #
+    # That is how 23-May-2026 came to hold two copies of the same 90,000 mn
+    # pre-Eid auction. The yields row first read auction 21-May / issue 23-May,
+    # because the calendar did not yet know 23-May was a declared working
+    # Saturday; these rows were created from it; once the dates were corrected to
+    # 23-May / 24-May the genuine calendar rows won the match and the invented
+    # ones were never looked at again. build_daily_flows sums by settlement_date
+    # without de-duplicating, so the next recompute covering May would have
+    # booked a phantom second 9,000 crore outflow.
+    #
+    # Deleting is safe in the one way that matters: issue_date is NOT NULL under
+    # a validated CHECK, so the results query above cannot omit a live result and
+    # strand the row that belongs to it.
+    orphans = [a for a in cal if a.source == _UNCALENDARED and id(a) not in claimed]
+    for a in orphans:
+        log.warning("Removing orphaned uncalendared auction: %s auctioned %s, settled %s, "
+                    "%s mn -- no BB result points at it any more",
+                    a.tenor_label, a.auction_date, a.settlement_date,
+                    a.accepted_amount_bdt_mill)
+        session.delete(a)
+
     session.flush()
     log.info("Auction results linked: %d calendar auctions confirmed, %d settlement dates "
-             "corrected from BB issue dates, %d uncalendared auctions added", confirmed, moved, added)
-    return {"confirmed": confirmed, "moved": moved, "added": added}
+             "corrected from BB issue dates, %d uncalendared auctions added, %d orphans removed",
+             confirmed, moved, added, len(orphans))
+    return {"confirmed": confirmed, "moved": moved, "added": added,
+            "orphans_removed": len(orphans)}
 
 
 def upsert_primary_yield(session, row: dict):
