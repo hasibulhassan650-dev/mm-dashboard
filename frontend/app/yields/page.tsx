@@ -149,7 +149,8 @@ export default async function YieldsPage() {
         <InfoTip term="GSOM" /> <InfoTip term="MTM" /> <InfoTip term="Bid-to-cover" /> <InfoTip term="Yield-curve slope (2s10s)" />
       </p>
       <RelatedLinks items={[
-        { href: "/schedule", label: "Auction & Redemption Schedule", why: "how much of each product is auctioned and redeemed, by month" },
+        { href: "/auctions", label: "Treasury Auctions", why: "the tenders behind these cut-offs: notified, bids, accepted" },
+        { href: "/schedule", label: "Redemption Schedule", why: "how much of each product is redeemed, by month" },
         { href: "/securities", label: "Securities", why: "the ISINs behind each point" },
         { href: "/callmoney", label: "Call Money", why: "the short end of the curve" },
         { href: "/refrate", label: "Reference Rates", why: "money-market benchmarks" },

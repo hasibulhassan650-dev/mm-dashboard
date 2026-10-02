@@ -16,6 +16,7 @@ export interface Dest { label: string; href: string; icon: string; hint?: string
 
 const DEEP: Dest[] = [
   { label: "OMO — Net Liquidity Stance", href: "/omo", icon: "layers", hint: "injection vs absorption", keywords: "repo sdf slf iblf assured absorption injection" },
+  { label: "Auctions — every treasury tender", href: "/auctions", icon: "doc", hint: "notified, bids, accepted, cut-off", keywords: "auction tender notified accepted cutoff cut-off devolvement bid to cover bidcover tbond tbill frtb 91d 182d 364d planned calendar" },
   { label: "Schedule — redemptions & coupons by product", href: "/schedule", icon: "doc", hint: "monthly, up to 20 years", keywords: "redemption maturity principal coupon tbond tbill frtb month fiscal year export excel schedule auction by product category net inflow outflow" },
   { label: "Liquidity Forecast — next 4 weeks", href: "/forecast", icon: "pulse", hint: "known dated flows", keywords: "auction maturity coupon settlement drain tight lend borrow" },
   { label: "Call Money — corridor position", href: "/callmoney", icon: "pulse", hint: "WAR vs SDF–SLF", keywords: "overnight war weighted rate corridor" },

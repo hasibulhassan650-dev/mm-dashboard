@@ -16,6 +16,10 @@ async function get<T>(path: string, params?: Record<string, string | number>): P
  *  file is produced by the API with openpyxl (bold frozen headers, number
  *  formats, autofilter, a cover sheet) rather than assembled in the browser. */
 export const exportUrl = {
+  auctions: (p: { months?: number; from?: string; to?: string }) =>
+    p.from || p.to
+      ? `${BASE}/api/securities/auctions/export?date_from=${p.from ?? ""}&date_to=${p.to ?? ""}`
+      : `${BASE}/api/securities/auctions/export?months=${p.months ?? 6}`,
   schedule: (years: number) => `${BASE}/api/flows/by-product/export?years=${years}`,
   ladder:   (from: string, to: string) =>
     `${BASE}/api/flows/forecast/export?date_from=${from}&date_to=${to}`,
@@ -84,6 +88,24 @@ export const api = {
   flowsForecast:   async (days = 28): Promise<LiquidityForecast> => {
     try { return await get<LiquidityForecast>("/api/flows/forecast", { days }); }
     catch { return { as_of: "", days: [], unit: "BDT crore" }; }
+  },
+  /** Every treasury auction in the window, with results where BB published
+   *  them, plus per-product and monthly roll-ups. Defaults forward to the end
+   *  of BB's calendar so PLANNED auctions are included. */
+  auctionBook:     async (p: { months?: number; from?: string; to?: string } = {}):
+    Promise<AuctionBook> => {
+    const q: Record<string, string | number> = p.from || p.to
+      ? { date_from: p.from ?? "", date_to: p.to ?? "" }
+      : { months: p.months ?? 6 };
+    try { return await get<AuctionBook>("/api/securities/auctions", q); }
+    catch {
+      return { as_of: "", from: "", to: "", unit: "BDT crore",
+               products: ["T_BOND", "T_BILL", "FRTB", "OTHER"],
+               calendar_published_to: null, count: 0, auctions: [], by_product: {},
+               months: [],
+               totals: { auctions: 0, notified_crore: 0, accepted_crore: 0,
+                         planned: 0, confirmed: 0 } };
+    }
   },
   /** The ladder over an explicit window, which MAY be in the past. */
   flowsLadder:     async (from: string, to: string): Promise<LiquidityForecast> => {
@@ -326,6 +348,61 @@ const EMPTY_FRESHNESS: Freshness = {
   fx: null, callmoney: null, refrate: null, flows: null,
   fxmarket: null, fxrates: null, repo: null,
 };
+
+/** One treasury auction.
+ *
+ *  `notified_crore` and `bids_crore` are DIFFERENT numbers from different BB
+ *  pages — what BB offered, and what the market bid. They are never merged.
+ *  `status` PLANNED means BB's calendar target, not a settled amount: never sum
+ *  a planned row together with confirmed ones as if it had happened. */
+export interface AuctionRow {
+  auction_date: string | null;
+  settlement_date: string | null;
+  month: string | null;
+  fiscal_year: string | null;
+  auction_no: string | null;
+  product: Product;
+  tenor_label: string | null;
+  notified_crore: number | null;
+  bids_crore: number | null;
+  accepted_crore: number | null;
+  cutoff_yield_pct: number | null;
+  /** Null when bids are unknown, and also when bids equal accepted — in the
+   *  earlier era BB published a fixed target in the bids column, so a ratio of
+   *  exactly 1.00 is an artefact rather than a covered auction. */
+  bid_to_cover: number | null;
+  status: string | null;
+  has_results: boolean;
+  duplicate_results: boolean;
+  roll_reason: string | null;
+  is_past: boolean;
+}
+
+export interface AuctionRollup {
+  auctions: number;
+  confirmed: number;
+  planned: number;
+  notified_crore: number;
+  accepted_crore: number;
+  accepted_share: number | null;
+  /** Weighted by amount accepted: a 35,000 cr bill and a 500 cr FRTB are not
+   *  equal observations of "the average yield". */
+  avg_cutoff_pct: number | null;
+}
+
+export interface AuctionBook {
+  as_of: string; from: string; to: string; unit: string;
+  products: Product[];
+  /** Nothing exists past this date because BB has not announced it — absence
+   *  of rows is not absence of auctions. */
+  calendar_published_to: string | null;
+  count: number;
+  auctions: AuctionRow[];
+  by_product: Record<string, AuctionRollup>;
+  months: (AuctionRollup & { month: string })[];
+  totals: { auctions: number; notified_crore: number; accepted_crore: number;
+            planned: number; confirmed: number };
+}
 
 /** The forward schedule, split by product. Amounts are BDT crore.
  *

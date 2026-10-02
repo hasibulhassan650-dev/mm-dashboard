@@ -1,9 +1,12 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import Response
 from sqlalchemy import text
 from typing import Optional
 from db import get_session
 
 router = APIRouter()
+
+XLSX_MEDIA = ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 @router.get("")
@@ -28,23 +31,106 @@ def get_securities(security_type: Optional[str] = None):
 
 
 @router.get("/auctions")
-def get_auctions(months: int = Query(6, ge=1, le=24)):
-    """Recent auction events."""
-    import datetime
-    since = datetime.date.today() - datetime.timedelta(days=months * 30)
+def get_auctions(months: int = Query(None, ge=1, le=240,
+                                     description="Months back; the window runs forward to the "
+                                                 "end of BB's published calendar"),
+                 date_from: str = Query(None, description="YYYY-MM-DD"),
+                 date_to: str = Query(None, description="YYYY-MM-DD")):
+    """The auction book: every auction in the window with its results.
+
+    Replaces a backward-only query that could not see PLANNED auctions at all --
+    it filtered `auction_date >= since` with no forward reach, so BB's published
+    calendar was invisible to the one endpoint meant to list auctions.
+
+    Returns the itemised auctions plus per-product and monthly roll-ups, so the
+    page needs a single request.
+    """
+    from .auction_logic import auction_book
     session = get_session()
     try:
-        rows = session.execute(text("""
-            SELECT fiscal_year, auction_no, auction_date, settlement_date,
-                   security_type, tenor_label, offered_amount_bdt_crore,
-                   accepted_amount_bdt_crore, weighted_avg_yield_pct, outflow_status
-            FROM auction_events
-            WHERE auction_date >= :since
-            ORDER BY auction_date DESC
-        """), {"since": str(since)}).fetchall()
-        return [dict(r._mapping) for r in rows]
+        return auction_book(session, months=months, date_from=date_from, date_to=date_to)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     finally:
         session.close()
+
+
+@router.get("/auctions/export")
+def export_auctions(months: int = Query(None, ge=1, le=240),
+                    date_from: str = Query(None), date_to: str = Query(None)):
+    """The auction book as a formatted workbook."""
+    from .auction_logic import auction_book
+    from .export_logic import build_workbook, filename
+    session = get_session()
+    try:
+        p = auction_book(session, months=months, date_from=date_from, date_to=date_to)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    finally:
+        session.close()
+
+    LABEL = {"T_BOND": "T-Bond", "T_BILL": "T-Bill", "FRTB": "FRTB", "OTHER": "Other"}
+    book = [{
+        "Auction Date": a["auction_date"], "Settlement Date": a["settlement_date"],
+        "Fiscal Year": a["fiscal_year"], "Auction No": a["auction_no"],
+        "Product": LABEL.get(a["product"], a["product"]), "Tenor": a["tenor_label"],
+        "Notified (crore)": a["notified_crore"],
+        "Bids Received (crore)": a["bids_crore"],
+        "Accepted (crore)": a["accepted_crore"],
+        "Cut-off Yield %": a["cutoff_yield_pct"],
+        "Bid to Cover": a["bid_to_cover"],
+        "Status": a["status"],
+        "Results Published": "yes" if a["has_results"] else "no",
+    } for a in p["auctions"]]
+
+    category = [{
+        "Product": LABEL.get(k, k),
+        "Auctions": v["auctions"],
+        "Confirmed": v["confirmed"], "Planned": v["planned"],
+        "Notified (crore)": v["notified_crore"],
+        "Accepted (crore)": v["accepted_crore"],
+        "Accepted / Notified": v["accepted_share"],
+        "Avg Cut-off % (accepted-weighted)": v["avg_cutoff_pct"],
+    } for k, v in sorted(p["by_product"].items())]
+
+    monthly = [{
+        "Month": m["month"], "Auctions": m["auctions"],
+        "Confirmed": m["confirmed"], "Planned": m["planned"],
+        "Notified (crore)": m["notified_crore"],
+        "Accepted (crore)": m["accepted_crore"],
+        "Avg Cut-off % (accepted-weighted)": m["avg_cutoff_pct"],
+    } for m in p["months"]]
+
+    body = build_workbook(
+        "Bangladesh Treasury Auctions",
+        [("Category summary", category), ("Every auction", book),
+         ("Monthly volume", monthly)],
+        facts=[("Window", f"{p['from']} to {p['to']}"), ("Unit", "BDT crore"),
+               ("As of", p["as_of"]),
+               ("Auction calendar published to", p["calendar_published_to"]),
+               ("Auctions in window", p["totals"]["auctions"]),
+               ("Confirmed", p["totals"]["confirmed"]),
+               ("Planned (calendar target only)", p["totals"]["planned"]),
+               ("Source", "Bangladesh Bank — auction calendar and treasury results")],
+        caveats=[
+            "A PLANNED row is BB's calendar target, not a settled amount. Do not sum it "
+            "together with CONFIRMED rows as if it had happened.",
+            "'Notified' and 'Bids Received' are different numbers from different BB pages: "
+            "notified is the amount BB offered, bids received is what the market put in. They "
+            "are never merged here.",
+            "Bid to Cover is blank where bids are unknown, and also where bids exactly equal "
+            "accepted: in the earlier era BB published a fixed weekly target in the bids "
+            "column, so a ratio of exactly 1.00 there is an artefact, not a covered auction.",
+            f"Nothing is published beyond {p['calendar_published_to']}. The absence of rows "
+            "after that date means BB has not announced the calendar, not that no auctions "
+            "will be held — BB auctions bills nearly every week.",
+        ],
+        notes={"Every auction":
+               "One row per auction. Cut-off yield and bids appear once BB publishes the "
+               "results; a planned auction is listed with those columns blank."},
+    )
+    return Response(content=body, media_type=XLSX_MEDIA, headers={
+        "Content-Disposition": f'attachment; filename="{filename("bd_treasury_auctions", p["from"], p["to"])}"'})
 
 
 @router.get("/next-auction")

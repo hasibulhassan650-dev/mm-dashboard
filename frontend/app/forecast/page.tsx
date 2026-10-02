@@ -221,6 +221,7 @@ export default async function ForecastPage({
         </Panel>
       </div>
       <RelatedLinks items={[
+        { href: "/auctions", label: "Treasury Auctions", why: "every tender: notified, bids, accepted, cut-off" },
         { href: "/omo", label: "OMO Operations", why: "the repos & SDF driving these flows" },
         { href: "/callmoney", label: "Call Money", why: "where tight/flush days hit the rate" },
         { href: "/cashflows", label: "Cash Flows", why: "coupon & maturity detail by date" },

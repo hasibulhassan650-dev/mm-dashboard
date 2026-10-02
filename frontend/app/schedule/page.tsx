@@ -327,6 +327,7 @@ export default async function SchedulePage({
       </div>
 
       <RelatedLinks items={[
+        { href: "/auctions", label: "Treasury Auctions", why: "every tender: notified, bids, accepted, cut-off" },
         { href: "/cashflows", label: "Cash Flows", why: "the same flows day by day" },
         { href: "/forecast", label: "Liquidity Forecast", why: "these flows netted into daily liquidity" },
         { href: "/securities", label: "Securities", why: "the instruments behind every figure here" },

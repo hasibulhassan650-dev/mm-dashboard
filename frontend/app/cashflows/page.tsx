@@ -109,6 +109,7 @@ export default async function CashFlowsPage({ searchParams }: { searchParams: Pr
         </Panel>
       </div>
       <RelatedLinks items={[
+        { href: "/auctions", label: "Treasury Auctions", why: "the tenders behind the outflow column" },
         { href: "/schedule", label: "Schedule by Product", why: "the same flows split T-Bond / T-Bill / FRTB, monthly" },
         { href: "/forecast", label: "Liquidity Forecast", why: "these flows netted into daily liquidity" },
         { href: "/securities", label: "Securities", why: "the bonds paying these coupons" },
