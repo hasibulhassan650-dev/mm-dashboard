@@ -13,19 +13,26 @@ merely present:
     this desk "no auctions next month" as if it were fact, once already.
 """
 import datetime
+import io
 import os
 import sys
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _ROOT)
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import db as dbmod
 from db import AuctionEvent, CouponEvent, MaturityEvent, Security
-from engines.schedule import event_detail, monthly_by_product
+
+# The schedule logic lives in api/routers/ because the deployed API is rooted at
+# api/ and cannot import anything above it. Appended (not inserted) so repo-root
+# modules still win -- api/db.py must never shadow the real db module here.
+sys.path.append(os.path.join(_ROOT, "api", "routers"))
+from schedule_logic import event_detail, monthly_by_product  # noqa: E402
 
 D = datetime.date
 TODAY = D(2026, 10, 15)          # fixed so the window never moves under the tests
@@ -241,3 +248,45 @@ class TestDetailTiesToTheMonthlyTable:
         assert row["product"] == "T_BILL"
         assert row["amount_crore"] == 3000.0 and row["amount_mill"] == 30000.0
         assert row["kind"] == "REDEMPTION"
+
+
+class TestTheDeploymentBoundary:
+    """These two tests exist because the first version of this feature returned
+    500 in production while passing every local test. The logic lived in
+    engines/, which the API cannot see: it is deployed with api/ as its root and
+    api/index.py puts only that directory on sys.path. Locally the repo root is
+    always importable, so nothing failed until it was live."""
+
+    def _source(self):
+        import schedule_logic
+        return io.open(schedule_logic.__file__, encoding="utf-8").read()
+
+    def test_the_module_imports_nothing_from_the_repo_root(self):
+        # config, db, engines and calendar_utils all live above api/ and are not
+        # uploaded with it. Importing any of them is a production-only failure.
+        import ast
+        forbidden = {"config", "db", "engines", "calendar_utils", "validate", "fetchers",
+                     "parsers"}
+        bad = []
+        for node in ast.walk(ast.parse(self._source())):
+            if isinstance(node, ast.Import):
+                bad += [a.name for a in node.names if a.name.split(".")[0] in forbidden]
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                if node.module.split(".")[0] in forbidden:
+                    bad.append(node.module)
+        assert not bad, f"api/routers/schedule_logic.py cannot import from the repo root: {bad}"
+
+    def test_the_duplicated_fiscal_year_agrees_with_the_real_one(self):
+        # The duplication is deliberate (see the module comment) but it must not
+        # drift: the FY boundary decides which subtotal every month lands in.
+        import schedule_logic
+        from config import fiscal_year as canonical
+        d = D(2024, 1, 1)
+        while d < D(2030, 1, 1):
+            assert schedule_logic.fiscal_year(d) == canonical(d), d
+            d += datetime.timedelta(days=1)
+
+    def test_the_crore_conversion_agrees_too(self):
+        import schedule_logic
+        from config import CRORE_TO_MILLION as canonical
+        assert schedule_logic.CRORE_TO_MILLION == canonical

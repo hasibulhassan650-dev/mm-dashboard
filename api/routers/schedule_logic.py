@@ -29,7 +29,22 @@ from typing import Dict, List, Tuple
 
 from sqlalchemy import text
 
-from config import CRORE_TO_MILLION, fiscal_year
+# CRORE_TO_MILLION and fiscal_year() are deliberately duplicated from the
+# repo-root config.py, for the same reason api/db.py duplicates its driver
+# guard: the deployed API is rooted at api/ and CANNOT import anything above
+# it. Importing config here returns 500 ModuleNotFoundError in production while
+# passing every local test, because locally the repo root is on sys.path.
+# tests/test_schedule.py asserts both copies agree and that this module imports
+# nothing from the repo root, so the two can never drift and nobody can
+# re-break the deployment boundary without a red test.
+CRORE_TO_MILLION = 10
+
+
+def fiscal_year(d: datetime.date) -> str:
+    """Bangladesh fiscal year, July-June. Mirrors config.fiscal_year()."""
+    if d.month >= 7:
+        return f"{d.year}-{str(d.year + 1)[-2:]}"
+    return f"{d.year - 1}-{str(d.year)[-2:]}"
 
 # OTHER is not padding. It catches a NULL security_type — an event whose ISIN has
 # no securities row — and any product BB introduces later, so a new instrument
