@@ -1,8 +1,11 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import Response
 from sqlalchemy import text
 from db import get_session
 
 router = APIRouter()
+
+XLSX_MEDIA = ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 @router.get("")
@@ -29,86 +32,30 @@ def get_flows(months: int = Query(6, ge=1, le=24)):
 
 
 @router.get("/forecast")
-def get_forecast(days: int = Query(21, ge=7, le=60)):
+def get_forecast(
+    days: int = Query(None, ge=1, le=400,
+                      description="Forward horizon in days (legacy; ignored when a range is given)"),
+    date_from: str = Query(None, description="YYYY-MM-DD; may be in the past"),
+    date_to: str = Query(None, description="YYYY-MM-DD"),
+):
     """
-    Forward daily liquidity ladder for the banking system, in BDT crore.
-    Combines the flows that are KNOWN and dated today (no modelling of
-    future BB operations):
-      + OMO absorption maturing (SDF)          -> cash returns to banks
-      - OMO injection maturing (repo/AR/IBLF/SLF) -> banks repay BB
-      + G-sec coupon + maturity payments        -> govt pays banks
-      - Auction settlements                     -> banks pay for new issuance
+    Day-by-day known liquidity ladder for the banking system, in BDT crore.
+    Only contracted, dated flows -- no modelling of future BB operations:
+      + OMO absorption maturing (SDF)             -> cash returns to banks
+      - OMO injection maturing (repo/AR/IBLF/...)  -> banks repay BB
+      + G-sec coupon + maturity payments           -> govt pays banks
+      - Auction settlements                        -> banks pay for new issuance
+
+    Pass date_from/date_to to look at ANY window, including the past. `days`
+    keeps working for callers that predate the range, and reproduces the old
+    forward window exactly.
     """
-    import datetime
-    today = datetime.date.today()
-    end = today + datetime.timedelta(days=days)
+    from .liquidity_logic import liquidity_ladder
     session = get_session()
     try:
-        omo = session.execute(text("""
-            SELECT maturity_date, instrument, direction,
-                   SUM(accepted_bdt_crore) AS amt_crore
-            FROM omo_transactions
-            WHERE transaction_date <= :today
-              AND maturity_date > :today AND maturity_date <= :end
-              AND accepted_bdt_crore > 0
-            GROUP BY maturity_date, instrument, direction
-            ORDER BY maturity_date
-        """), {"today": str(today), "end": str(end)}).fetchall()
-
-        flows = session.execute(text("""
-            SELECT flow_date, coupon_inflow_bdt_mill, principal_inflow_bdt_mill,
-                   auction_outflow_confirmed_mill, auction_outflow_planned_mill,
-                   data_complete
-            FROM daily_net_flow
-            WHERE flow_date > :today AND flow_date <= :end
-            ORDER BY flow_date
-        """), {"today": str(today), "end": str(end)}).fetchall()
-
-        # Honesty guard: auction outflows beyond the last known auction event
-        # are UNKNOWN (calendar not ingested), not zero. Expose the horizon so
-        # the UI can say so instead of implying a flush month.
-        auction_horizon = session.execute(text(
-            "SELECT MAX(settlement_date) FROM auction_events"
-        )).scalar()
-
-        omo_by_day: dict = {}
-        for r in omo:
-            omo_by_day.setdefault(str(r.maturity_date), []).append({
-                "instrument": r.instrument,
-                "direction":  r.direction,
-                "crore":      round(r.amt_crore, 2),
-            })
-        flow_by_day = {str(r.flow_date): r for r in flows}
-
-        out = []
-        cum = 0.0
-        d = today + datetime.timedelta(days=1)
-        while d <= end:
-            key = str(d)
-            items = omo_by_day.get(key, [])
-            omo_return = sum(i["crore"] for i in items if i["direction"] == "ABSORPTION")
-            omo_repay  = sum(i["crore"] for i in items if i["direction"] == "INJECTION")
-            f = flow_by_day.get(key)
-            govt_inflow = ((f.coupon_inflow_bdt_mill or 0) + (f.principal_inflow_bdt_mill or 0)) / 10.0 if f else 0.0
-            auction_out = ((f.auction_outflow_confirmed_mill or f.auction_outflow_planned_mill or 0) / 10.0) if f else 0.0
-            net = omo_return - omo_repay + govt_inflow - auction_out
-            cum += net
-            out.append({
-                "date":               key,
-                "weekday":            d.strftime("%a"),
-                "omo_return_crore":   round(omo_return, 2),
-                "omo_repay_crore":    round(omo_repay, 2),
-                "govt_inflow_crore":  round(govt_inflow, 2),
-                "auction_out_crore":  round(auction_out, 2),
-                "net_crore":          round(net, 2),
-                "cum_net_crore":      round(cum, 2),
-                "omo_items":          items,
-                "flows_confirmed":    bool(f.data_complete) if f is not None else False,
-            })
-            d += datetime.timedelta(days=1)
-
-        return {"as_of": str(today), "days": out, "unit": "BDT crore",
-                "auction_horizon": str(auction_horizon) if auction_horizon else None}
+        return liquidity_ladder(session, days=days, date_from=date_from, date_to=date_to)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     finally:
         session.close()
 
@@ -150,7 +97,14 @@ def get_drilldown(date: str = Query(..., description="YYYY-MM-DD")):
         coup_total = sum(r.amount_bdt_mill    or 0 for r in coupons)
         auc_total  = sum((r.accepted_amount_bdt_mill or r.offered_amount_bdt_mill or 0) for r in auctions)
 
+        # Additive only: every *_mill field below predates this and is relied on
+        # by the existing page, so OMO and the netted crore lines arrive beside
+        # them rather than replacing anything.
+        from .liquidity_logic import day_detail
+        extra = day_detail(session, date)
+
         return {
+            **extra,
             "date": date,
             "summary": {
                 "maturity_inflow_mill":  round(mat_total, 2),
@@ -189,3 +143,156 @@ def get_by_product_detail(years: int = Query(2, ge=1, le=20)):
         return event_detail(session, years)
     finally:
         session.close()
+
+
+# ── Formatted Excel exports ──────────────────────────────────────────────────
+# Built server-side with openpyxl: bold frozen headers, number formats, sized
+# columns, autofilter and a cover sheet. Unknown values are written as EMPTY
+# cells, never 0 -- a zero in a spreadsheet is a number someone will sum.
+
+@router.get("/by-product/export")
+def export_by_product(years: int = Query(2, ge=1, le=20)):
+    from .export_logic import build_workbook, filename
+    from .schedule_logic import event_detail, monthly_by_product
+    session = get_session()
+    try:
+        p = monthly_by_product(session, years)
+        d = event_detail(session, years)
+    finally:
+        session.close()
+
+    label = {"T_BOND": "T-Bond", "T_BILL": "T-Bill", "FRTB": "FRTB", "OTHER": "Other"}
+    has_other = any(m["redemption"]["OTHER"] or m["coupon"]["OTHER"] or m["auction"]["OTHER"]
+                    for m in p["months"])
+    products = [x for x in p["products"] if x != "OTHER" or has_other]
+
+    monthly, cum = [], 0.0
+    for m in p["months"]:
+        unknown = m["auction"]["status"] == "not_published"
+        row = {"Month": m["month"], "Fiscal Year": m["fiscal_year"]}
+        for k in products:
+            row[f"Redemption {label[k]}"] = m["redemption"][k]
+        row["Redemption Total"] = m["redemption"]["total"]
+        for k in products:
+            row[f"Coupon {label[k]}"] = m["coupon"][k] if k in p["coupon_products"] else None
+        row["Coupon Total"] = m["coupon"]["total"]
+        row["Inflow Total"] = m["inflow_total"]
+        for k in products:
+            row[f"Auction {label[k]}"] = None if unknown else m["auction"][k]
+        row["Auction Total"] = None if unknown else m["auction"]["total"]
+        row["Auction Data"] = "BB has not published" if unknown else m["auction"]["status"]
+        row["Net Borrowing"] = None if unknown else m["net_borrowing"]
+        if not unknown:
+            cum += m["net_borrowing"]
+        row["Cumulative Net Borrowing"] = None if unknown else round(cum, 2)
+        monthly.append(row)
+
+    fy = []
+    for f in p["fy_subtotals"]:
+        row = {"Fiscal Year": f["fiscal_year"], "Months": f["months"]}
+        for k in products:
+            row[f"Redemption {label[k]}"] = f["redemption"][k]
+        row["Redemption Total"] = f["redemption"]["total"]
+        row["Coupon Total"] = f["coupon"]["total"]
+        row["Inflow Total"] = f["inflow_total"]
+        row["Auction Total"] = f["auction"]["total"]
+        row["Auction Months Published"] = f"{f['auction_months_published']} of {f['months']}"
+        row["Net Borrowing"] = f["net_borrowing"] if f["net_borrowing_comparable"] else None
+        fy.append(row)
+
+    detail = [{
+        "Kind": "Redemption (principal)" if r["kind"] == "REDEMPTION" else "Coupon",
+        "Month": r["month"], "Payment Date": r["payment_date"],
+        "Scheduled Date": r["scheduled_date"], "Product": label.get(r["product"], r["product"]),
+        "ISIN": r["isin"], "Security": r["security"],
+        "Coupon Rate %": r["coupon_rate_pct"],
+        "Amount (crore)": r["amount_crore"], "Amount (mn)": r["amount_mill"],
+    } for r in d["rows"]]
+
+    body = build_workbook(
+        f"Bangladesh G-Sec Schedule — {p['years']}-year horizon",
+        [("Monthly by product", monthly), ("Fiscal year summary", fy),
+         ("Every coupon & maturity", detail)],
+        facts=[("Window", f"{p['from']} to {p['to']}"), ("Unit", "BDT crore"),
+               ("Horizon", f"{p['years']} years"),
+               ("Auction calendar published to", p["auction_calendar_to"]),
+               ("Last month with scheduled flows", p["last_month_with_flows"]),
+               ("Source", "Bangladesh Bank — auction calendar, treasury results, GSOM")],
+        caveats=[
+            "T-Bill coupon cells are blank because T-Bills are zero-coupon discount "
+            "instruments. The return is the discount, and it appears in the redemption column.",
+            f"Auction cells are BLANK after {p['auction_calendar_to']} because BB has not "
+            "published a calendar that far ahead. Blank means unknown, NOT zero — do not "
+            "read or sum it as no borrowing.",
+            "Net borrowing is left blank wherever auction coverage is partial: netting full "
+            "inflows against partial outflows would show a surplus that is an artefact of the "
+            "missing calendar.",
+            "Cash is dated to SETTLEMENT, not the contractual due date. The scheduled date is "
+            "kept on every row of the detail sheet.",
+        ],
+        notes={"Every coupon & maturity":
+               "One row per underlying event, so any figure on the monthly sheet can be traced "
+               "back to the securities paying it."},
+    )
+    return Response(content=body, media_type=XLSX_MEDIA, headers={
+        "Content-Disposition": f'attachment; filename="{filename("bd_gsec_schedule", str(p["years"]) + "y", p["from"], p["to"])}"'})
+
+
+@router.get("/forecast/export")
+def export_forecast(days: int = Query(None, ge=1, le=400),
+                    date_from: str = Query(None), date_to: str = Query(None)):
+    from .export_logic import build_workbook, filename
+    from .liquidity_logic import liquidity_ladder
+    session = get_session()
+    try:
+        p = liquidity_ladder(session, days=days, date_from=date_from, date_to=date_to)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    finally:
+        session.close()
+
+    ladder = [{
+        "Date": d["date"], "Day": d["weekday"],
+        "OMO Return (SDF maturing)": d["omo_return_crore"] if d["omo_known"] else None,
+        "OMO Repay (injections maturing)": d["omo_repay_crore"] if d["omo_known"] else None,
+        "OMO Net": d["omo_net_crore"] if d["omo_known"] else None,
+        "Govt Inflow (coupon + maturity)": d["govt_inflow_crore"],
+        "Auction Outflow": d["auction_out_crore"],
+        "Net": d["net_crore"], "Cumulative Net": d["cum_net_crore"],
+        "OMO Data": "yes" if d["omo_known"] else "no data",
+        "Flows Confirmed": "yes" if d["flows_confirmed"] else "no",
+        "OMO Detail": " · ".join(
+            f"{i['instrument']} {i['crore']:,.2f} ({'in' if i['liquidity_effect'] == 'INFLOW' else 'out'})"
+            for i in d["omo_items"]) or None,
+    } for d in p["days"]]
+
+    items = [{
+        "Date": d["date"], "Day": d["weekday"], "Instrument": i["instrument"],
+        "Original Direction": i["direction"],
+        "Effect at Maturity": "Inflow (cash to banks)" if i["liquidity_effect"] == "INFLOW"
+                              else "Outflow (banks repay BB)",
+        "Amount (crore)": i["crore"],
+    } for d in p["days"] for i in d["omo_items"]]
+
+    body = build_workbook(
+        "Bangladesh Known Liquidity Ladder",
+        [("Daily ladder", ladder), ("OMO maturities by product", items)],
+        facts=[("Window", f"{p['from']} to {p['to']}"), ("Unit", "BDT crore"),
+               ("As of", p["as_of"]), ("OMO data from", p["omo_data_from"]),
+               ("OMO maturities to", p["omo_data_to"]),
+               ("Auction calendar published to", p["auction_horizon"]),
+               ("Source", "Bangladesh Bank — OMO press releases, auction calendar, GSOM")],
+        caveats=[
+            "Only contracted, dated flows. Future BB operations are NOT modelled — they react "
+            "to this ladder, and the gap between the two is where the rate moves.",
+            "An OMO's effect at maturity is the REVERSE of its original direction: an SDF "
+            "(absorption) maturing pays cash back to banks, while a repo (injection) maturing "
+            "takes cash out.",
+            f"OMO columns are BLANK before {p['omo_data_from']} because there is no OMO data "
+            "that far back. Blank means unknown, not that BB ran no operations.",
+            f"Auction outflows after {p['auction_horizon']} are missing from Net, because BB "
+            "has not published the calendar. Net on those days overstates liquidity.",
+        ],
+    )
+    return Response(content=body, media_type=XLSX_MEDIA, headers={
+        "Content-Disposition": f'attachment; filename="{filename("bd_liquidity_ladder", p["from"], p["to"])}"'})

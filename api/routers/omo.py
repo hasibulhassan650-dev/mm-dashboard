@@ -1,10 +1,13 @@
-from fastapi import APIRouter, Query
+from fastapi import HTTPException, APIRouter, Query
+from fastapi.responses import Response
 from sqlalchemy import text
 from typing import Optional
 import datetime
 from db import get_session
 
 router = APIRouter()
+
+XLSX_MEDIA = ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 @router.get("/transactions")
@@ -103,3 +106,90 @@ def get_summary():
         return [dict(r._mapping) for r in rows]
     finally:
         session.close()
+
+
+@router.get("/maturity-ladder")
+def get_maturity_ladder(
+    days: int = Query(None, ge=1, le=400, description="Forward horizon from today"),
+    date_from: str = Query(None, description="YYYY-MM-DD; may be in the past"),
+    date_to: str = Query(None, description="YYYY-MM-DD"),
+):
+    """What rolls off on each day, by instrument, with the day's net and a
+    running cumulative. BDT crore.
+
+    /outstanding gives the daily STOCK per instrument; this gives the FLOW --
+    which tranche matures when. Maturity-only rows (accepted = 0) are excluded
+    so the roll-off is not double-booked.
+    """
+    from .liquidity_logic import omo_maturity_ladder
+    session = get_session()
+    try:
+        return omo_maturity_ladder(session, days=days if days is not None else (
+            None if (date_from or date_to) else 90), date_from=date_from, date_to=date_to)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    finally:
+        session.close()
+
+
+@router.get("/maturity-ladder/export")
+def export_maturity_ladder(days: int = Query(None, ge=1, le=400),
+                           date_from: str = Query(None), date_to: str = Query(None)):
+    """The OMO maturity ladder as a formatted workbook."""
+    from .export_logic import build_workbook, filename
+    from .liquidity_logic import omo_maturity_ladder
+    session = get_session()
+    try:
+        p = omo_maturity_ladder(session, days=days if days is not None else (
+            None if (date_from or date_to) else 90), date_from=date_from, date_to=date_to)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    finally:
+        session.close()
+
+    instruments = p["instruments"]
+    daily = []
+    for d in p["days"]:
+        row = {"Date": d["date"], "Day": d["weekday"]}
+        for i in instruments:
+            row[i] = d["by_instrument"].get(i)       # absent = blank, not 0
+        row["Inflow (SDF maturing)"] = d["inflow_crore"]
+        row["Outflow (injections maturing)"] = d["outflow_crore"]
+        row["Net"] = d["net_crore"]
+        row["Cumulative Net"] = d["cum_net_crore"]
+        daily.append(row)
+
+    tranches = [{
+        "Maturity Date": d["date"], "Day": d["weekday"], "Instrument": i["instrument"],
+        "Original Direction": i["direction"],
+        "Effect at Maturity": "Inflow (cash to banks)" if i["liquidity_effect"] == "INFLOW"
+                              else "Outflow (banks repay BB)",
+        "Amount (crore)": i["crore"],
+    } for d in p["days"] for i in d["items"]]
+
+    totals = [{"Instrument": i, "Total (crore)": p["instrument_totals"][i]} for i in instruments]
+
+    body = build_workbook(
+        "Bangladesh Bank OMO Maturity Ladder",
+        [("Daily ladder by product", daily), ("Tranche detail", tranches),
+         ("Totals by instrument", totals)],
+        facts=[("Window", f"{p['from']} to {p['to']}"), ("Unit", "BDT crore"),
+               ("As of", p["as_of"]), ("OMO data from", p["omo_data_from"]),
+               ("OMO maturities to", p["omo_data_to"]),
+               ("Total inflow", p["total_inflow_crore"]),
+               ("Total outflow", p["total_outflow_crore"]),
+               ("Total net", p["total_net_crore"]),
+               ("Source", "Bangladesh Bank OMO press releases")],
+        caveats=[
+            "An OMO's effect at maturity is the REVERSE of its original direction: an SDF "
+            "(absorption) maturing returns cash to banks; a repo/AR/IBLF (injection) maturing "
+            "takes cash out as the bank repays BB.",
+            "Blank instrument cells mean that instrument had nothing maturing that day.",
+            "Maturity-only lines published by BB (accepted = 0) are excluded, so the roll-off "
+            "is not double-counted against the tranches they describe.",
+            "Derived from live tranches. BB also prints its own maturity figures, and the "
+            "weekly deep audit reconciles the two.",
+        ],
+    )
+    return Response(content=body, media_type=XLSX_MEDIA, headers={
+        "Content-Disposition": f'attachment; filename="{filename("bd_omo_maturity_ladder", p["from"], p["to"])}"'})
