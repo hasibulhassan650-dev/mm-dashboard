@@ -66,7 +66,7 @@ export default function ScheduleChart({ data }: { data: ScheduleByProduct }) {
                  interval="preserveStartEnd" minTickGap={14} />
           <YAxis tickFormatter={fmt} tick={{ fontSize: 10, fill: "var(--fg-mute)" }} width={46} />
           <Tooltip
-            contentStyle={{ background: "var(--bg-panel)", border: "1px solid var(--border)",
+            contentStyle={{ background: "var(--tip-bg)", border: "1px solid var(--border)",
                             borderRadius: 8, fontSize: 11.5, color: "var(--fg)" }}
             formatter={(v, name) => [`${Number(v).toLocaleString()} cr`, String(name)]}
           />
