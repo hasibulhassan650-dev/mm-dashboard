@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { api } from "@/lib/api";
+import { api, exportUrl } from "@/lib/api";
 import type { Product, ScheduleByProduct, ScheduleMonth, ScheduleSummary } from "@/lib/api";
 import { Panel } from "@/components/terminal/ui";
 import { DataWarning } from "@/components/DataWarning";
@@ -7,7 +7,6 @@ import Freshness from "@/components/Freshness";
 import HorizonControl from "@/components/HorizonControl";
 import RelatedLinks from "@/components/RelatedLinks";
 import ScheduleChart from "@/components/ScheduleChart";
-import ScheduleExport from "@/components/ScheduleExport";
 
 export const revalidate = 300;
 
@@ -31,9 +30,7 @@ export default async function SchedulePage({
   const asked = Number(sp.years);
   const years = [1, 2, 5, 10, 20].includes(asked) ? asked : 2;
 
-  const [data, detail, fresh] = await Promise.all([
-    api.schedule(years), api.scheduleDetail(years), api.freshness(),
-  ]);
+  const [data, fresh] = await Promise.all([api.schedule(years), api.freshness()]);
 
   // The API deploys separately from this site and has served stale code before,
   // so an empty payload is reported as what it is rather than drawn as a month
@@ -65,6 +62,18 @@ export default async function SchedulePage({
   // and says so underneath.
   const shown = lastFlow ? data.months.filter((m) => m.month <= lastFlow) : data.months;
   const hidden = data.months.length - shown.length;
+
+  // Running cumulative net borrowing, anchored at the first month shown. Held
+  // back on any month BB has not published auctions for -- compounding a figure
+  // that is already an artefact of missing data would make the total read as a
+  // forecast when it is not one.
+  let run = 0;
+  const cumByMonth = new Map<string, number | null>();
+  for (const m of shown) {
+    if (m.auction.status === "not_published") { cumByMonth.set(m.month, null); continue; }
+    run += m.net_borrowing;
+    cumByMonth.set(m.month, Math.round(run));
+  }
 
   const cell = (v: number, cls = "") =>
     <td className={"r mono " + cls}>{num(v)}</td>;
@@ -161,7 +170,8 @@ export default async function SchedulePage({
           sub={`${shown.length} months · click a month to drill into its events`}
           span={12}
           pad={false}
-          right={<ScheduleExport data={data} detail={detail} />}
+          right={<a href={exportUrl.schedule(years)} className="seg-b"
+                    style={{ textDecoration: "none" }}>Download {years}Y Excel</a>}
         >
           <div className="table-wrap" style={{ maxHeight: 620, overflowY: "auto" }}>
             <table className="dt">
@@ -172,6 +182,7 @@ export default async function SchedulePage({
                   <th colSpan={products.length + 1} className="r">Coupon (cr)</th>
                   <th rowSpan={2} className="r">Inflow (cr)</th>
                   <th colSpan={2} className="r">Auction Settlement (cr)</th>
+                  <th rowSpan={2} className="r">Cumulative Net (cr)</th>
                 </tr>
                 <tr>
                   {products.map((p) => <th key={`r${p}`} className="r">{LABEL[p]}</th>)}
@@ -184,7 +195,8 @@ export default async function SchedulePage({
               </thead>
               <tbody>
                 {shown.map((m) => <MonthRow key={m.month} m={m} products={products}
-                                            couponProducts={data.coupon_products} cell={cell} />)}
+                                            couponProducts={data.coupon_products} cell={cell}
+                                            cum={cumByMonth.get(m.month) ?? null} />)}
               </tbody>
               <tfoot>
                 <tr style={{ borderTop: "2px solid var(--border)", fontWeight: 600 }}>
@@ -197,6 +209,11 @@ export default async function SchedulePage({
                   {cell(t.auction.total, "neg")}
                   <td style={{ fontSize: 10.5, color: "var(--fg-mute)" }}>
                     {t.auction_months_published} of {t.months} mo
+                  </td>
+                  <td className="r mono">
+                    {t.net_borrowing_comparable
+                      ? Math.round(t.net_borrowing).toLocaleString()
+                      : <span style={{ color: "var(--info)", fontSize: 10.5 }}>part-published</span>}
                   </td>
                 </tr>
               </tfoot>
@@ -264,11 +281,12 @@ export default async function SchedulePage({
   );
 }
 
-function MonthRow({ m, products, couponProducts, cell }: {
+function MonthRow({ m, products, couponProducts, cell, cum }: {
   m: ScheduleMonth;
   products: Product[];
   couponProducts: Product[];
   cell: (v: number, cls?: string) => React.ReactElement;
+  cum: number | null;
 }) {
   const unknown = m.auction.status === "not_published";
   // Link to the drilldown for the first of the month — the day view is per-date,
@@ -306,6 +324,11 @@ function MonthRow({ m, products, couponProducts, cell }: {
                 part month
               </span>
             : <span style={{ color: "var(--pos)" }}>published</span>}
+      </td>
+      <td className="r mono" style={{ fontWeight: 600 }}>
+        {cum == null
+          ? <span style={{ color: "var(--info)" }} title="Paused: BB has not published auctions for this month, so a running net would compound a gap">—</span>
+          : <span className={cum > 0 ? "neg" : "pos"}>{cum.toLocaleString()}</span>}
       </td>
     </tr>
   );

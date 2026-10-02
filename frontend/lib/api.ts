@@ -12,6 +12,19 @@ async function get<T>(path: string, params?: Record<string, string | number>): P
   return res.json();
 }
 
+/** Download URLs for the server-built, formatted workbooks. Plain links: the
+ *  file is produced by the API with openpyxl (bold frozen headers, number
+ *  formats, autofilter, a cover sheet) rather than assembled in the browser. */
+export const exportUrl = {
+  schedule: (years: number) => `${BASE}/api/flows/by-product/export?years=${years}`,
+  ladder:   (from: string, to: string) =>
+    `${BASE}/api/flows/forecast/export?date_from=${from}&date_to=${to}`,
+  omoLadder: (p: { days?: number; from?: string; to?: string }) =>
+    p.from || p.to
+      ? `${BASE}/api/omo/maturity-ladder/export?date_from=${p.from ?? ""}&date_to=${p.to ?? ""}`
+      : `${BASE}/api/omo/maturity-ladder/export?days=${p.days ?? 90}`,
+};
+
 export const api = {
   omoSummary:      () => get<OmoSummaryRow[]>("/api/omo/summary"),
   omoOutstanding:  (days = 90) => get<OmoOutstandingRow[]>("/api/omo/outstanding", { days }),
@@ -71,6 +84,23 @@ export const api = {
   flowsForecast:   async (days = 28): Promise<LiquidityForecast> => {
     try { return await get<LiquidityForecast>("/api/flows/forecast", { days }); }
     catch { return { as_of: "", days: [], unit: "BDT crore" }; }
+  },
+  /** The ladder over an explicit window, which MAY be in the past. */
+  flowsLadder:     async (from: string, to: string): Promise<LiquidityForecast> => {
+    try { return await get<LiquidityForecast>("/api/flows/forecast", { date_from: from, date_to: to }); }
+    catch { return { as_of: "", days: [], unit: "BDT crore" }; }
+  },
+  omoMaturityLadder: async (p: { days?: number; from?: string; to?: string } = {}):
+    Promise<OmoMaturityLadder> => {
+    const q: Record<string, string | number> = p.from || p.to
+      ? { date_from: p.from ?? "", date_to: p.to ?? "" }
+      : { days: p.days ?? 90 };
+    try { return await get<OmoMaturityLadder>("/api/omo/maturity-ladder", q); }
+    catch {
+      return { as_of: "", from: "", to: "", unit: "BDT crore", days: [], instruments: [],
+               instrument_totals: {}, total_inflow_crore: 0, total_outflow_crore: 0,
+               total_net_crore: 0 };
+    }
   },
   // Non-critical: must never break a page. Returns all-nulls if the endpoint is unavailable.
   freshness:       async (): Promise<Freshness> => {
@@ -471,17 +501,58 @@ export interface FlowRow {
   coupon_payment_count: number; inflow_security_count: number; data_complete: boolean;
 }
 
+/** An OMO tranche maturing. `direction` is the ORIGINAL operation;
+ *  `liquidity_effect` is what it does to the market on the maturity date, and
+ *  the two are opposite: an SDF (absorption) maturing pays cash back to banks,
+ *  a repo (injection) maturing takes cash out. Always read the effect. */
+export interface OmoMaturityItem {
+  instrument: string;
+  direction: "INJECTION" | "ABSORPTION" | string;
+  liquidity_effect: "INFLOW" | "OUTFLOW";
+  crore: number;
+}
+
+/** Where each BB series starts and stops. Carried in every liquidity payload so
+ *  the UI reads the blind spots from data instead of a constant that will rot. */
+export interface SourceHorizons {
+  omo_data_from?: string | null;
+  omo_data_to?: string | null;
+  auction_horizon?: string | null;
+  flows_data_from?: string | null;
+  flows_data_to?: string | null;
+}
+
 export interface LiquidityForecastDay {
   date: string; weekday: string;
-  omo_return_crore: number; omo_repay_crore: number;
+  omo_return_crore: number; omo_repay_crore: number; omo_net_crore: number;
   govt_inflow_crore: number; auction_out_crore: number;
   net_crore: number; cum_net_crore: number;
-  omo_items: { instrument: string; direction: string; crore: number }[];
+  omo_items: OmoMaturityItem[];
   flows_confirmed: boolean;
+  /** False when the day predates OMO data. The OMO figures are then ABSENT,
+   *  not zero, and must never be rendered as 0. */
+  omo_known: boolean;
+  is_past: boolean;
 }
-export interface LiquidityForecast {
+export interface LiquidityForecast extends SourceHorizons {
   as_of: string; days: LiquidityForecastDay[]; unit: string;
-  auction_horizon?: string | null;
+  from?: string; to?: string;
+}
+
+export interface OmoLadderDay {
+  date: string; weekday: string;
+  inflow_crore: number; outflow_crore: number;
+  net_crore: number; cum_net_crore: number;
+  by_instrument: Record<string, number>;
+  items: OmoMaturityItem[];
+  is_past: boolean;
+}
+export interface OmoMaturityLadder extends SourceHorizons {
+  as_of: string; from: string; to: string; unit: string;
+  days: OmoLadderDay[];
+  instruments: string[];
+  instrument_totals: Record<string, number>;
+  total_inflow_crore: number; total_outflow_crore: number; total_net_crore: number;
 }
 
 export interface CallMoneyDailySummary {
@@ -534,4 +605,21 @@ export interface DrilldownResult {
   auctions: { auction_date: string; security_type: string; tenor_label: string;
     offered_amount_bdt_mill: number; accepted_amount_bdt_mill: number;
     weighted_avg_yield_pct: number; outflow_status: string; roll_days: number }[];
+  /** Added later and optional on purpose: the deployed API may still be the
+   *  older build, and the page degrades rather than crashing. */
+  omo?: (OmoMaturityItem & { tenor_label: string | null; rate_pct: number | null;
+    transacted_from: string | null })[];
+  omo_by_instrument?: { instrument: string; liquidity_effect: "INFLOW" | "OUTFLOW";
+    crore: number }[];
+  liquidity?: {
+    unit: string;
+    omo_inflow_crore: number; omo_outflow_crore: number; omo_net_crore: number;
+    coupon_inflow_crore: number; principal_inflow_crore: number;
+    govt_inflow_crore: number;
+    auction_outflow_crore: number; auction_net_crore: number;
+    total_net_crore: number;
+    omo_known: boolean; auction_known: boolean;
+  };
+  omo_data_from?: string | null;
+  auction_horizon?: string | null;
 }

@@ -25,6 +25,10 @@ export default async function DrilldownPage({
   const date = params.date ?? new Date().toISOString().slice(0, 10);
   const data = await api.drilldown(date);
   const s = data.summary;
+  // Optional: an older deployed API has no liquidity block, and the page should
+  // degrade rather than crash while the API catches up.
+  const liq = data.liquidity;
+  const omo = data.omo ?? [];
 
   return (
     <div className="space-y-6">
@@ -40,6 +44,35 @@ export default async function DrilldownPage({
         <Link href="/cashflows" className="ml-auto text-xs t-info hover:underline">← Back to Cash Flows</Link>
       </div>
 
+      {/* The whole liquidity picture for the day, in the order cash moves.
+          OMO first because it is the biggest mover and was, until now, missing
+          from this page entirely -- the ladder's own drilldown showed every
+          G-sec event and none of the operations driving the swings. */}
+      {liq && (
+        <div className="rounded-xl border bd b-panel p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-medium t-dim">Net Liquidity — {date} (BDT crore)</h2>
+            <span className="text-xs t-mute">
+              {liq.omo_known ? "" : "no OMO data this far back · "}
+              {liq.auction_known ? "" : "auction calendar not published this far out"}
+            </span>
+          </div>
+          <div className="flex flex-wrap items-stretch gap-3 text-xs">
+            <Line label="OMO injecting" hint="absorption (SDF) maturing — BB pays banks back"
+                  value={liq.omo_inflow_crore} tone="pos" known={liq.omo_known} />
+            <Line label="OMO draining" hint="injection (repo/AR/IBLF…) maturing — banks repay BB"
+                  value={-liq.omo_outflow_crore} tone="neg" known={liq.omo_known} />
+            <Line label="OMO net" value={liq.omo_net_crore} tone="auto" known={liq.omo_known} strong />
+            <Line label="Govt inflow" hint="coupons + principal redemptions"
+                  value={liq.govt_inflow_crore} tone="pos" known />
+            <Line label="Auction outflow" hint="banks pay for new issuance"
+                  value={-liq.auction_outflow_crore} tone="neg" known={liq.auction_known} />
+            <Line label="TOTAL NET" value={liq.total_net_crore} tone="auto"
+                  known={liq.omo_known} strong big />
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <StatCard label="Maturity Inflow" value={`${s.maturity_inflow_mill.toLocaleString()}`} sub="BDT million" color="green" />
         <StatCard label="Coupon Inflow"   value={`${s.coupon_inflow_mill.toLocaleString()}`}   sub="BDT million" color="green" />
@@ -48,6 +81,48 @@ export default async function DrilldownPage({
         <StatCard label="Net Borrowing"   value={`${s.net_borrowing_mill > 0 ? "▲" : "▼"} ${Math.abs(s.net_borrowing_mill).toLocaleString()}`}
           sub={s.net_borrowing_mill > 0 ? "net borrower" : "net repayer"}
           color={s.net_borrowing_mill > 0 ? "amber" : "green"} />
+      </div>
+
+      {/* OMO maturing today */}
+      <div className="rounded-xl border bd b-panel p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-medium t-dim">OMO Maturing ({omo.length})</h2>
+          {omo.length > 0 && <DownloadButton data={omo} filename={`omo_${date}`} label="Excel" />}
+        </div>
+        {omo.length === 0
+          ? <p className="text-xs t-mute">
+              {liq && !liq.omo_known
+                ? "No OMO data this far back — absent, not zero. BB operations are recorded from a later date."
+                : "No OMO tranche matures on this date"}
+            </p>
+          : <table className="w-full text-xs">
+              <thead><tr className="t-dim border-b bd">
+                <th className="pb-1 pr-2 text-left">Instrument</th>
+                <th className="pb-1 pr-2 text-left">Tenor</th>
+                <th className="pb-1 pr-2 text-right">Rate</th>
+                <th className="pb-1 pr-2 text-left">Transacted</th>
+                <th className="pb-1 pr-2 text-left">Effect today</th>
+                <th className="pb-1 text-right">Amount (cr)</th>
+              </tr></thead>
+              <tbody>
+                {omo.map((o, i) => (
+                  <tr key={i} className="border-b bd">
+                    <td className="py-1 pr-2 t-fg">{o.instrument}</td>
+                    <td className="py-1 pr-2 t-dim">{o.tenor_label ?? "—"}</td>
+                    <td className="py-1 pr-2 text-right t-dim">{o.rate_pct != null ? `${o.rate_pct}%` : "—"}</td>
+                    <td className="py-1 pr-2 t-mute font-mono">{o.transacted_from ?? "—"}</td>
+                    <td className="py-1 pr-2">
+                      <span className={`px-1 py-0.5 rounded text-xs ${o.liquidity_effect === "INFLOW" ? "b-pos-soft t-pos" : "b-warn-soft t-warn"}`}>
+                        {o.liquidity_effect === "INFLOW" ? "injects" : "drains"}
+                      </span>
+                      <span className="t-mute ml-1">({o.direction.toLowerCase()} maturing)</span>
+                    </td>
+                    <td className="py-1 text-right t-fg font-mono">{o.crore.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+        }
       </div>
 
       <div className="grid md:grid-cols-3 gap-6">
@@ -140,6 +215,31 @@ export default async function DrilldownPage({
           }
         </div>
       </div>
+    </div>
+  );
+}
+
+/** One line of the net-liquidity strip. `known=false` prints an em dash, never
+ *  a zero: a day outside a source's coverage has no figure, and 0 would be a
+ *  claim that nothing happened. */
+function Line({ label, hint, value, tone, known, strong, big }: {
+  label: string; hint?: string; value: number;
+  tone: "pos" | "neg" | "auto"; known: boolean;
+  strong?: boolean; big?: boolean;
+}) {
+  const cls = tone === "auto" ? (value < 0 ? "t-warn" : "t-pos") : tone === "pos" ? "t-pos" : "t-warn";
+  return (
+    <div className={`rounded-lg px-3 py-2 ${strong ? "b-panel2" : ""}`} style={{ minWidth: 150 }}>
+      <div className="t-dim" style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".08em" }}>
+        {label}
+      </div>
+      <div className={`font-mono ${known ? cls : "t-mute"}`}
+           style={{ fontSize: big ? 20 : 15, fontWeight: strong ? 700 : 500, marginTop: 2 }}>
+        {known
+          ? value.toLocaleString(undefined, { maximumFractionDigits: 2 })
+          : <span title="No data for this date — not zero">—</span>}
+      </div>
+      {hint && <div className="t-mute" style={{ fontSize: 10, maxWidth: 170, marginTop: 2 }}>{hint}</div>}
     </div>
   );
 }

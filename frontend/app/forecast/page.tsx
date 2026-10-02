@@ -1,34 +1,58 @@
-import { api } from "@/lib/api";
+import { api, exportUrl } from "@/lib/api";
 import Link from "next/link";
 import RelatedLinks from "@/components/RelatedLinks";
 import { fmtDate, fmtCrore, fmtRate } from "@/lib/format";
 import { Panel } from "@/components/terminal/ui";
 import LiquidityLadderChart from "@/components/LiquidityLadderChart";
-import DownloadButton from "@/components/DownloadButton";
-import PeriodSelector from "@/components/PeriodSelector";
+import DateRangeControl from "@/components/DateRangeControl";
+import LadderTable from "@/components/LadderTable";
 import Freshness from "@/components/Freshness";
 
 export const revalidate = 300;
 
-const HORIZONS = [{ label: "2W", days: 14 }, { label: "4W", days: 28 }, { label: "8W", days: 56 }];
+function iso(d: Date) { return d.toISOString().slice(0, 10); }
+function shift(from: string, days: number) {
+  const d = new Date(from + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + days); return iso(d);
+}
 
-export default async function ForecastPage({ searchParams }: { searchParams: Promise<{ days?: string }> }) {
-  const daysAhead = Math.min(60, Math.max(7, parseInt((await searchParams).days ?? "28", 10) || 28));
+export default async function ForecastPage({
+  searchParams,
+}: { searchParams: Promise<{ from?: string; to?: string; days?: string }> }) {
+  const sp = await searchParams;
+  const today = iso(new Date());
+
+  // The window. `?days=` still works so old links and bookmarks keep resolving,
+  // but the page is now driven by an explicit from/to that may sit in the past.
+  const legacyDays = sp.days ? Math.min(400, Math.max(1, parseInt(sp.days, 10) || 28)) : null;
+  const from = sp.from ?? (legacyDays ? shift(today, 1) : shift(today, 1));
+  const to = sp.to ?? (legacyDays ? shift(today, legacyDays) : shift(today, 28));
+
   const [forecast, cm, policy, fresh] = await Promise.all([
-    api.flowsForecast(daysAhead),
+    api.flowsLadder(from, to),
     api.callmoney(14).catch(() => null),
     api.policy(),
     api.freshness(),
   ]);
   const days = forecast.days;
 
-  const next7 = days.slice(0, 7);
-  const net7 = next7.reduce((s, d) => s + d.net_crore, 0);
+  // Looking at the past is a different job from planning the next four weeks.
+  // Advice like "position as a lender going in" is not merely useless pointed
+  // backwards, it reads as a recommendation about a day that has already gone.
+  const isHistory = to < today;
+  const net7 = days.filter(d => d.date >= today).slice(0, 7).reduce((s, d) => s + d.net_crore, 0);
   const active = days.filter(d =>
     d.net_crore !== 0 || d.omo_return_crore > 0 || d.omo_repay_crore > 0 ||
     d.govt_inflow_crore > 0 || d.auction_out_crore > 0);
   const biggestDrain = [...days].sort((a, b) => a.net_crore - b.net_crore)[0];
   const biggestInject = [...days].sort((a, b) => b.net_crore - a.net_crore)[0];
+  const closingCum = days.at(-1)?.cum_net_crore ?? 0;
+
+  // Bounds for the picker come from the data's own coverage, so they move when
+  // BB publishes instead of rotting in a constant.
+  const minDate = forecast.flows_data_from ?? forecast.omo_data_from ?? "2025-07-01";
+  const maxDate = forecast.flows_data_to ?? shift(today, 180);
+  const omoFrom = forecast.omo_data_from ?? null;
+  const omoBlindDays = days.filter(d => !d.omo_known).length;
 
   const war = cm?.daily_summary?.at(-1)?.overnight_wavg_rate ?? null;
   const cor = policy.current;
@@ -48,26 +72,29 @@ export default async function ForecastPage({ searchParams }: { searchParams: Pro
   // ── Desk alerts: threshold-crossing signals with an explicit action, shown
   // only when they actually fire — distinct from the always-on KPIs below. ────
   const alerts: { tone: "warn" | "info"; text: string }[] = [];
-  if (war != null && cor?.slf != null && war >= cor.slf - 0.5)
+  if (isHistory) {
+    // Nothing to position for; describe what happened instead.
+    if (biggestDrain) alerts.push({ tone: "warn", text: `Tightest day in this window: ${fmtDate(biggestDrain.date)} (${biggestDrain.weekday}) at ${fmtCrore(biggestDrain.net_crore)} cr net.` });
+    if (biggestInject) alerts.push({ tone: "info", text: `Flushest day: ${fmtDate(biggestInject.date)} (${biggestInject.weekday}) at ${fmtCrore(biggestInject.net_crore)} cr net.` });
+    alerts.push({ tone: closingCum < 0 ? "warn" : "info", text: `Over the whole window known flows netted ${fmtCrore(closingCum)} cr — ${closingCum < 0 ? "a net drain" : "a net injection"}.` });
+  } else if (war != null && cor?.slf != null && war >= cor.slf - 0.5)
     alerts.push({ tone: "warn", text: `Call O/N ${fmtRate(war, 2)}% is within 50 bps of the SLF ceiling (${cor.slf}%) — the system is tight; go in as a lender.` });
   else if (war != null && cor?.sdf != null && war <= cor.sdf + 0.5)
     alerts.push({ tone: "info", text: `Call O/N ${fmtRate(war, 2)}% is near the SDF floor (${cor.sdf}%) — the system is flush; fund cheap as a borrower.` });
-  for (const d of days.filter(x => x.net_crore <= -5000).sort((a, b) => a.net_crore - b.net_crore).slice(0, 2))
-    alerts.push({ tone: "warn", text: `Large drain ${fmtDate(d.date)} (${d.weekday}): ${fmtCrore(d.net_crore)} cr net — position as a lender going in.` });
-  if (biggestInject && biggestInject.net_crore >= 5000)
-    alerts.push({ tone: "info", text: `Flush day ${fmtDate(biggestInject.date)} (${biggestInject.weekday}): +${fmtCrore(biggestInject.net_crore)} cr — a cheap borrowing window.` });
-  const cumEnd = days.at(-1)?.cum_net_crore ?? 0;
-  if (cumEnd <= -10000)
-    alerts.push({ tone: "warn", text: `Cumulative known liquidity over the window is ${fmtCrore(cumEnd)} cr — a sustained squeeze; keep lending capacity in reserve.` });
+  if (!isHistory) {
+    for (const d of days.filter(x => x.date >= today && x.net_crore <= -5000).sort((a, b) => a.net_crore - b.net_crore).slice(0, 2))
+      alerts.push({ tone: "warn", text: `Large drain ${fmtDate(d.date)} (${d.weekday}): ${fmtCrore(d.net_crore)} cr net — position as a lender going in.` });
+    if (biggestInject && biggestInject.net_crore >= 5000 && biggestInject.date >= today)
+      alerts.push({ tone: "info", text: `Flush day ${fmtDate(biggestInject.date)} (${biggestInject.weekday}): +${fmtCrore(biggestInject.net_crore)} cr — a cheap borrowing window.` });
+    if (closingCum <= -10000)
+      alerts.push({ tone: "warn", text: `Cumulative known liquidity over the window is ${fmtCrore(closingCum)} cr — a sustained squeeze; keep lending capacity in reserve.` });
+  }
 
   return (
     <>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: "var(--gap)", flexWrap: "wrap" }}>
         <Freshness updated={fresh.flows} />
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 12, color: "var(--fg-mute)" }}>Horizon</span>
-          <PeriodSelector periods={HORIZONS} current={daysAhead} />
-        </div>
+        <DateRangeControl min={minDate} max={maxDate} from={from} to={to} />
       </div>
 
       {auctionsBlind && (
@@ -79,6 +106,20 @@ export default async function ForecastPage({ searchParams }: { searchParams: Pro
           ⚠ AUCTION DATA INCOMPLETE — last known auction settlement is {horizon ? fmtDate(horizon) : "none on record"}.
           Days after that show NO auction outflow because the calendar isn&apos;t ingested yet, not because none is scheduled.
           Net figures on those days overstate liquidity. BB auctions T-bills nearly every week.
+        </div>
+      )}
+
+      {omoBlindDays > 0 && (
+        <div style={{
+          border: "1px solid var(--info)", borderRadius: "var(--radius-sm)",
+          padding: "8px 12px", marginBottom: "var(--gap)", fontSize: 12.5,
+          color: "var(--info)", background: "color-mix(in oklab, var(--info) 10%, transparent)",
+        }}>
+          ⓘ NO OMO DATA for {omoBlindDays} of these {days.length} days — our OMO record starts
+          {" "}{omoFrom ? fmtDate(omoFrom) : "later than this window"}. Those days show no repo,
+          SDF or other operation because none is <b>recorded</b>, not because BB ran none. Their
+          net figures understate movement in both directions and should not be read as a quiet
+          market.
         </div>
       )}
 
@@ -108,62 +149,36 @@ export default async function ForecastPage({ searchParams }: { searchParams: Pro
           <div className="kpi-sub">{corridorPos != null ? `${corridorPos}% up the ${cor?.sdf}–${cor?.slf} corridor` : "corridor n/a"}</div>
         </div>
         <div className="kpi">
-          <div className="kpi-top"><span className="kpi-label">Next 7d Known Net</span></div>
-          <div className="kpi-val"><span className="kpi-num" style={{ color: net7 < 0 ? "var(--warn)" : "var(--info)" }}>{fmtCrore(net7)}</span><span className="kpi-unit">cr</span></div>
-          <div className="kpi-sub" style={{ color: pressure.color }}>{pressure.label}</div>
+          <div className="kpi-top"><span className="kpi-label">{isHistory ? "Window Closing Cumulative" : "Next 7d Known Net"}</span></div>
+          <div className="kpi-val"><span className="kpi-num" style={{ color: (isHistory ? closingCum : net7) < 0 ? "var(--warn)" : "var(--info)" }}>{fmtCrore(isHistory ? closingCum : net7)}</span><span className="kpi-unit">cr</span></div>
+          <div className="kpi-sub" style={isHistory ? undefined : { color: pressure.color }}>
+            {isHistory ? `net over ${from} → ${to}` : pressure.label}
+          </div>
         </div>
         <div className="kpi">
           <div className="kpi-top"><span className="kpi-label">Tightest Day</span></div>
           <div className="kpi-val"><span className="kpi-num neg">{biggestDrain ? fmtCrore(biggestDrain.net_crore) : "—"}</span><span className="kpi-unit">cr</span></div>
-          <div className="kpi-sub">{biggestDrain ? `${fmtDate(biggestDrain.date)} — lend into it` : ""}</div>
+          <div className="kpi-sub">{biggestDrain ? `${fmtDate(biggestDrain.date)}${isHistory ? "" : " — lend into it"}` : ""}</div>
         </div>
         <div className="kpi">
           <div className="kpi-top"><span className="kpi-label">Flushest Day</span></div>
           <div className="kpi-val"><span className="kpi-num pos">{biggestInject ? fmtCrore(biggestInject.net_crore) : "—"}</span><span className="kpi-unit">cr</span></div>
-          <div className="kpi-sub">{biggestInject ? `${fmtDate(biggestInject.date)} — cheap borrowing` : ""}</div>
+          <div className="kpi-sub">{biggestInject ? `${fmtDate(biggestInject.date)}${isHistory ? "" : " — cheap borrowing"}` : ""}</div>
         </div>
       </div>
 
       <div className="grid12">
-        <Panel title="Known Liquidity Ladder — Next 4 Weeks" span={12}
-          sub="dated flows already contracted today (BDT crore) · excludes future BB operations, which react to this">
+        <Panel title={isHistory ? "Known Liquidity Ladder — What Happened" : "Known Liquidity Ladder"} span={12}
+          sub={`${from} → ${to} (BDT crore) · contracted, dated flows only · excludes future BB operations, which react to this`}>
           <LiquidityLadderChart data={days} />
         </Panel>
 
-        <Panel title="Day-by-Day Ladder" sub="only days with flows · click a date for the G-sec drilldown" span={12} pad={false}
-          right={<DownloadButton data={days} filename="liquidity_forecast" />}>
-          <div className="table-wrap" style={{ maxHeight: 480, overflowY: "auto" }}>
-            <table className="dt">
-              <thead><tr>
-                <th>Date</th><th>Day</th>
-                <th className="r">OMO Return (cr)</th><th className="r">OMO Repay (cr)</th>
-                <th className="r">Govt Inflow (cr)</th><th className="r">Auction Out (cr)</th>
-                <th className="r">Net (cr)</th><th className="r">Cumulative (cr)</th><th>OMO Detail</th>
-              </tr></thead>
-              <tbody>
-                {active.map((d, i) => (
-                  <tr key={i}>
-                    <td><Link href={`/drilldown?date=${d.date}`} style={{ color: "var(--accent)" }}>{fmtDate(d.date)}</Link></td>
-                    <td>{d.weekday}</td>
-                    <td className="r mono pos">{d.omo_return_crore ? fmtCrore(d.omo_return_crore) : ""}</td>
-                    <td className="r mono neg">{d.omo_repay_crore ? fmtCrore(d.omo_repay_crore) : ""}</td>
-                    <td className="r mono pos">{d.govt_inflow_crore ? fmtCrore(d.govt_inflow_crore) : ""}</td>
-                    <td className="r mono neg">{d.auction_out_crore ? fmtCrore(d.auction_out_crore) : ""}</td>
-                    <td className="r mono" style={{ color: d.net_crore < 0 ? "var(--warn)" : "var(--info)", fontWeight: 600 }}>{fmtCrore(d.net_crore)}</td>
-                    <td className="r mono">{fmtCrore(d.cum_net_crore)}</td>
-                    <td style={{ fontSize: 11, color: "var(--fg-mute)" }}>
-                      {d.omo_items.map(it => `${it.instrument} ${fmtCrore(it.crore)}`).join(" · ")}
-                    </td>
-                  </tr>
-                ))}
-                {active.length === 0 && (
-                  <tr><td colSpan={9} style={{ textAlign: "center", color: "var(--fg-mute)", padding: 16 }}>
-                    No dated flows in the window — backend /api/flows/forecast not deployed yet or window empty.
-                  </td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+        <Panel title="Day-by-Day Ladder"
+          sub="only days with flows · click a row for the OMO split, the date for the full day"
+          span={12} pad={false}
+          right={<a href={exportUrl.ladder(from, to)} className="seg-b" style={{ textDecoration: "none" }}>Download Excel</a>}>
+          <LadderTable days={active} omoDataFrom={omoFrom}
+                       auctionHorizon={forecast.auction_horizon} />
         </Panel>
 
         <Panel title="How to Read This" span={12}>
