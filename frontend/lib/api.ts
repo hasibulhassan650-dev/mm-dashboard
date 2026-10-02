@@ -55,6 +55,18 @@ export const api = {
     catch { return { as_of: "", calendar_through: null, published: false, next: null, following: [] }; }
   },
   drilldown:       (date: string) => get<DrilldownResult>(`/api/flows/drilldown`, { date }),
+  // Forward schedule split by product. New endpoints — degrade to an empty
+  // payload until the API project redeploys, same as flowsForecast below.
+  // `schedule` must NOT be made to look empty-but-fine on failure in the UI:
+  // the page checks months.length and says the API is behind.
+  schedule:        async (years = 2): Promise<ScheduleByProduct> => {
+    try { return await get<ScheduleByProduct>("/api/flows/by-product", { years }); }
+    catch { return EMPTY_SCHEDULE; }
+  },
+  scheduleDetail:  async (years = 2): Promise<ScheduleDetail> => {
+    try { return await get<ScheduleDetail>("/api/flows/by-product/detail", { years }); }
+    catch { return { from: "", to: "", years, unit: "crore", count: 0, rows: [] }; }
+  },
   // New endpoint — degrade to empty until the backend is deployed with /api/flows/forecast.
   flowsForecast:   async (days = 28): Promise<LiquidityForecast> => {
     try { return await get<LiquidityForecast>("/api/flows/forecast", { days }); }
@@ -281,6 +293,79 @@ const EMPTY_FRESHNESS: Freshness = {
   securities: null, yields: null, secondary: null, omo: null,
   fx: null, callmoney: null, refrate: null, flows: null,
   fxmarket: null, fxrates: null, repo: null,
+};
+
+/** The forward schedule, split by product. Amounts are BDT crore.
+ *
+ *  `auction.status` carries the one distinction that matters: BB publishes its
+ *  auction calendar about a year ahead, and past the end of it a 0 would assert
+ *  "no auction" when the truth is "BB has not said yet". Never render
+ *  `not_published` as a number. */
+export type Product = "T_BOND" | "T_BILL" | "FRTB" | "OTHER";
+export type AuctionCoverage = "published" | "partial" | "not_published";
+export type ProductSplit = Record<Product, number> & { total: number };
+
+export interface ScheduleMonth {
+  month: string;                 // YYYY-MM
+  fiscal_year: string;           // e.g. "2026-27" (Jul–Jun)
+  redemption: ProductSplit;
+  /** T_BILL is always 0: bills are zero-coupon discount instruments. */
+  coupon: ProductSplit;
+  auction: ProductSplit & { status: AuctionCoverage };
+  inflow_total: number;
+  net_borrowing: number;
+}
+
+export interface ScheduleSummary {
+  redemption: ProductSplit;
+  coupon: ProductSplit;
+  auction: ProductSplit;
+  inflow_total: number;
+  net_borrowing: number;
+  months: number;
+  auction_months_published: number;
+  /** False when the span reaches past BB's calendar, so inflows cover more
+   *  months than outflows and net_borrowing is not a like-for-like figure. */
+  net_borrowing_comparable: boolean;
+  fiscal_year?: string;
+}
+
+export interface ScheduleByProduct {
+  from: string; to: string; years: number; unit: string;
+  products: Product[];
+  /** Which products can carry a coupon at all — the rest are structurally 0. */
+  coupon_products: Product[];
+  auction_calendar_to: string | null;
+  last_month_with_flows: string | null;
+  months: ScheduleMonth[];
+  fy_subtotals: ScheduleSummary[];
+  totals: ScheduleSummary;
+}
+
+export interface ScheduleDetailRow {
+  kind: "REDEMPTION" | "COUPON";
+  month: string; payment_date: string; scheduled_date: string | null;
+  product: Product; isin: string; security: string | null;
+  coupon_rate_pct: number | null;
+  amount_crore: number; amount_mill: number;
+}
+
+export interface ScheduleDetail {
+  from: string; to: string; years: number; unit: string;
+  count: number; rows: ScheduleDetailRow[];
+}
+
+const EMPTY_SPLIT: ProductSplit = { T_BOND: 0, T_BILL: 0, FRTB: 0, OTHER: 0, total: 0 };
+const EMPTY_SUMMARY: ScheduleSummary = {
+  redemption: EMPTY_SPLIT, coupon: EMPTY_SPLIT, auction: EMPTY_SPLIT,
+  inflow_total: 0, net_borrowing: 0, months: 0, auction_months_published: 0,
+  net_borrowing_comparable: false,
+};
+const EMPTY_SCHEDULE: ScheduleByProduct = {
+  from: "", to: "", years: 0, unit: "crore",
+  products: ["T_BOND", "T_BILL", "FRTB", "OTHER"], coupon_products: ["T_BOND", "FRTB"],
+  auction_calendar_to: null, last_month_with_flows: null,
+  months: [], fy_subtotals: [], totals: EMPTY_SUMMARY,
 };
 
 /** Interbank FX turnover. Rates are SPOT-only — BB publishes none for

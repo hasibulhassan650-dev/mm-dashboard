@@ -165,3 +165,27 @@ def get_drilldown(date: str = Query(..., description="YYYY-MM-DD")):
         }
     finally:
         session.close()
+
+
+@router.get("/by-product")
+def get_by_product(years: int = Query(2, ge=1, le=20)):
+    """Forward monthly schedule of redemptions, coupons and auction settlements,
+    split T-Bond / T-Bill / FRTB, with Bangladesh FY subtotals. BDT crore."""
+    from engines.schedule import monthly_by_product
+    session = get_session()
+    try:
+        return monthly_by_product(session, years)
+    finally:
+        session.close()
+
+
+@router.get("/by-product/detail")
+def get_by_product_detail(years: int = Query(2, ge=1, le=20)):
+    """Every coupon and maturity behind /by-product — one row each, so any
+    month's figure can be traced back to the securities paying it."""
+    from engines.schedule import event_detail
+    session = get_session()
+    try:
+        return event_detail(session, years)
+    finally:
+        session.close()

@@ -3,16 +3,29 @@ import * as XLSX from "xlsx";
 
 interface Props {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  data: Record<string, any>[];
+  data?: Record<string, any>[];
+  /** Several named sheets in one workbook. When given, `data` is ignored.
+   *  Used by the schedule export, which ships the monthly table and the
+   *  individual coupons and maturities behind it, so any figure in the summary
+   *  can be traced to the securities paying it. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sheets?: { name: string; rows: Record<string, any>[] }[];
   filename: string;
   label?: string;
 }
 
-export default function DownloadButton({ data, filename, label = "Download Excel" }: Props) {
+export default function DownloadButton({ data, sheets, filename, label = "Download Excel" }: Props) {
   function download() {
-    const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Data");
+    if (sheets?.length) {
+      for (const s of sheets) {
+        // Excel rejects a sheet name over 31 chars or containing []:*?/\
+        const name = s.name.replace(/[[\]:*?/\\]/g, " ").slice(0, 31);
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(s.rows), name);
+      }
+    } else {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data ?? []), "Data");
+    }
     XLSX.writeFile(wb, `${filename}.xlsx`);
   }
   return (

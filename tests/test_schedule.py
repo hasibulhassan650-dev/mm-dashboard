@@ -1,0 +1,243 @@
+"""The forward schedule, split by product.
+
+The report could not previously answer "how much T-Bond principal matures in
+March" — daily_net_flow carries only an aggregate coupon and principal figure,
+and is maintained over a rolling window while the events run to 2045. These
+tests pin the two things that make the product split trustworthy rather than
+merely present:
+
+  * a T-Bill coupon of zero is a FACT about zero-coupon discount instruments,
+    not an empty cell, and it must survive into the totals;
+  * past the end of BB's published auction calendar there is no auction figure,
+    and zero must never stand in for it. A stale calendar shown as zero told
+    this desk "no auctions next month" as if it were fact, once already.
+"""
+import datetime
+import os
+import sys
+
+import pytest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+import db as dbmod
+from db import AuctionEvent, CouponEvent, MaturityEvent, Security
+from engines.schedule import event_detail, monthly_by_product
+
+D = datetime.date
+TODAY = D(2026, 10, 15)          # fixed so the window never moves under the tests
+
+
+def _mem():
+    eng = create_engine("sqlite:///:memory:")
+    dbmod.Base.metadata.create_all(eng)
+    return eng, sessionmaker(bind=eng)()
+
+
+def _sec(s, isin, stype, name="x"):
+    s.add(Security(isin=isin, security_type=stype, security_name_norm=name,
+                   outstanding_bdt_mill=1000.0))
+
+
+def _mat(s, isin, pay, mill):
+    s.add(MaturityEvent(isin=isin, scheduled_date=pay, payment_date=pay,
+                        principal_bdt_mill=mill))
+
+
+def _coup(s, isin, pay, mill, rate=10.0):
+    s.add(CouponEvent(isin=isin, scheduled_date=pay, payment_date=pay,
+                      amount_bdt_mill=mill, coupon_rate_used_pct=rate))
+
+
+def _auc(s, settle, stype, mill, tenor="91D", status="CONFIRMED"):
+    s.add(AuctionEvent(fiscal_year="2026-27", auction_date=settle - datetime.timedelta(days=1),
+                       settlement_date=settle, security_type=stype, tenor_label=tenor,
+                       offered_amount_bdt_mill=mill, accepted_amount_bdt_mill=mill,
+                       outflow_status=status, weighted_avg_yield_pct=10.0))
+
+
+def _month(p, ym):
+    return next(m for m in p["months"] if m["month"] == ym)
+
+
+@pytest.fixture
+def seeded():
+    """One of each product, spread over two months and two fiscal years."""
+    eng, s = _mem()
+    _sec(s, "BD0BOND00001", "T_BOND", "10Y BGTB")
+    _sec(s, "BD0BILL00001", "T_BILL", "91D T-BILL")
+    _sec(s, "BD0FRTB00001", "FRTB", "3Y FRTB")
+    # October 2026 — FY 2026-27
+    _mat(s, "BD0BOND00001", D(2026, 10, 20), 5000.0)      # 500 cr
+    _mat(s, "BD0BILL00001", D(2026, 10, 22), 30000.0)     # 3,000 cr
+    _coup(s, "BD0BOND00001", D(2026, 10, 20), 600.0)      # 60 cr
+    _coup(s, "BD0FRTB00001", D(2026, 10, 25), 150.0)      # 15 cr
+    _auc(s, D(2026, 10, 18), "T_BILL", 35000.0)           # 3,500 cr
+    # July 2027 — FY 2027-28
+    _mat(s, "BD0FRTB00001", D(2027, 7, 3), 2000.0)        # 200 cr
+    s.commit()
+    return eng, s
+
+
+class TestProductSegregation:
+    def test_each_product_lands_in_its_own_bucket(self, seeded):
+        _, s = seeded
+        oct26 = _month(monthly_by_product(s, 2, TODAY), "2026-10")
+        assert oct26["redemption"]["T_BOND"] == 500.0
+        assert oct26["redemption"]["T_BILL"] == 3000.0
+        assert oct26["redemption"]["FRTB"] == 0.0
+        assert oct26["coupon"]["T_BOND"] == 60.0
+        assert oct26["coupon"]["FRTB"] == 15.0
+        assert oct26["auction"]["T_BILL"] == 3500.0
+
+    def test_a_total_is_the_sum_of_its_products(self, seeded):
+        # If a product is ever dropped from the split, the total must stop
+        # agreeing — that is what makes this test able to fail.
+        _, s = seeded
+        p = monthly_by_product(s, 2, TODAY)
+        for m in p["months"]:
+            for kind in ("redemption", "coupon", "auction"):
+                parts = sum(m[kind][k] for k in p["products"])
+                assert round(parts, 2) == m[kind]["total"], (m["month"], kind)
+
+    def test_months_are_separated_not_pooled(self, seeded):
+        _, s = seeded
+        p = monthly_by_product(s, 2, TODAY)
+        assert _month(p, "2027-07")["redemption"]["FRTB"] == 200.0
+        assert _month(p, "2026-10")["redemption"]["FRTB"] == 0.0
+
+    def test_an_unmatched_isin_surfaces_as_other_and_stays_in_the_total(self):
+        # An event whose ISIN has no securities row must not vanish from the
+        # month's total just because its product is unknown.
+        eng, s = _mem()
+        _mat(s, "BD0NOSUCH001", D(2026, 10, 9), 7000.0)
+        s.commit()
+        oct26 = _month(monthly_by_product(s, 1, TODAY), "2026-10")
+        assert oct26["redemption"]["OTHER"] == 700.0
+        assert oct26["redemption"]["total"] == 700.0
+
+
+class TestBillsHaveNoCoupon:
+    def test_tbill_coupon_is_zero_not_missing(self, seeded):
+        # Bills are zero-coupon discount instruments. The figure is 0.0 and the
+        # payload names which products can carry a coupon, so a caller never has
+        # to infer that an empty cell means "no data".
+        _, s = seeded
+        p = monthly_by_product(s, 2, TODAY)
+        oct26 = _month(p, "2026-10")
+        assert oct26["coupon"]["T_BILL"] == 0.0
+        assert "T_BILL" not in p["coupon_products"]
+        assert p["coupon_products"] == ["T_BOND", "FRTB"]
+
+    def test_a_bill_only_month_still_totals_correctly(self):
+        eng, s = _mem()
+        _sec(s, "BD0BILL00001", "T_BILL")
+        _mat(s, "BD0BILL00001", D(2026, 11, 5), 10000.0)
+        s.commit()
+        nov = _month(monthly_by_product(s, 1, TODAY), "2026-11")
+        assert nov["coupon"]["total"] == 0.0
+        assert nov["redemption"]["total"] == 1000.0
+        assert nov["inflow_total"] == 1000.0
+
+
+class TestAuctionsBeyondBBsCalendar:
+    """The regression that matters most. BB publishes its auction calendar about
+    a year out; past that we know nothing. Showing 0 would assert there is no
+    auction, which is a different claim from "BB has not said yet" — and the
+    second one is the true one."""
+
+    def test_a_month_past_the_calendar_is_not_published_not_zero(self, seeded):
+        _, s = seeded                      # last auction settles 2026-10-18
+        p = monthly_by_product(s, 2, TODAY)
+        assert p["auction_calendar_to"] == "2026-10-18"
+        far = _month(p, "2027-07")
+        assert far["auction"]["status"] == "not_published"
+
+    def test_a_month_fully_inside_the_calendar_is_published(self, seeded):
+        _, s = seeded
+        _auc(s, D(2026, 11, 30), "T_BILL", 1000.0)      # calendar now ends 30-Nov
+        s.commit()
+        p = monthly_by_product(s, 2, TODAY)
+        assert _month(p, "2026-10")["auction"]["status"] == "published"
+
+    def test_the_month_the_calendar_runs_out_in_is_partial(self, seeded):
+        # BB's calendar ending mid-month means that month's figure is real but
+        # incomplete — the most misleading case if it were called "published".
+        _, s = seeded                      # ends 2026-10-18, mid-October
+        assert _month(monthly_by_product(s, 1, TODAY), "2026-10")["auction"]["status"] == "partial"
+
+    def test_net_borrowing_is_flagged_when_the_two_sides_differ_in_span(self, seeded):
+        # 20 years of inflows against a few weeks of auctions is not a forecast.
+        _, s = seeded
+        t = monthly_by_product(s, 20, TODAY)["totals"]
+        assert t["net_borrowing_comparable"] is False
+        assert t["auction_months_published"] < t["months"]
+
+
+class TestFiscalYears:
+    def test_june_and_july_fall_in_different_fiscal_years(self, seeded):
+        _, s = seeded
+        p = monthly_by_product(s, 2, TODAY)
+        assert _month(p, "2027-06")["fiscal_year"] == "2026-27"
+        assert _month(p, "2027-07")["fiscal_year"] == "2027-28"
+
+    def test_subtotals_tie_back_to_their_months(self, seeded):
+        _, s = seeded
+        p = monthly_by_product(s, 2, TODAY)
+        for fy in p["fy_subtotals"]:
+            mine = [m for m in p["months"] if m["fiscal_year"] == fy["fiscal_year"]]
+            assert fy["months"] == len(mine)
+            for kind in ("redemption", "coupon", "auction"):
+                assert round(sum(m[kind]["total"] for m in mine), 2) == fy[kind]["total"]
+
+    def test_subtotals_add_up_to_the_grand_total(self, seeded):
+        _, s = seeded
+        p = monthly_by_product(s, 2, TODAY)
+        for kind in ("redemption", "coupon", "auction"):
+            assert round(sum(f[kind]["total"] for f in p["fy_subtotals"]), 2) == \
+                   p["totals"][kind]["total"]
+
+
+class TestHorizon:
+    def test_twenty_years_is_allowed_and_one_month_shy_of_it_is_the_end(self, seeded):
+        _, s = seeded
+        p = monthly_by_product(s, 20, TODAY)
+        assert len(p["months"]) == 240
+        assert p["from"] == "2026-10-01" and p["to"] == "2046-09-30"
+
+    @pytest.mark.parametrize("years", [0, 21, -1])
+    def test_a_horizon_outside_one_to_twenty_is_refused(self, seeded, years):
+        _, s = seeded
+        with pytest.raises(ValueError):
+            monthly_by_product(s, years, TODAY)
+
+    def test_the_last_dated_month_is_named_so_empty_tails_read_as_empty(self, seeded):
+        # A 20-year window outruns the longest bond, so it ends in real zeros.
+        # Saying where flows stop keeps that from looking like a data gap.
+        _, s = seeded
+        assert monthly_by_product(s, 20, TODAY)["last_month_with_flows"] == "2027-07"
+
+
+class TestDetailTiesToTheMonthlyTable:
+    def test_every_event_appears_once_and_sums_to_the_month(self, seeded):
+        # The detail sheet is what makes a month auditable; if it did not tie to
+        # the table beside it, it would be worse than not shipping it.
+        _, s = seeded
+        p = monthly_by_product(s, 2, TODAY)
+        d = event_detail(s, 2, TODAY)
+        assert d["count"] == 5                       # 3 maturities + 2 coupons
+        for m in p["months"]:
+            for kind, key in (("REDEMPTION", "redemption"), ("COUPON", "coupon")):
+                rows = [r for r in d["rows"] if r["month"] == m["month"] and r["kind"] == kind]
+                assert round(sum(r["amount_crore"] for r in rows), 2) == m[key]["total"], \
+                    (m["month"], kind)
+
+    def test_detail_carries_the_product_and_both_units(self, seeded):
+        _, s = seeded
+        row = next(r for r in event_detail(s, 2, TODAY)["rows"] if r["isin"] == "BD0BILL00001")
+        assert row["product"] == "T_BILL"
+        assert row["amount_crore"] == 3000.0 and row["amount_mill"] == 30000.0
+        assert row["kind"] == "REDEMPTION"

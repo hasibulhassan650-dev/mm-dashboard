@@ -6,6 +6,7 @@ import DeployStatus from "@/components/DeployStatus";
 const links = [
   { href: "/",           label: "Overview"    },
   { href: "/cashflows",  label: "Cash Flows"  },
+  { href: "/schedule",   label: "Schedule"    },
   { href: "/omo",        label: "OMO"         },
   { href: "/yields",     label: "Yields"      },
   { href: "/callmoney",  label: "Call Money"  },
