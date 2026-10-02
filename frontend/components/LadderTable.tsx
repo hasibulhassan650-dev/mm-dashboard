@@ -53,15 +53,22 @@ export default function LadderTable({ days, omoDataFrom, auctionHorizon }: {
             const isOpen = open.has(d.date);
             const blindOmo = !d.omo_known;
             const blindAuction = auctionHorizon != null && d.date > auctionHorizon;
-            const inflows = d.omo_items.filter((i) => i.liquidity_effect === "INFLOW");
-            const outflows = d.omo_items.filter((i) => i.liquidity_effect === "OUTFLOW");
+            const matIn = d.omo_items.filter((i) => i.liquidity_effect === "INFLOW");
+            const matOut = d.omo_items.filter((i) => i.liquidity_effect === "OUTFLOW");
+            const newIn = (d.omo_new_items ?? []).filter((i) => i.liquidity_effect === "INFLOW");
+            const newOut = (d.omo_new_items ?? []).filter((i) => i.liquidity_effect === "OUTFLOW");
+            const anyItems = d.omo_items.length + (d.omo_new_items ?? []).length;
+            // A day BB has not published has only the maturity leg, so its net
+            // is a roll-off figure, not a liquidity net. Saying so is the whole
+            // point: treating the two as the same thing is what went wrong.
+            const rollOnly = !d.omo_complete && d.omo_known;
             return (
               <>
-                <tr key={d.date} onClick={() => d.omo_items.length && toggle(d.date)}
-                    style={{ cursor: d.omo_items.length ? "pointer" : "default",
+                <tr key={d.date} onClick={() => anyItems && toggle(d.date)}
+                    style={{ cursor: anyItems ? "pointer" : "default",
                              background: isOpen ? "var(--accent-soft)" : undefined }}>
                   <td style={{ color: "var(--fg-mute)", fontSize: 10 }}>
-                    {d.omo_items.length ? (isOpen ? "▾" : "▸") : ""}
+                    {anyItems ? (isOpen ? "▾" : "▸") : ""}
                   </td>
                   <td>
                     <Link href={`/drilldown?date=${d.date}`} style={{ color: "var(--accent)" }}
@@ -84,20 +91,35 @@ export default function LadderTable({ days, omoDataFrom, auctionHorizon }: {
                     {fmtCrore(d.net_crore)}
                   </td>
                   <td className="r mono" style={{ fontWeight: 600 }}>{fmtCrore(d.cum_net_crore)}</td>
-                  <td style={{ fontSize: 11, color: "var(--fg-mute)" }}>
-                    {d.omo_items.length
-                      ? `${d.omo_items.length} OMO line${d.omo_items.length === 1 ? "" : "s"}`
-                      : blindOmo ? "" : "—"}
+                  <td style={{ fontSize: 11 }}>
+                    {blindOmo
+                      ? <span style={{ color: "var(--info)" }}>no OMO data</span>
+                      : rollOnly
+                        ? <span style={{ color: "var(--warn)" }}
+                                title={d.omo_coverage === "future"
+                                  ? "BB has not acted yet — the net is roll-off only"
+                                  : "BB has not published this day's operations yet — the net is roll-off only"}>
+                            roll-off only
+                          </span>
+                        : <span style={{ color: "var(--fg-mute)" }}>
+                            {anyItems ? `${anyItems} OMO line${anyItems === 1 ? "" : "s"}` : "—"}
+                          </span>}
                   </td>
                 </tr>
                 {isOpen && (
                   <tr key={`${d.date}-x`}>
                     <td colSpan={10} style={{ background: "var(--bg-elev)", padding: "10px 14px" }}>
-                      <div style={{ display: "flex", gap: 28, flexWrap: "wrap", fontSize: 12 }}>
-                        <Side title="Injecting — cash returns to banks" items={inflows}
+                      <div style={{ display: "flex", gap: 24, flexWrap: "wrap", fontSize: 12 }}>
+                        <Side title="Dealt — BB lends (injects)" items={newIn}
+                              tone="var(--pos)"
+                              note="new repo / AR / IBLF struck today: cash goes out to banks" />
+                        <Side title="Dealt — BB absorbs (drains)" items={newOut}
+                              tone="var(--neg)"
+                              note="new SDF taken today: banks park cash at BB" />
+                        <Side title="Maturing — cash returns" items={matIn}
                               tone="var(--pos)"
                               note="absorption (SDF) maturing: BB pays the deposit back" />
-                        <Side title="Draining — banks repay BB" items={outflows}
+                        <Side title="Maturing — banks repay BB" items={matOut}
                               tone="var(--neg)"
                               note="injection (repo/AR/IBLF…) maturing: the bank settles up" />
                         <div>
@@ -106,8 +128,12 @@ export default function LadderTable({ days, omoDataFrom, auctionHorizon }: {
                             Day net
                           </div>
                           <div style={{ marginTop: 5, lineHeight: 1.8 }}>
-                            <div>OMO net <b style={{ color: d.omo_net_crore < 0 ? "var(--neg)" : "var(--pos)" }}>
-                              {fmtCrore(d.omo_net_crore)}</b> cr</div>
+                            <div>OMO roll-off <b style={{ color: d.omo_roll_net_crore < 0 ? "var(--neg)" : "var(--pos)" }}>
+                              {fmtCrore(d.omo_roll_net_crore)}</b> cr</div>
+                            <div>OMO net flow <b style={{ color: d.omo_net_crore < 0 ? "var(--neg)" : "var(--pos)" }}>
+                              {fmtCrore(d.omo_net_crore)}</b> cr
+                              {rollOnly && <span style={{ color: "var(--warn)", fontSize: 10.5 }}> (roll-off only)</span>}
+                            </div>
                             <div>Govt inflow <b style={{ color: "var(--pos)" }}>
                               {fmtCrore(d.govt_inflow_crore)}</b> cr</div>
                             <div>Auction out <b style={{ color: "var(--neg)" }}>

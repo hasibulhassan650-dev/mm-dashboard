@@ -58,11 +58,15 @@ export default async function DrilldownPage({
             </span>
           </div>
           <div className="flex flex-wrap items-stretch gap-3 text-xs">
-            <Line label="OMO injecting" hint="absorption (SDF) maturing — BB pays banks back"
+            <Line label="OMO dealt — injected" hint="new repo / AR / IBLF struck today — cash out to banks"
+                  value={liq.omo_new_inflow_crore} tone="pos" known={liq.omo_complete} />
+            <Line label="OMO dealt — absorbed" hint="new SDF taken today — banks park cash at BB"
+                  value={-liq.omo_new_outflow_crore} tone="neg" known={liq.omo_complete} />
+            <Line label="OMO maturing — returns" hint="absorption (SDF) maturing — BB pays banks back"
                   value={liq.omo_inflow_crore} tone="pos" known={liq.omo_known} />
-            <Line label="OMO draining" hint="injection (repo/AR/IBLF…) maturing — banks repay BB"
+            <Line label="OMO maturing — repaid" hint="injection maturing — banks repay BB"
                   value={-liq.omo_outflow_crore} tone="neg" known={liq.omo_known} />
-            <Line label="OMO net" value={liq.omo_net_crore} tone="auto" known={liq.omo_known} strong />
+            <Line label="OMO NET" value={liq.omo_net_crore} tone="auto" known={liq.omo_known} strong />
             <Line label="Govt inflow" hint="coupons + principal redemptions"
                   value={liq.govt_inflow_crore} tone="pos" known />
             <Line label="Auction outflow" hint="banks pay for new issuance"
@@ -70,6 +74,13 @@ export default async function DrilldownPage({
             <Line label="TOTAL NET" value={liq.total_net_crore} tone="auto"
                   known={liq.omo_known} strong big />
           </div>
+          {liq.omo_known && !liq.omo_complete && (
+            <p className="t-warn" style={{ fontSize: 11, marginTop: 8, marginBottom: 0 }}>
+              {liq.omo_coverage === "future"
+                ? "BB has not acted on this date yet, so only the maturity legs are known — this is a roll-off figure, not a liquidity net."
+                : "BB has not published this date's operations yet, so only the maturity legs are known — this is a roll-off figure, not a liquidity net. It will fill in."}
+            </p>
+          )}
         </div>
       )}
 
@@ -86,27 +97,29 @@ export default async function DrilldownPage({
       {/* OMO maturing today */}
       <div className="rounded-xl border bd b-panel p-4">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-medium t-dim">OMO Maturing ({omo.length})</h2>
+          <h2 className="text-sm font-medium t-dim">OMO Operations — dealt &amp; maturing ({omo.length})</h2>
           {omo.length > 0 && <DownloadButton data={omo} filename={`omo_${date}`} label="Excel" />}
         </div>
         {omo.length === 0
           ? <p className="text-xs t-mute">
               {liq && !liq.omo_known
                 ? "No OMO data this far back — absent, not zero. BB operations are recorded from a later date."
-                : "No OMO tranche matures on this date"}
+                : "No OMO dealt or maturing on this date"}
             </p>
           : <table className="w-full text-xs">
               <thead><tr className="t-dim border-b bd">
+                <th className="pb-1 pr-2 text-left">Leg</th>
                 <th className="pb-1 pr-2 text-left">Instrument</th>
                 <th className="pb-1 pr-2 text-left">Tenor</th>
                 <th className="pb-1 pr-2 text-right">Rate</th>
-                <th className="pb-1 pr-2 text-left">Transacted</th>
+                <th className="pb-1 pr-2 text-left">Other date</th>
                 <th className="pb-1 pr-2 text-left">Effect today</th>
                 <th className="pb-1 text-right">Amount (cr)</th>
               </tr></thead>
               <tbody>
                 {omo.map((o, i) => (
                   <tr key={i} className="border-b bd">
+                    <td className="py-1 pr-2 t-dim">{o.leg === "DEALT" ? "dealt" : "maturing"}</td>
                     <td className="py-1 pr-2 t-fg">{o.instrument}</td>
                     <td className="py-1 pr-2 t-dim">{o.tenor_label ?? "—"}</td>
                     <td className="py-1 pr-2 text-right t-dim">{o.rate_pct != null ? `${o.rate_pct}%` : "—"}</td>

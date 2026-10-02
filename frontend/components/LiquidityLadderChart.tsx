@@ -9,12 +9,17 @@ import { fmtDateShort, fmtCrore } from "@/lib/format";
 
 // Palette validated (dataviz six-checks, dark surface): teal/blue = cash to
 // banks, red/amber = cash out of banks, neutral line = cumulative.
+// Cash INTO banks is teal/blue/green; cash OUT is red/orange/maroon. Both OMO
+// legs appear: a tranche injects or absorbs on its deal date and reverses at
+// maturity, and showing only the maturity half made the ladder wrong.
 const SERIES = [
-  { key: "govt",      label: "Govt Inflow",     color: "var(--s-teal)" },
-  { key: "omoReturn", label: "OMO Return (SDF)", color: "var(--s-blue)" },
-  { key: "auction",   label: "Auction Settle",  color: "var(--s-red)" },
-  { key: "omoRepay",  label: "OMO Repayment",   color: "var(--s-orange)" },
-  { key: "cum",       label: "Cumulative Net",  color: "var(--fg)" },
+  { key: "govt",      label: "Govt Inflow",      color: "var(--s-teal)" },
+  { key: "omoNew",    label: "OMO Dealt (new injection)", color: "var(--s-green)" },
+  { key: "omoReturn", label: "OMO Maturing (SDF returns)", color: "var(--s-blue)" },
+  { key: "auction",   label: "Auction Settle",   color: "var(--s-red)" },
+  { key: "omoRepay",  label: "OMO Maturing (banks repay)", color: "var(--s-orange)" },
+  { key: "omoAbsorb", label: "OMO Dealt (new SDF)", color: "var(--s-maroon)" },
+  { key: "cum",       label: "Cumulative Net",   color: "var(--fg)" },
 ];
 
 export default function LiquidityLadderChart({ data }: { data: LiquidityForecastDay[] }) {
@@ -27,8 +32,10 @@ export default function LiquidityLadderChart({ data }: { data: LiquidityForecast
     date:      fmtDateShort(d.date),
     govt:      d.govt_inflow_crore,
     omoReturn: d.omo_return_crore,
+    omoNew:    d.omo_new_inflow_crore ?? 0,
     auction:   -d.auction_out_crore,
     omoRepay:  -d.omo_repay_crore,
+    omoAbsorb: -(d.omo_new_outflow_crore ?? 0),
     cum:       d.cum_net_crore,
   }));
 

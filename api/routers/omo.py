@@ -148,47 +148,67 @@ def export_maturity_ladder(days: int = Query(None, ge=1, le=400),
         session.close()
 
     instruments = p["instruments"]
+    COVER = {"complete": "complete", "awaiting_publication": "not published yet",
+             "future": "BB has not acted yet", "no_data": "no data"}
     daily = []
     for d in p["days"]:
         row = {"Date": d["date"], "Day": d["weekday"]}
         for i in instruments:
-            row[i] = d["by_instrument"].get(i)       # absent = blank, not 0
-        row["Inflow (SDF maturing)"] = d["inflow_crore"]
-        row["Outflow (injections maturing)"] = d["outflow_crore"]
-        row["Net"] = d["net_crore"]
-        row["Cumulative Net"] = d["cum_net_crore"]
+            row[f"Matured {i}"] = d["by_instrument"].get(i)    # absent = blank, not 0
+        for i in instruments:
+            row[f"Dealt {i}"] = d["new_by_instrument"].get(i)
+        row["Maturing In"] = d["inflow_crore"]
+        row["Maturing Out"] = d["outflow_crore"]
+        row["Net Roll-off"] = d["roll_net_crore"]
+        row["New Injection"] = d["new_inflow_crore"]
+        row["New Absorption"] = d["new_outflow_crore"]
+        row["Net OMO Flow"] = d["net_crore"]
+        row["Cumulative Net Flow"] = d["cum_net_crore"]
+        row["Coverage"] = COVER.get(d["omo_coverage"], d["omo_coverage"])
         daily.append(row)
 
     tranches = [{
-        "Maturity Date": d["date"], "Day": d["weekday"], "Instrument": i["instrument"],
-        "Original Direction": i["direction"],
-        "Effect at Maturity": "Inflow (cash to banks)" if i["liquidity_effect"] == "INFLOW"
-                              else "Outflow (banks repay BB)",
+        "Date": d["date"], "Day": d["weekday"], "Leg": leg,
+        "Instrument": i["instrument"], "Original Direction": i["direction"],
+        "Effect That Day": "Inflow (cash to banks)" if i["liquidity_effect"] == "INFLOW"
+                           else "Outflow (cash to BB)",
         "Amount (crore)": i["crore"],
-    } for d in p["days"] for i in d["items"]]
+    } for d in p["days"]
+      for leg, src in (("Dealt", d["new_items"]), ("Maturing", d["items"]))
+      for i in src]
 
-    totals = [{"Instrument": i, "Total (crore)": p["instrument_totals"][i]} for i in instruments]
+    totals = [{"Instrument": i,
+               "Matured (crore)": p["instrument_totals"].get(i),
+               "Dealt (crore)": p["new_instrument_totals"].get(i)} for i in instruments]
 
     body = build_workbook(
         "Bangladesh Bank OMO Maturity Ladder",
-        [("Daily ladder by product", daily), ("Tranche detail", tranches),
+        [("Daily ladder by product", daily), ("Operation detail", tranches),
          ("Totals by instrument", totals)],
         facts=[("Window", f"{p['from']} to {p['to']}"), ("Unit", "BDT crore"),
                ("As of", p["as_of"]), ("OMO data from", p["omo_data_from"]),
-               ("OMO maturities to", p["omo_data_to"]),
-               ("Total inflow", p["total_inflow_crore"]),
-               ("Total outflow", p["total_outflow_crore"]),
-               ("Total net", p["total_net_crore"]),
+               ("OMO operations published to", p["omo_dealt_to"]),
+               ("OMO maturities known to", p["omo_data_to"]),
+               ("Total maturing in", p["total_inflow_crore"]),
+               ("Total maturing out", p["total_outflow_crore"]),
+               ("Net roll-off", p["total_roll_net_crore"]),
+               ("Total newly injected", p["total_new_inflow_crore"]),
+               ("Total newly absorbed", p["total_new_outflow_crore"]),
+               ("Net OMO flow", p["total_net_crore"]),
                ("Source", "Bangladesh Bank OMO press releases")],
         caveats=[
-            "An OMO's effect at maturity is the REVERSE of its original direction: an SDF "
-            "(absorption) maturing returns cash to banks; a repo/AR/IBLF (injection) maturing "
-            "takes cash out as the bank repays BB.",
-            "Blank instrument cells mean that instrument had nothing maturing that day.",
+            "Every tranche moves liquidity TWICE, with opposite signs. On its DEAL date a new "
+            "repo/AR/IBLF injects and a new SDF absorbs. At MATURITY the signs reverse: the "
+            "repo is repaid so cash leaves, the SDF is returned so cash arrives.",
+            "'Net Roll-off' is the maturity legs only — the funding cliff. 'Net OMO Flow' is "
+            "all four legs — what actually happened to liquidity. They are different questions "
+            "and only the second is a liquidity net.",
+            f"Fresh operations are known only to {p['omo_dealt_to']}; after that the Coverage "
+            "column says so and Net OMO Flow equals the roll-off, because BB's deals for those "
+            "days are not published (or have not happened).",
+            "Blank instrument cells mean that instrument had nothing on that leg that day.",
             "Maturity-only lines published by BB (accepted = 0) are excluded, so the roll-off "
             "is not double-counted against the tranches they describe.",
-            "Derived from live tranches. BB also prints its own maturity figures, and the "
-            "weekly deep audit reconciles the two.",
         ],
     )
     return Response(content=body, media_type=XLSX_MEDIA, headers={

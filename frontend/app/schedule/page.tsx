@@ -161,6 +161,60 @@ export default async function SchedulePage({
       )}
 
       <div className="grid12">
+        <Panel title="By Product — Inflow, Outflow and Net"
+          sub={`${data.from} → ${data.to} · BDT crore · where each product leaves you long or short`}
+          span={12} pad={false}>
+          <div className="table-wrap">
+            <table className="dt">
+              <thead><tr>
+                <th>Product</th>
+                <th className="r">Principal In</th>
+                <th className="r">Coupon In</th>
+                <th className="r">Total In</th>
+                <th className="r">Auction Out</th>
+                <th className="r">Net</th>
+              </tr></thead>
+              <tbody>
+                {products.map((k) => {
+                  const bp = t.by_product[k];
+                  if (!bp || (!bp.inflow && !bp.outflow)) return null;
+                  return (
+                    <tr key={k}>
+                      <td style={{ fontWeight: 600 }}>{LABEL[k]}</td>
+                      {cell(bp.redemption)}
+                      <td className="r mono">
+                        {data.coupon_products.includes(k)
+                          ? num(bp.coupon)
+                          : <span title="Zero-coupon discount instrument — no coupon by construction"
+                                  style={{ color: "var(--fg-mute)" }}>n/a</span>}
+                      </td>
+                      {cell(bp.inflow)}
+                      <td className="r mono neg">{bp.outflow == null ? "—" : num(bp.outflow)}</td>
+                      <td className="r mono" style={{ fontWeight: 600 }}>
+                        {bp.net == null
+                          ? <span style={{ color: "var(--info)", fontSize: 10.5 }}
+                                  title="BB has not published auctions for part of this window, so a net would be an artefact">
+                              part-published
+                            </span>
+                          : <span className={bp.net < 0 ? "neg" : "pos"}>
+                              {bp.net < 0 ? "▼" : "▲"} {Math.abs(Math.round(bp.net)).toLocaleString()}
+                            </span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p style={{ margin: 0, padding: "8px 12px", fontSize: 11.5, color: "var(--fg-mute)",
+                      borderTop: "1px solid var(--border)" }}>
+            Inflow is principal redemption plus coupon; outflow is auction settlement. A negative
+            net means you fund more than you receive in that product over this window. Net is
+            withheld wherever BB&rsquo;s auction calendar does not cover the whole window —
+            netting a real inflow against an absent outflow would read as a surplus.
+          </p>
+        </Panel>
+
         <Panel title="Redemptions & Coupons by Product" sub={`${data.from} → ${data.to}`} span={12}>
           <ScheduleChart data={data} />
         </Panel>

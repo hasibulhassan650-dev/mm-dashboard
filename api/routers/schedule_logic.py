@@ -143,6 +143,7 @@ def monthly_by_product(session, years: int = 2, today: datetime.date = None) -> 
             "month": ym, "fiscal_year": fiscal_year(d), **parts,
             "inflow_total": inflow,
             "net_borrowing": round(parts["auction"]["total"] - inflow, 2),
+            "by_product": _by_product(raw, status),
         })
         d = _next_month(d)
 
@@ -166,6 +167,32 @@ def monthly_by_product(session, years: int = 2, today: datetime.date = None) -> 
         "last_month_with_flows": dated[-1] if dated else None,
         "months": months, "fy_subtotals": fys, "totals": summarise(months),
     }
+
+
+def _by_product(raw: Dict[str, Dict[str, float]], status: str) -> Dict[str, dict]:
+    """Each product's own inflow, outflow and net.
+
+    The report nets at the month level, which cannot answer "where am I long or
+    short T-Bond". inflow is principal redemption plus coupon (structurally 0
+    for T-Bill, a zero-coupon instrument); outflow is auction settlement.
+
+    `net` is withheld -- None -- when BB has not published auctions for the
+    month. Netting a real inflow against an absent outflow would report every
+    unpublished month as a large product surplus, which is the same mistake as
+    treating a missing auction calendar as zero borrowing.
+    """
+    out: Dict[str, dict] = {}
+    for k in PRODUCTS + (OTHER,):
+        inflow = round(raw["redemption"][k] + raw["coupon"][k], 2)
+        outflow = round(raw["auction"][k], 2)
+        out[k] = {
+            "redemption": round(raw["redemption"][k], 2),
+            "coupon": round(raw["coupon"][k], 2),
+            "inflow": inflow,
+            "outflow": None if status == "not_published" else outflow,
+            "net": None if status == "not_published" else round(inflow - outflow, 2),
+        }
+    return out
 
 
 def summarise(months: List[dict]) -> dict:
@@ -196,27 +223,59 @@ def summarise(months: List[dict]) -> dict:
     res["months"] = len(months)
     res["auction_months_published"] = published
     res["net_borrowing_comparable"] = published == len(months)
+
+    # Per-product roll-up. The net is comparable only where every month's
+    # auction side is published, for the same reason as net_borrowing above.
+    comparable = published == len(months)
+    bp: Dict[str, dict] = {}
+    for k in PRODUCTS + (OTHER,):
+        red = round(sum(m["by_product"][k]["redemption"] for m in months), 2)
+        cpn = round(sum(m["by_product"][k]["coupon"] for m in months), 2)
+        outflow = round(sum(m["auction"][k] for m in months), 2)
+        bp[k] = {
+            "redemption": red, "coupon": cpn, "inflow": round(red + cpn, 2),
+            "outflow": outflow,
+            "net": round(red + cpn - outflow, 2) if comparable else None,
+            "net_comparable": comparable,
+        }
+    res["by_product"] = bp
     return res
 
 
+# The inflow legs carry an ISIN and a security; the auction leg does not (it is
+# an event, not an instrument), so it supplies tenor and status instead. All
+# three land in one stream so a month's figure can be traced on BOTH sides --
+# auctions were previously summarised monthly and never itemised at all, which
+# left the outflow half of the report unauditable.
 _DETAIL = (
     ("REDEMPTION", """
         SELECT m.payment_date AS d, m.isin AS isin, s.security_name_norm AS nm,
                s.security_type AS st, m.principal_bdt_mill AS amt,
-               NULL AS rate, m.scheduled_date AS sched
+               NULL AS rate, m.scheduled_date AS sched,
+               NULL AS tenor, NULL AS status, NULL AS offered
         FROM maturity_events m LEFT JOIN securities s ON m.isin = s.isin
         WHERE m.payment_date BETWEEN :start AND :end"""),
     ("COUPON", """
         SELECT c.payment_date AS d, c.isin AS isin, s.security_name_norm AS nm,
                s.security_type AS st, c.amount_bdt_mill AS amt,
-               c.coupon_rate_used_pct AS rate, c.scheduled_date AS sched
+               c.coupon_rate_used_pct AS rate, c.scheduled_date AS sched,
+               NULL AS tenor, NULL AS status, NULL AS offered
         FROM coupon_events c LEFT JOIN securities s ON c.isin = s.isin
         WHERE c.payment_date BETWEEN :start AND :end"""),
+    ("AUCTION", """
+        SELECT settlement_date AS d, NULL AS isin, NULL AS nm,
+               security_type AS st,
+               COALESCE(accepted_amount_bdt_mill, offered_amount_bdt_mill, 0) AS amt,
+               weighted_avg_yield_pct AS rate, auction_date AS sched,
+               tenor_label AS tenor, outflow_status AS status,
+               offered_amount_bdt_mill AS offered
+        FROM auction_events
+        WHERE settlement_date BETWEEN :start AND :end"""),
 )
 
 
 def event_detail(session, years: int = 2, today: datetime.date = None) -> dict:
-    """Every coupon and maturity behind monthly_by_product, one row each.
+    """Every coupon, maturity AND auction behind monthly_by_product, one row each.
 
     This is what makes a month's figure auditable: the export ships it beside
     the monthly table, so any total can be traced to the securities paying it
@@ -231,13 +290,23 @@ def event_detail(session, years: int = 2, today: datetime.date = None) -> dict:
         for r in session.execute(text(sql), p).fetchall():
             pay = _d(r.d)
             rows.append({
-                "kind": kind, "month": pay.strftime("%Y-%m"), "payment_date": str(pay),
+                "kind": kind,
+                # inflow for the two G-sec legs, outflow for an auction
+                "direction": "OUTFLOW" if kind == "AUCTION" else "INFLOW",
+                "month": pay.strftime("%Y-%m"), "payment_date": str(pay),
                 "scheduled_date": str(_d(r.sched)) if r.sched else None,
                 "product": _bucket(r.st), "isin": r.isin, "security": r.nm,
                 "coupon_rate_pct": r.rate,
+                "tenor_label": r.tenor,
+                # PLANNED is BB's calendar target, not a settled fact. Carried
+                # through so a plan is never summed as an actual.
+                "status": r.status,
+                "offered_crore": (round(float(r.offered) / CRORE_TO_MILLION, 2)
+                                  if r.offered is not None else None),
                 "amount_crore": round(float(r.amt or 0) / CRORE_TO_MILLION, 2),
                 "amount_mill": round(float(r.amt or 0), 2),
             })
-    rows.sort(key=lambda x: (x["payment_date"], x["kind"], x["isin"] or ""))
+    rows.sort(key=lambda x: (x["payment_date"], x["kind"], x["isin"] or "",
+                             x["tenor_label"] or ""))
     return {"from": str(start), "to": str(end), "years": years, "unit": "crore",
             "count": len(rows), "rows": rows}

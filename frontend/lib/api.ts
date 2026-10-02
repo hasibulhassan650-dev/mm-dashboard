@@ -98,8 +98,10 @@ export const api = {
     try { return await get<OmoMaturityLadder>("/api/omo/maturity-ladder", q); }
     catch {
       return { as_of: "", from: "", to: "", unit: "BDT crore", days: [], instruments: [],
-               instrument_totals: {}, total_inflow_crore: 0, total_outflow_crore: 0,
-               total_net_crore: 0 };
+               instrument_totals: {}, new_instrument_totals: {},
+               total_inflow_crore: 0, total_outflow_crore: 0,
+               total_new_inflow_crore: 0, total_new_outflow_crore: 0,
+               total_roll_net_crore: 0, total_net_crore: 0 };
     }
   },
   // Non-critical: must never break a page. Returns all-nulls if the endpoint is unavailable.
@@ -335,6 +337,15 @@ export type Product = "T_BOND" | "T_BILL" | "FRTB" | "OTHER";
 export type AuctionCoverage = "published" | "partial" | "not_published";
 export type ProductSplit = Record<Product, number> & { total: number };
 
+/** One product's own side of the ledger. `outflow` and `net` are null when BB
+ *  has not published auctions for the period - netting a real inflow against an
+ *  absent outflow would report a surplus that is an artefact. */
+export interface ProductLedger {
+  redemption: number; coupon: number; inflow: number;
+  outflow: number | null; net: number | null;
+  net_comparable?: boolean;
+}
+
 export interface ScheduleMonth {
   month: string;                 // YYYY-MM
   fiscal_year: string;           // e.g. "2026-27" (Jul–Jun)
@@ -344,6 +355,7 @@ export interface ScheduleMonth {
   auction: ProductSplit & { status: AuctionCoverage };
   inflow_total: number;
   net_borrowing: number;
+  by_product: Record<Product, ProductLedger>;
 }
 
 export interface ScheduleSummary {
@@ -357,6 +369,7 @@ export interface ScheduleSummary {
   /** False when the span reaches past BB's calendar, so inflows cover more
    *  months than outflows and net_borrowing is not a like-for-like figure. */
   net_borrowing_comparable: boolean;
+  by_product: Record<Product, ProductLedger>;
   fiscal_year?: string;
 }
 
@@ -373,10 +386,15 @@ export interface ScheduleByProduct {
 }
 
 export interface ScheduleDetailRow {
-  kind: "REDEMPTION" | "COUPON";
+  kind: "REDEMPTION" | "COUPON" | "AUCTION";
+  direction: "INFLOW" | "OUTFLOW";
   month: string; payment_date: string; scheduled_date: string | null;
-  product: Product; isin: string; security: string | null;
+  product: Product; isin: string | null; security: string | null;
   coupon_rate_pct: number | null;
+  tenor_label: string | null;
+  /** PLANNED is BB's calendar target, not a settled amount. */
+  status: string | null;
+  offered_crore: number | null;
   amount_crore: number; amount_mill: number;
 }
 
@@ -386,10 +404,14 @@ export interface ScheduleDetail {
 }
 
 const EMPTY_SPLIT: ProductSplit = { T_BOND: 0, T_BILL: 0, FRTB: 0, OTHER: 0, total: 0 };
+const EMPTY_LEDGER: ProductLedger = { redemption: 0, coupon: 0, inflow: 0, outflow: null, net: null };
+const EMPTY_BY_PRODUCT: Record<Product, ProductLedger> = {
+  T_BOND: EMPTY_LEDGER, T_BILL: EMPTY_LEDGER, FRTB: EMPTY_LEDGER, OTHER: EMPTY_LEDGER,
+};
 const EMPTY_SUMMARY: ScheduleSummary = {
   redemption: EMPTY_SPLIT, coupon: EMPTY_SPLIT, auction: EMPTY_SPLIT,
   inflow_total: 0, net_borrowing: 0, months: 0, auction_months_published: 0,
-  net_borrowing_comparable: false,
+  net_borrowing_comparable: false, by_product: EMPTY_BY_PRODUCT,
 };
 const EMPTY_SCHEDULE: ScheduleByProduct = {
   from: "", to: "", years: 0, unit: "crore",
@@ -516,22 +538,40 @@ export interface OmoMaturityItem {
  *  the UI reads the blind spots from data instead of a constant that will rot. */
 export interface SourceHorizons {
   omo_data_from?: string | null;
+  /** Last day BB's operations are published. After this the fresh-deal leg is
+   *  unknown, so a day's net is roll-off only. */
+  omo_dealt_to?: string | null;
   omo_data_to?: string | null;
   auction_horizon?: string | null;
   flows_data_from?: string | null;
   flows_data_to?: string | null;
 }
 
+/** Whether the FRESH-DEAL leg is known for a day. `awaiting_publication` will
+ *  resolve when BB publishes; `future` never will. Neither may render as 0. */
+export type OmoCoverage = "complete" | "awaiting_publication" | "future" | "no_data";
+
 export interface LiquidityForecastDay {
   date: string; weekday: string;
-  omo_return_crore: number; omo_repay_crore: number; omo_net_crore: number;
+  /** maturity legs */
+  omo_return_crore: number; omo_repay_crore: number;
+  /** deal-date legs - a new repo injects, a new SDF absorbs */
+  omo_new_inflow_crore: number; omo_new_outflow_crore: number;
+  /** maturity legs only: the funding cliff, NOT a liquidity net */
+  omo_roll_net_crore: number;
+  /** all four legs: what actually happened to liquidity */
+  omo_net_crore: number;
+  omo_coverage: OmoCoverage;
   govt_inflow_crore: number; auction_out_crore: number;
   net_crore: number; cum_net_crore: number;
-  omo_items: OmoMaturityItem[];
+  omo_items: OmoMaturityItem[];       // maturing
+  omo_new_items: OmoMaturityItem[];   // dealt
   flows_confirmed: boolean;
-  /** False when the day predates OMO data. The OMO figures are then ABSENT,
-   *  not zero, and must never be rendered as 0. */
+  /** False when the day predates OMO data - figures ABSENT, not zero. */
   omo_known: boolean;
+  /** True only when BOTH legs are known, so net_crore is a liquidity net
+   *  rather than a roll-off figure. */
+  omo_complete: boolean;
   is_past: boolean;
 }
 export interface LiquidityForecast extends SourceHorizons {
@@ -541,10 +581,19 @@ export interface LiquidityForecast extends SourceHorizons {
 
 export interface OmoLadderDay {
   date: string; weekday: string;
+  /** maturing */
   inflow_crore: number; outflow_crore: number;
+  /** dealt that day */
+  new_inflow_crore: number; new_outflow_crore: number;
+  /** maturity legs only - the funding cliff */
+  roll_net_crore: number;
+  /** all four legs - the liquidity flow */
   net_crore: number; cum_net_crore: number;
   by_instrument: Record<string, number>;
+  new_by_instrument: Record<string, number>;
   items: OmoMaturityItem[];
+  new_items: OmoMaturityItem[];
+  omo_coverage: OmoCoverage;
   is_past: boolean;
 }
 export interface OmoMaturityLadder extends SourceHorizons {
@@ -552,7 +601,10 @@ export interface OmoMaturityLadder extends SourceHorizons {
   days: OmoLadderDay[];
   instruments: string[];
   instrument_totals: Record<string, number>;
-  total_inflow_crore: number; total_outflow_crore: number; total_net_crore: number;
+  new_instrument_totals: Record<string, number>;
+  total_inflow_crore: number; total_outflow_crore: number;
+  total_new_inflow_crore: number; total_new_outflow_crore: number;
+  total_roll_net_crore: number; total_net_crore: number;
 }
 
 export interface CallMoneyDailySummary {
@@ -607,18 +659,21 @@ export interface DrilldownResult {
     weighted_avg_yield_pct: number; outflow_status: string; roll_days: number }[];
   /** Added later and optional on purpose: the deployed API may still be the
    *  older build, and the page degrades rather than crashing. */
-  omo?: (OmoMaturityItem & { tenor_label: string | null; rate_pct: number | null;
-    transacted_from: string | null })[];
-  omo_by_instrument?: { instrument: string; liquidity_effect: "INFLOW" | "OUTFLOW";
-    crore: number }[];
+  omo?: (OmoMaturityItem & { leg: "DEALT" | "MATURING"; tenor_label: string | null;
+    rate_pct: number | null; transacted_from: string | null })[];
+  omo_by_instrument?: { instrument: string; leg: "DEALT" | "MATURING";
+    liquidity_effect: "INFLOW" | "OUTFLOW"; crore: number }[];
   liquidity?: {
     unit: string;
-    omo_inflow_crore: number; omo_outflow_crore: number; omo_net_crore: number;
+    omo_new_inflow_crore: number; omo_new_outflow_crore: number;
+    omo_inflow_crore: number; omo_outflow_crore: number;
+    omo_roll_net_crore: number; omo_net_crore: number;
     coupon_inflow_crore: number; principal_inflow_crore: number;
     govt_inflow_crore: number;
     auction_outflow_crore: number; auction_net_crore: number;
     total_net_crore: number;
-    omo_known: boolean; auction_known: boolean;
+    omo_coverage: OmoCoverage;
+    omo_known: boolean; omo_complete: boolean; auction_known: boolean;
   };
   omo_data_from?: string | null;
   auction_horizon?: string | null;

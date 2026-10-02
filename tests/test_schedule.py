@@ -208,6 +208,64 @@ class TestFiscalYears:
                    p["totals"][kind]["total"]
 
 
+class TestPerProductNetting:
+    """The report netted only at month level, so it could not say where you are
+    long or short a single product."""
+
+    def test_each_products_net_is_its_own_inflow_minus_its_own_outflow(self, seeded):
+        _, s = seeded
+        oct26 = _month(monthly_by_product(s, 2, TODAY), "2026-10")
+        bp = oct26["by_product"]
+        # T-Bond: 500 principal + 60 coupon in, nothing auctioned
+        assert bp["T_BOND"]["inflow"] == 560.0
+        assert bp["T_BOND"]["outflow"] == 0.0
+        assert bp["T_BOND"]["net"] == 560.0
+        # T-Bill: 3,000 principal in (no coupon -- zero-coupon), 3,500 auctioned out
+        assert bp["T_BILL"]["inflow"] == 3000.0
+        assert bp["T_BILL"]["coupon"] == 0.0
+        assert bp["T_BILL"]["outflow"] == 3500.0
+        assert bp["T_BILL"]["net"] == -500.0
+
+    def test_the_products_inflows_sum_to_the_months_inflow(self, seeded):
+        _, s = seeded
+        p = monthly_by_product(s, 2, TODAY)
+        for m in p["months"]:
+            assert round(sum(m["by_product"][k]["inflow"] for k in p["products"]), 2) == \
+                m["inflow_total"], m["month"]
+
+    def test_an_unpublished_month_withholds_the_product_net(self, seeded):
+        # Netting a real inflow against an ABSENT outflow would report every
+        # unpublished month as a large product surplus. A test asserting a
+        # number here would pass on exactly the wrong behaviour.
+        _, s = seeded
+        far = _month(monthly_by_product(s, 2, TODAY), "2027-07")
+        assert far["auction"]["status"] == "not_published"
+        assert far["by_product"]["T_BOND"]["net"] is None
+        assert far["by_product"]["T_BOND"]["outflow"] is None
+        # the inflow side is still known and still reported
+        assert far["by_product"]["FRTB"]["inflow"] == 200.0
+
+    def test_the_horizon_roll_up_carries_a_net_per_product(self, seeded):
+        _, s = seeded
+        p = monthly_by_product(s, 2, TODAY)
+        bp = p["totals"]["by_product"]
+        assert bp["T_BILL"]["redemption"] == 3000.0
+        assert bp["T_BILL"]["outflow"] == 3500.0
+        # the window reaches past BB's calendar, so the net is not comparable
+        assert bp["T_BILL"]["net_comparable"] is False
+        assert bp["T_BILL"]["net"] is None
+
+    def test_a_fully_published_window_does_give_a_product_net(self):
+        eng, s = _mem()
+        _sec(s, "BD0BILL00001", "T_BILL")
+        _mat(s, "BD0BILL00001", D(2026, 10, 20), 30000.0)
+        _auc(s, D(2026, 10, 18), "T_BILL", 35000.0)
+        _auc(s, D(2026, 10, 31), "T_BILL", 1.0)        # calendar covers the month
+        s.commit()
+        bp = monthly_by_product(s, 1, TODAY)["months"][0]["by_product"]
+        assert bp["T_BILL"]["net"] == round(3000.0 - 3500.1, 2)
+
+
 class TestHorizon:
     def test_twenty_years_is_allowed_and_one_month_shy_of_it_is_the_end(self, seeded):
         _, s = seeded
@@ -235,12 +293,42 @@ class TestDetailTiesToTheMonthlyTable:
         _, s = seeded
         p = monthly_by_product(s, 2, TODAY)
         d = event_detail(s, 2, TODAY)
-        assert d["count"] == 5                       # 3 maturities + 2 coupons
+        assert d["count"] == 6            # 3 maturities + 2 coupons + 1 auction
         for m in p["months"]:
-            for kind, key in (("REDEMPTION", "redemption"), ("COUPON", "coupon")):
+            for kind, key in (("REDEMPTION", "redemption"), ("COUPON", "coupon"),
+                              ("AUCTION", "auction")):
                 rows = [r for r in d["rows"] if r["month"] == m["month"] and r["kind"] == kind]
                 assert round(sum(r["amount_crore"] for r in rows), 2) == m[key]["total"], \
                     (m["month"], kind)
+
+    def test_auctions_are_itemised_at_all(self, seeded):
+        # They were not: event_detail queried only maturity_events and
+        # coupon_events, so the OUTFLOW half of the report could not be traced
+        # to source or exported per auction.
+        _, s = seeded
+        rows = [r for r in event_detail(s, 2, TODAY)["rows"] if r["kind"] == "AUCTION"]
+        assert len(rows) == 1
+        r = rows[0]
+        assert r["direction"] == "OUTFLOW"
+        assert r["product"] == "T_BILL" and r["tenor_label"] == "91D"
+        assert r["amount_crore"] == 3500.0
+        assert r["isin"] is None          # an auction is an event, not an instrument
+
+    def test_a_planned_auction_is_marked_so_it_is_not_summed_as_settled(self):
+        # BB's calendar target is a plan. Summing it as an actual would report
+        # borrowing that has not happened.
+        eng, s = _mem()
+        _sec(s, "BD0BILL00001", "T_BILL")
+        s.add(AuctionEvent(fiscal_year="2026-27", auction_date=D(2026, 11, 1),
+                           settlement_date=D(2026, 11, 2), security_type="T_BILL",
+                           tenor_label="91D", offered_amount_bdt_mill=20000.0,
+                           outflow_status="PLANNED"))
+        s.commit()
+        rows = [r for r in event_detail(s, 1, TODAY)["rows"] if r["kind"] == "AUCTION"]
+        assert rows[0]["status"] == "PLANNED"
+        # with nothing accepted yet the figure falls back to the offered amount
+        assert rows[0]["amount_crore"] == 2000.0
+        assert rows[0]["offered_crore"] == 2000.0
 
     def test_detail_carries_the_product_and_both_units(self, seeded):
         _, s = seeded

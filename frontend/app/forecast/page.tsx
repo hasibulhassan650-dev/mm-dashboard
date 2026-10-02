@@ -53,6 +53,12 @@ export default async function ForecastPage({
   const maxDate = forecast.flows_data_to ?? shift(today, 180);
   const omoFrom = forecast.omo_data_from ?? null;
   const omoBlindDays = days.filter(d => !d.omo_known).length;
+  // Days where BB's OWN operations for that date are not published. The
+  // maturity leg is real, but a net without the deal leg is a roll-off figure,
+  // not a liquidity net. Conflating the two is what made every historical day
+  // wrong before this was separated out.
+  const rollOnlyDays = days.filter(d => d.omo_known && !d.omo_complete).length;
+  const dealtTo = forecast.omo_dealt_to ?? null;
 
   const war = cm?.daily_summary?.at(-1)?.overnight_wavg_rate ?? null;
   const cor = policy.current;
@@ -123,6 +129,22 @@ export default async function ForecastPage({
         </div>
       )}
 
+      {rollOnlyDays > 0 && (
+        <div style={{
+          border: "1px solid var(--warn)", borderRadius: "var(--radius-sm)",
+          padding: "8px 12px", marginBottom: "var(--gap)", fontSize: 12.5,
+          color: "var(--warn)", background: "color-mix(in oklab, var(--warn) 9%, transparent)",
+        }}>
+          ⚠ ROLL-OFF ONLY on {rollOnlyDays} of these {days.length} days. Every OMO tranche moves
+          liquidity twice — once when BB deals it, once when it matures. BB&apos;s operations are
+          published only to {dealtTo ? fmtDate(dealtTo) : "an earlier date"}, so after that the
+          ladder has the maturity leg but not the fresh deals. <b>Net on those days is a funding
+          roll-off, not a liquidity net</b>, and it typically overstates the swing in both
+          directions. Past days will fill in when BB publishes; future days never will, because
+          those operations react to this ladder.
+        </div>
+      )}
+
       {alerts.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: "var(--gap)" }}>
           <div style={{ fontSize: 10.5, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".12em", color: "var(--fg-dim)" }}>Desk Alerts</div>
@@ -174,7 +196,7 @@ export default async function ForecastPage({
         </Panel>
 
         <Panel title="Day-by-Day Ladder"
-          sub="only days with flows · click a row for the OMO split, the date for the full day"
+          sub={`only days with flows · full liquidity net to ${dealtTo ?? "—"}, roll-off only after · click a row for the OMO split`}
           span={12} pad={false}
           right={<a href={exportUrl.ladder(from, to)} className="seg-b" style={{ textDecoration: "none" }}>Download Excel</a>}>
           <LadderTable days={active} omoDataFrom={omoFrom}
@@ -184,8 +206,13 @@ export default async function ForecastPage({
         <Panel title="How to Read This" span={12}>
           <div style={{ fontSize: 12.5, lineHeight: 1.7, color: "var(--fg-mute)", maxWidth: 900 }}>
             <p><b style={{ color: "var(--fg)" }}>This ladder is what the market already knows.</b> Every bar is a contracted,
-            dated cash flow: OMO repos/AR/IBLF maturing (banks must repay BB — drain), SDF maturing (cash returns — inject),
-            G-sec coupons and maturities (inject), and auction settlements (drain).</p>
+            dated cash flow. <b style={{ color: "var(--fg)" }}>OMO counts twice:</b> on the day BB deals it (a new repo/AR/IBLF
+            injects; a new SDF absorbs) and again at maturity, with the sign reversed (the repo is repaid — drain; the SDF is
+            returned — inject). Plus G-sec coupons and maturities (inject) and auction settlements (drain).</p>
+            <p><b style={{ color: "var(--warn)" }}>Why that matters:</b> counting only the maturity legs made historical days
+            wrong by thousands of crore and occasionally flipped the sign — a day that looked flush was really draining. Where
+            BB has not published its operations the page now says <i>roll-off only</i> rather than presenting half the picture
+            as a net.</p>
             <p><b style={{ color: "var(--fg)" }}>Trading it:</b> a deeply negative day means the system needs cash — call rates
             get bid toward the SLF ceiling, so position as a <b>lender</b> going in. A flush day pushes rates toward the SDF
             floor — fund yourself there as a <b>borrower</b>. BB usually offsets big imbalances with new OMO the same day;

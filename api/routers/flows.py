@@ -181,6 +181,11 @@ def export_by_product(years: int = Query(2, ge=1, le=20)):
             row[f"Auction {label[k]}"] = None if unknown else m["auction"][k]
         row["Auction Total"] = None if unknown else m["auction"]["total"]
         row["Auction Data"] = "BB has not published" if unknown else m["auction"]["status"]
+        # Per-product net: inflow (principal + coupon) minus auction outflow.
+        # Withheld on an unpublished month -- netting a real inflow against an
+        # absent outflow would report a surplus that is an artefact.
+        for k in products:
+            row[f"Net {label[k]}"] = m["by_product"][k]["net"]
         row["Net Borrowing"] = None if unknown else m["net_borrowing"]
         if not unknown:
             cum += m["net_borrowing"]
@@ -197,22 +202,42 @@ def export_by_product(years: int = Query(2, ge=1, le=20)):
         row["Inflow Total"] = f["inflow_total"]
         row["Auction Total"] = f["auction"]["total"]
         row["Auction Months Published"] = f"{f['auction_months_published']} of {f['months']}"
+        for k in products:
+            row[f"Net {label[k]}"] = f["by_product"][k]["net"]
         row["Net Borrowing"] = f["net_borrowing"] if f["net_borrowing_comparable"] else None
         fy.append(row)
 
+    KIND = {"REDEMPTION": "Redemption (principal)", "COUPON": "Coupon",
+            "AUCTION": "Auction settlement"}
     detail = [{
-        "Kind": "Redemption (principal)" if r["kind"] == "REDEMPTION" else "Coupon",
+        "Kind": KIND.get(r["kind"], r["kind"]),
+        "In / Out": "Inflow" if r["direction"] == "INFLOW" else "Outflow",
         "Month": r["month"], "Payment Date": r["payment_date"],
-        "Scheduled Date": r["scheduled_date"], "Product": label.get(r["product"], r["product"]),
-        "ISIN": r["isin"], "Security": r["security"],
-        "Coupon Rate %": r["coupon_rate_pct"],
+        "Scheduled / Auction Date": r["scheduled_date"],
+        "Product": label.get(r["product"], r["product"]),
+        "Tenor": r["tenor_label"], "ISIN": r["isin"], "Security": r["security"],
+        "Rate / Yield %": r["coupon_rate_pct"],
+        "Status": r["status"],
+        "Offered (crore)": r["offered_crore"],
         "Amount (crore)": r["amount_crore"], "Amount (mn)": r["amount_mill"],
     } for r in d["rows"]]
 
+    # One row per product over the whole horizon -- the category view.
+    tbp = p["totals"]["by_product"]
+    category = [{
+        "Product": label[k],
+        "Principal Redemption In (crore)": tbp[k]["redemption"],
+        "Coupon In (crore)": tbp[k]["coupon"] if k in p["coupon_products"] else None,
+        "Total Inflow (crore)": tbp[k]["inflow"],
+        "Auction Outflow (crore)": tbp[k]["outflow"],
+        "Net (crore)": tbp[k]["net"],
+        "Net Comparable": "yes" if tbp[k]["net_comparable"] else "no - auctions part-published",
+    } for k in products]
+
     body = build_workbook(
         f"Bangladesh G-Sec Schedule — {p['years']}-year horizon",
-        [("Monthly by product", monthly), ("Fiscal year summary", fy),
-         ("Every coupon & maturity", detail)],
+        [("Category summary", category), ("Monthly by product", monthly),
+         ("Fiscal year summary", fy), ("Every event", detail)],
         facts=[("Window", f"{p['from']} to {p['to']}"), ("Unit", "BDT crore"),
                ("Horizon", f"{p['years']} years"),
                ("Auction calendar published to", p["auction_calendar_to"]),
@@ -224,15 +249,19 @@ def export_by_product(years: int = Query(2, ge=1, le=20)):
             f"Auction cells are BLANK after {p['auction_calendar_to']} because BB has not "
             "published a calendar that far ahead. Blank means unknown, NOT zero — do not "
             "read or sum it as no borrowing.",
-            "Net borrowing is left blank wherever auction coverage is partial: netting full "
-            "inflows against partial outflows would show a surplus that is an artefact of the "
-            "missing calendar.",
+            "Net borrowing -- and every per-product Net -- is left blank wherever auction "
+            "coverage is partial: netting full inflows against partial outflows would show a "
+            "surplus that is an artefact of the missing calendar.",
             "Cash is dated to SETTLEMENT, not the contractual due date. The scheduled date is "
             "kept on every row of the detail sheet.",
         ],
-        notes={"Every coupon & maturity":
-               "One row per underlying event, so any figure on the monthly sheet can be traced "
-               "back to the securities paying it."},
+        notes={"Every event":
+               "One row per underlying event -- every coupon, every maturity AND every auction "
+               "settlement -- so any figure on the monthly sheet can be traced on both sides. "
+               "A PLANNED auction is BB's calendar target, not a settled amount.",
+               "Category summary":
+               "Each product's own inflow, outflow and net over the horizon. Net is blank where "
+               "BB has not published auctions for part of the window."},
     )
     return Response(content=body, media_type=XLSX_MEDIA, headers={
         "Content-Disposition": f'attachment; filename="{filename("bd_gsec_schedule", str(p["years"]) + "y", p["from"], p["to"])}"'})
@@ -251,43 +280,53 @@ def export_forecast(days: int = Query(None, ge=1, le=400),
     finally:
         session.close()
 
+    COVER = {"complete": "complete", "awaiting_publication": "not published yet",
+             "future": "BB has not acted yet", "no_data": "no data"}
     ladder = [{
         "Date": d["date"], "Day": d["weekday"],
-        "OMO Return (SDF maturing)": d["omo_return_crore"] if d["omo_known"] else None,
-        "OMO Repay (injections maturing)": d["omo_repay_crore"] if d["omo_known"] else None,
-        "OMO Net": d["omo_net_crore"] if d["omo_known"] else None,
+        "New Injection (BB lends)": d["omo_new_inflow_crore"] if d["omo_complete"] else None,
+        "New Absorption (SDF taken)": d["omo_new_outflow_crore"] if d["omo_complete"] else None,
+        "Maturing In (SDF returns)": d["omo_return_crore"] if d["omo_known"] else None,
+        "Maturing Out (banks repay)": d["omo_repay_crore"] if d["omo_known"] else None,
+        "OMO Net Roll-off": d["omo_roll_net_crore"] if d["omo_known"] else None,
+        "OMO Net Flow": d["omo_net_crore"] if d["omo_known"] else None,
         "Govt Inflow (coupon + maturity)": d["govt_inflow_crore"],
         "Auction Outflow": d["auction_out_crore"],
         "Net": d["net_crore"], "Cumulative Net": d["cum_net_crore"],
-        "OMO Data": "yes" if d["omo_known"] else "no data",
+        "OMO Coverage": COVER.get(d["omo_coverage"], d["omo_coverage"]),
+        "Net Basis": "full liquidity net" if d["omo_complete"] else "roll-off only",
         "Flows Confirmed": "yes" if d["flows_confirmed"] else "no",
-        "OMO Detail": " · ".join(
-            f"{i['instrument']} {i['crore']:,.2f} ({'in' if i['liquidity_effect'] == 'INFLOW' else 'out'})"
-            for i in d["omo_items"]) or None,
     } for d in p["days"]]
 
     items = [{
-        "Date": d["date"], "Day": d["weekday"], "Instrument": i["instrument"],
+        "Date": d["date"], "Day": d["weekday"], "Leg": leg,
+        "Instrument": i["instrument"],
         "Original Direction": i["direction"],
-        "Effect at Maturity": "Inflow (cash to banks)" if i["liquidity_effect"] == "INFLOW"
-                              else "Outflow (banks repay BB)",
+        "Effect That Day": "Inflow (cash to banks)" if i["liquidity_effect"] == "INFLOW"
+                           else "Outflow (cash to BB)",
         "Amount (crore)": i["crore"],
-    } for d in p["days"] for i in d["omo_items"]]
+    } for d in p["days"]
+      for leg, src in (("Dealt", d["omo_new_items"]), ("Maturing", d["omo_items"]))
+      for i in src]
 
     body = build_workbook(
         "Bangladesh Known Liquidity Ladder",
-        [("Daily ladder", ladder), ("OMO maturities by product", items)],
+        [("Daily ladder", ladder), ("OMO operations by product", items)],
         facts=[("Window", f"{p['from']} to {p['to']}"), ("Unit", "BDT crore"),
                ("As of", p["as_of"]), ("OMO data from", p["omo_data_from"]),
-               ("OMO maturities to", p["omo_data_to"]),
+               ("OMO operations published to", p["omo_dealt_to"]),
+               ("OMO maturities known to", p["omo_data_to"]),
                ("Auction calendar published to", p["auction_horizon"]),
                ("Source", "Bangladesh Bank — OMO press releases, auction calendar, GSOM")],
         caveats=[
-            "Only contracted, dated flows. Future BB operations are NOT modelled — they react "
-            "to this ladder, and the gap between the two is where the rate moves.",
-            "An OMO's effect at maturity is the REVERSE of its original direction: an SDF "
-            "(absorption) maturing pays cash back to banks, while a repo (injection) maturing "
-            "takes cash out.",
+            "Every OMO tranche moves liquidity TWICE, with opposite signs: on its deal date "
+            "(a new repo injects; a new SDF absorbs) and again at maturity (the repo is repaid, "
+            "so cash leaves; the SDF is returned, so cash arrives).",
+            f"Both legs are known only up to {p['omo_dealt_to']}, the last published OMO press "
+            "release. After that the 'Net Basis' column reads 'roll-off only': the maturity leg "
+            "is real but BB's fresh operations for that day are not known, so the Net is NOT a "
+            "liquidity net. Forward days can never have it — those operations react to this "
+            "ladder.",
             f"OMO columns are BLANK before {p['omo_data_from']} because there is no OMO data "
             "that far back. Blank means unknown, not that BB ran no operations.",
             f"Auction outflows after {p['auction_horizon']} are missing from Net, because BB "
