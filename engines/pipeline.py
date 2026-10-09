@@ -836,6 +836,27 @@ def _store_omo_txns(session, txns: list, now: datetime.datetime) -> tuple:
     return saved, superseded
 
 
+def _register_source(session, snap: dict) -> dict:
+    """Record what the source LOOKED LIKE, and say whether it moved.
+
+    Separate from recording the data, deliberately: BB renaming a CSS class or
+    inserting a column is not a data event, produces no error, and is invisible
+    to every freshness check — and it is the failure most likely to hand the
+    desk a plausible wrong number. Returns {} when nothing moved.
+    """
+    from fetchers import source_watch as SW
+    try:
+        verdict, reasons = SW.record(session, snap)
+        session.commit()
+    except Exception as exc:            # never let the watcher break the fetch
+        session.rollback()
+        log.warning("source fingerprint not recorded for %s: %s", snap.get("source"), exc)
+        return {}
+    if verdict == "ok":
+        return {}
+    return {"source_verdict": verdict, "source_reasons": reasons}
+
+
 def run_omo_fetch(days_back: int = 28, max_files: int = 20) -> dict:
     """Fetch last N OMO press release PDFs and store transactions to DB.
 
@@ -865,12 +886,25 @@ def run_omo_fetch(days_back: int = 28, max_files: int = 20) -> dict:
             if not txns:
                 reason = f"no-browser path raised {type(exc).__name__}; Chrome returned nothing"
 
+        # Which selector matched, how many anchors it found, how many rows the
+        # listing had. When BB renamed `a.pdf-file` to `a.pdf-list` all three
+        # moved at once, eleven days before anyone noticed the data.
+        from fetchers import source_watch as SW
+        from fetchers.omo import BB_PRESS_URL as _OMO_URL
+        watch = _register_source(session, SW.fingerprint(
+            "omo_press", _OMO_URL, selector=meta.get("selector") or "",
+            rows_seen=meta.get("rows_seen") or 0, rows_parsed=len(txns),
+            skips={"not an OMO release": meta.get("skipped_not_omo") or 0,
+                   "older than the window": meta.get("skipped_too_old") or 0},
+            error=(reason or "") if not txns else ""))
+
         if not txns:
             # Empty is a RESULT, not a success. Say why, and say it where the
             # pipeline run records it.
             msg = f"omo: fetched nothing — {reason or 'no reason reported'}"
             log.error(msg)
-            return {"rows": 0, "pdfs": 0, "errors": [msg], "empty_reason": reason, **meta}
+            return {"rows": 0, "pdfs": 0, "errors": [msg], "empty_reason": reason,
+                    **watch, **meta}
 
         saved, superseded = _store_omo_txns(session, txns, datetime.datetime.utcnow())
         session.commit()
@@ -878,7 +912,7 @@ def run_omo_fetch(days_back: int = 28, max_files: int = 20) -> dict:
                  saved, superseded, len(txns))
         recon = sorted({t["recon_mismatch"] for t in txns if t.get("recon_mismatch")})
         return {"rows": saved, "txns": len(txns), "pdfs": meta.get("pdfs", max_files),
-                "errors": recon, **meta}
+                "errors": recon, **watch, **meta}
     except Exception as exc:
         session.rollback()
         log.exception("OMO fetch failed")
@@ -897,8 +931,19 @@ def run_primary_yield_history(months_back: int = 8) -> dict:
         for r in rows:
             upsert_primary_yield(session, r)
         session.commit()
+        # One fingerprint per page read. The newest page is the one that matters
+        # for "has BB moved today"; the rest are registered so a shape BB uses
+        # only on older months is known-good rather than a surprise.
+        from fetchers.treasury import LAST_STRUCTURE
+        watch, errs = {}, []
+        for snap in LAST_STRUCTURE:
+            w = _register_source(session, snap)
+            if w:
+                watch = w
+                if w.get("source_verdict") == "degraded":
+                    errs.append("treasury page structure: " + "; ".join(w["source_reasons"]))
         log.info("Primary yield history: stored %d rows (%d months)", len(rows), months_back)
-        return {"rows": len(rows), "months": months_back, "errors": []}
+        return {"rows": len(rows), "months": months_back, "errors": errs, **watch}
     except Exception as exc:
         session.rollback()
         log.exception("Primary yield history failed")

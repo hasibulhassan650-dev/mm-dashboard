@@ -587,6 +587,44 @@ class PipelineRun(Base):
     quality      = Column(Text)            # JSON: integrity_check() report
 
 
+class SourceSnapshot(Base):
+    """What BB's pages LOOKED LIKE, fetch by fetch.
+
+    Every other table here records what BB said. None recorded the shape of
+    the page it was said on, so when BB renamed its press-release links from
+    `a.pdf-file` to `a.pdf-list` the fetcher matched nothing, returned an empty
+    list, and that was indistinguishable from a quiet week — for eleven days.
+
+    One row per distinct SHAPE, not per fetch: selector, column count,
+    normalised header texts, and how many rows were seen, parsed and skipped.
+    `seen_count` is the evidence for which shape is the real one; a shape seen
+    four hundred times is known-good, and a brand-new shape that parses fewer
+    rows is a change worth waking up for. The verdict is computed against the
+    longest-held shape, never against last time, because comparing to last
+    time lets a broken shape quietly become the new normal on its second run.
+    """
+    __tablename__ = "source_snapshots"
+    __table_args__ = (UniqueConstraint("source", "structure_hash"),)
+    id             = Column(Integer, primary_key=True, autoincrement=True)
+    source         = Column(String(40), nullable=False)   # treasury, omo, calendar…
+    structure_hash = Column(String(40), nullable=False)   # selector + headers
+    url            = Column(Text)
+    selector       = Column(String(80))     # which selector actually matched
+    column_count   = Column(Integer)
+    headers        = Column(Text)           # JSON: normalised header texts
+    rows_seen      = Column(Integer)
+    rows_parsed    = Column(Integer)
+    rows_skipped   = Column(Integer)
+    skip_reasons   = Column(Text)           # JSON: {reason: count}
+    unmapped       = Column(Text)           # JSON: columns nobody claims
+    mapped         = Column(Text)           # JSON: {field: column index}
+    verdict        = Column(String(12))     # ok | changed | degraded
+    reasons        = Column(Text)           # JSON: list of strings
+    first_seen     = Column(DateTime)
+    last_seen      = Column(DateTime)
+    seen_count     = Column(Integer, default=1)
+
+
 # ── Engine & Session ──────────────────────────────────────────────────────────
 
 def get_engine():

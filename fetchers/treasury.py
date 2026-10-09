@@ -21,6 +21,8 @@ from typing import Dict, List, Optional
 
 from config import BB_TREASURY_URL, SEEDS_DIR
 
+from fetchers import source_watch as SW
+
 log = logging.getLogger(__name__)
 
 _TENOR_YEARS: Dict[str, float] = {
@@ -97,189 +99,213 @@ def _range_text(s):
     return s or None
 
 
-def _parse_page(html: str, snapshot_date: datetime.date) -> List[Dict]:
+# ── What BB calls each column ────────────────────────────────────────────────
+# The old code collected these header texts and then mapped columns by
+# POSITION, branched on cell count ("if n >= 14"). Insert one column upstream
+# and that branch still matches, so every field is read one place to the left:
+# a sale value booked as a yield, a bid count booked as an amount. Nothing is
+# missing and nothing is stale, so no freshness check can see it. That is the
+# most dangerous failure this project has, and this list is the fix.
+def _cell_at(cells: List[str], idx) -> Optional[str]:
+    """One cell, by mapped index. None when the column is absent or short."""
+    if idx is None or idx >= len(cells):
+        return None
+    return cells[idx]
+
+
+# The structural fingerprints of the most recent fetch, newest page last. A
+# module-level handoff rather than a changed return type: every caller of
+# fetch_primary_yields_history() keeps working, and the pipeline — which is the
+# only layer allowed to touch the database — registers them.
+LAST_STRUCTURE: List[Dict] = []
+
+TREASURY_COLUMNS = (
+    SW.Column("issue",     ["issue date"], required=True, fallbacks=[["date"]]),
+    SW.Column("isin",      ["isin"]),
+    SW.Column("rem",       ["remaining maturity"], fallbacks=[["remaining"], ["rem"]]),
+    SW.Column("name",      ["tenor and name"], fallbacks=[["tenor"], ["name"]]),
+    SW.Column("nbids_rcv", ["received", "no of bids"]),
+    SW.Column("offered",   ["received", "face value"], fallbacks=[["offered"]]),
+    SW.Column("rng_rcv",   ["received", "range of yields"]),
+    SW.Column("nbids_acc", ["accepted", "no of bids"]),
+    SW.Column("accepted",  ["accepted", "face value"],
+              fallbacks=[["accepted"], ["face value"]]),
+    # Sale value is the cash actually paid and the one figure the ladder needs;
+    # it sits BESIDE accepted face value with an almost identical header, which
+    # is exactly the pair a positional slip swaps.
+    SW.Column("sale",      ["accepted", "sale value"], fallbacks=[["sale value"]]),
+    SW.Column("rng_acc",   ["accepted", "range of yields"]),
+    SW.Column("wap",       ["weighted average price"], fallbacks=[["price"]]),
+    SW.Column("cutoff",    ["cut off"], none_of=["price"], required=True),
+    SW.Column("std",       ["devolvement yield"], fallbacks=[["standard"], ["std"]]),
+)
+
+
+def _parse_page(html: str, snapshot_date: datetime.date,
+                meta: Dict = None) -> List[Dict]:
+    """Parse one monthly results page.
+
+    Raises source_watch.StructureChanged when BB's table no longer carries a
+    column we require. That is deliberate: a refusal that names the missing
+    header is recoverable in one line, and a plausible wrong number is not.
+
+    `meta`, if given, is filled with the structural fingerprint of this fetch
+    (selector, headers, rows seen / parsed / skipped and why) so the guardian
+    can see BB move before the data goes wrong.
+    """
     from bs4 import BeautifulSoup
     soup = BeautifulSoup(html, "lxml")
     tables = soup.find_all("table")
     if not tables:
+        if meta is not None:
+            meta.update(SW.fingerprint("treasury", BB_TREASURY_URL, selector="table",
+                                       error="no <table> element on the page"))
         return []
 
     results: List[Dict] = []
+    skips: Dict[str, int] = {}
+
+    def skip(reason: str):
+        # A `continue` is invisible; a counted skip is a number the guardian can
+        # compare. A parser quietly dropping most of a page used to look exactly
+        # like a quiet week at BB.
+        skips[reason] = skips.get(reason, 0) + 1
 
     # ── Table 0: full auction results ─────────────────────────────────────────
-    # Column layout varies between current-month and historical views.
-    # Detect "Cut off yield" and "Issue date" columns dynamically from headers.
     all_rows = tables[0].find_all("tr")
 
-    # Flatten the first two header rows into one list to find column names
-    header_cells: List[str] = []
-    for tr in all_rows[:3]:
-        for td in tr.find_all(["th", "td"]):
-            t = td.get_text(" ", strip=True).lower()
-            if t:
-                header_cells.append(t)
+    # The header is however many leading rows do NOT start with a date. BB uses
+    # two levels ("Bids accepted" over seven sub-columns) and the first of them
+    # has six cells, which is why "a row with >= 6 cells" alone cannot tell a
+    # header from data.
+    header_rows, data_rows = [], []
+    for tr in all_rows:
+        cells = tr.find_all(["td", "th"])
+        if not cells:
+            continue
+        if not data_rows and _parse_date(cells[0].get_text(" ", strip=True)) is None:
+            header_rows.append(tr)
+        elif len(cells) >= 6:
+            data_rows.append(tr)
 
-    # Locate column indices by keyword scan of header text
-    col_issue   = None   # "Issue date"  / first date-like column
-    col_rem     = None   # "Remaining maturity"
-    col_name    = None   # "Tenor and name"
-    col_cutoff  = None   # "Cut off yield"
-    col_std     = None   # "Standard / devolvement yield"
-    col_offered = None
-    col_accepted= None
-    # Columns BB has always printed and we never kept. All optional: the older
-    # layouts genuinely have fewer columns, so a missing one must come out as
-    # None, never 0 — a zero here would read as "no bids" or "sold at par".
-    col_isin      = None   # "ISIN Number", also carries the re-issuance marker
-    col_nbids_rcv = None   # bids received — number
-    col_rng_rcv   = None   # bids received — range of yields
-    col_nbids_acc = None   # bids accepted — number
-    col_sale      = None   # bids accepted — SALE value (the cash actually paid)
-    col_rng_acc   = None   # bids accepted — range of yields
-    col_wap       = None   # weighted average price (taka)
+    headers = SW.header_columns(header_rows)
+    try:
+        idx, notes = SW.map_columns(headers, TREASURY_COLUMNS, "treasury")
+    except SW.StructureChanged as exc:
+        if meta is not None:
+            meta.update(SW.fingerprint("treasury", BB_TREASURY_URL, selector="table[0]",
+                                       headers=headers, rows_seen=len(data_rows),
+                                       rows_parsed=0, error=str(exc)))
+        log.error("%s", exc)
+        raise
 
-    # Scan data rows to infer columns (more reliable than header for merged cells)
-    # Strategy: find the first data row and deduce columns positionally
-    data_rows = [tr for tr in all_rows if len(tr.find_all(["td","th"])) >= 6]
+    # Named after BB's own headers, so a reordered page maps itself. All
+    # optional columns come out None when absent, never 0 — a zero here would
+    # read as "no bids" or "sold at par".
+    col_issue     = idx.get("issue")
+    col_isin      = idx.get("isin")
+    col_rem       = idx.get("rem")
+    col_name      = idx.get("name")
+    col_nbids_rcv = idx.get("nbids_rcv")
+    col_offered   = idx.get("offered")
+    col_rng_rcv   = idx.get("rng_rcv")
+    col_nbids_acc = idx.get("nbids_acc")
+    col_accepted  = idx.get("accepted")
+    col_sale      = idx.get("sale")
+    col_rng_acc   = idx.get("rng_acc")
+    col_wap       = idx.get("wap")
+    col_cutoff    = idx.get("cutoff")
+    col_std       = idx.get("std")
 
     for tr in data_rows:
         cells = [c.get_text(" ", strip=True) for c in tr.find_all(["td","th"])]
-        n = len(cells)
-        # Look for a row where cells[0] looks like a date
-        if _parse_date(cells[0]) is not None:
-            # Found a data row — determine layout based on column count
-            if n >= 14:
-                # Verified against BB's live page (Sep-2026), 14 columns:
-                #  0 Issue date          1 ISIN Number        2 Remaining maturity
-                #  3 Tenor and name      4 Bids rcvd: no      5 Bids rcvd: face value
-                #  6 Bids rcvd: yields   7 Bids acc: no       8 Bids acc: FACE value
-                #  9 Bids acc: SALE value   10 Bids acc: yields
-                # 11 Weighted avg price  12 Cut off yield    13 Standard/Devolvement yield
-                col_issue   = 0
-                col_isin    = 1
-                col_rem     = 2
-                col_name    = 3
-                col_nbids_rcv = 4
-                col_offered = 5
-                col_rng_rcv = 6
-                col_nbids_acc = 7
-                col_accepted= 8
-                col_sale    = 9
-                col_rng_acc = 10
-                col_wap     = 11
-                col_cutoff  = 12
-                col_std     = 13
-            elif n >= 9:
-                # Compact layout (some historical pages): Issue|ISIN|RemMat|TenorName|Offered|Accepted|Price|Cutoff|Std?
-                col_issue   = 0
-                col_isin    = 1
-                col_rem     = 2
-                col_name    = 3
-                col_offered = 4
-                col_accepted= 5
-                col_wap     = 6
-                col_cutoff  = 7
-                col_std     = 8 if n > 8 else None
-            elif n >= 6:
-                # Minimal layout: Issue|ISIN|RemMat|TenorName|...|Cutoff
-                col_issue   = 0
-                col_isin    = 1
-                col_rem     = 2
-                col_name    = 3
-                col_cutoff  = n - 1  # last column
-            break
+        if len(cells) <= col_cutoff:
+            skip("row has fewer cells than the cut-off column")
+            continue
 
-    if col_cutoff is None:
-        log.warning("Could not detect column layout (%d cols) — skipping table", n if data_rows else 0)
-    else:
-        for tr in data_rows:
-            cells = [c.get_text(" ", strip=True) for c in tr.find_all(["td","th"])]
-            if len(cells) <= col_cutoff:
-                continue
+        issue_date = _parse_date(cells[col_issue])
+        if not issue_date:
+            skip("no issue date — BB prints blank devolvement rows")
+            continue
 
-            issue_date = _parse_date(cells[col_issue])
-            if not issue_date:
-                continue   # skip "Devolvement" blank rows
+        # Try Remaining Maturity column first; fall back to Tenor Name column
+        rem_cell  = _cell_at(cells, col_rem)  or ""
+        name_cell = _cell_at(cells, col_name) or ""
+        tenor_label, stype = _rem_to_tenor(rem_cell)
+        if not tenor_label:
+            tenor_label, stype = _rem_to_tenor(name_cell)
+        if not tenor_label:
+            skip("no tenor in the remaining-maturity or tenor-and-name column")
+            continue
 
-            # Try Remaining Maturity column first; fall back to Tenor Name column
-            rem_cell  = cells[col_rem]  if col_rem  < len(cells) else ""
-            name_cell = cells[col_name] if col_name < len(cells) else ""
-            tenor_label, stype = _rem_to_tenor(rem_cell)
-            if not tenor_label:
-                tenor_label, stype = _rem_to_tenor(name_cell)
-            if not tenor_label:
-                continue
+        tenor_name = (_cell_at(cells, col_name) or "").lower()
+        if "t.bill" in tenor_name or "tbill" in tenor_name:
+            stype = "T_BILL"
+        elif "frt" in tenor_name:
+            stype = "FRTB"
+            # rem_cell gives "3Y" but label must be "3Y_FRTB" — fix the label too
+            if not tenor_label.endswith("_FRTB"):
+                m = re.match(r"^(\d+)", tenor_label)
+                tenor_label = f"{m.group(1)}Y_FRTB" if m else "3Y_FRTB"
+        elif "t.bond" in tenor_name or "tbond" in tenor_name:
+            stype = "T_BOND"
 
-            tenor_name = cells[col_name].lower() if col_name < len(cells) else ""
-            if "t.bill" in tenor_name or "tbill" in tenor_name:
-                stype = "T_BILL"
-            elif "frt" in tenor_name:
-                stype = "FRTB"
-                # rem_cell gives "3Y" but label must be "3Y_FRTB" — fix the label too
-                if not tenor_label.endswith("_FRTB"):
-                    m = re.match(r"^(\d+)", tenor_label)
-                    tenor_label = f"{m.group(1)}Y_FRTB" if m else "3Y_FRTB"
-            elif "t.bond" in tenor_name or "tbond" in tenor_name:
-                stype = "T_BOND"
+        # Store the CUT-OFF yield — the yield at which the auction actually
+        # cleared, which is what the desk trades off. The Standard/Devolvement
+        # Yield column (col_std) is a DIFFERENT figure (the rate on any amount
+        # devolved on the PDs/BB) and for a premium re-issued bond sits well
+        # above the cut-off — e.g. 15Y on 27-Aug-2026: cut-off 9.0975% vs
+        # standard 10.36%. Prefer the cut-off; fall back to std only if the
+        # cut-off column is missing. A 0% sovereign yield is never real.
+        std_val    = _clean_float(_cell_at(cells, col_std))
+        cutoff_val = _clean_float(_cell_at(cells, col_cutoff))
+        cutoff = cutoff_val if (cutoff_val is not None and cutoff_val > 0) else std_val
+        if cutoff is None or cutoff <= 0:
+            skip("cut-off yield missing or not positive")
+            continue
 
-            # Store the CUT-OFF yield — the yield at which the auction actually
-            # cleared, which is what the desk trades off. The Standard/Devolvement
-            # Yield column (col_std) is a DIFFERENT figure (the rate on any amount
-            # devolved on the PDs/BB) and for a premium re-issued bond sits well
-            # above the cut-off — e.g. 15Y on 27-Aug-2026: cut-off 9.0975% vs
-            # standard 10.36%. Prefer the cut-off; fall back to std only if the
-            # cut-off column is missing. A 0% sovereign yield is never real.
-            std_val    = _clean_float(cells[col_std])    if col_std and col_std < len(cells) else None
-            cutoff_val = _clean_float(cells[col_cutoff]) if col_cutoff < len(cells) else None
-            cutoff = cutoff_val if (cutoff_val is not None and cutoff_val > 0) else std_val
-            if cutoff is None or cutoff <= 0:
-                continue
+        isin, is_reissue, reissue_rem = _parse_isin_cell(_cell_at(cells, col_isin) or "")
 
-            def _cell(idx):
-                return cells[idx] if (idx is not None and idx < len(cells)) else None
+        # tenor_label above comes from BB's REMAINING-maturity column, so a
+        # re-issued 20-year bond with 2.73 years left is labelled 2Y. That is
+        # right for the yield curve and wrong for an instrument listing,
+        # where the security is a 20-year bond. Keep BB's "Tenor and name"
+        # reading too; the two are different facts, not a correction.
+        orig_label, _orig_type = _rem_to_tenor(name_cell)
+        orig_years = _tenor_years(orig_label) if orig_label else None
 
-            isin, is_reissue, reissue_rem = _parse_isin_cell(_cell(col_isin) or "")
-
-            # tenor_label above comes from BB's REMAINING-maturity column, so a
-            # re-issued 20-year bond with 2.73 years left is labelled 2Y. That is
-            # right for the yield curve and wrong for an instrument listing,
-            # where the security is a 20-year bond. Keep BB's "Tenor and name"
-            # reading too; the two are different facts, not a correction.
-            orig_label, _orig_type = _rem_to_tenor(name_cell)
-            orig_years = _tenor_years(orig_label) if orig_label else None
-
-            results.append({
-                "snapshot_date":     snapshot_date,
-                # The page prints the ISSUE date; the auction was the previous
-                # working day (bills: Sun→Mon, bonds: Tue→Wed, holidays skipped).
-                "auction_date":      (calendar_utils.previous_working_day(issue_date)
-                                      if issue_date else snapshot_date),
-                "issue_date":        issue_date,
-                "security_type":     stype,
-                "tenor_label":       tenor_label,
-                "tenor_years":       _tenor_years(tenor_label),
-                "cutoff_yield_pct":  cutoff,
-                "offered_bdt_crore": _clean_float(cells[col_offered]) if col_offered and col_offered < len(cells) else None,
-                "accepted_bdt_crore":_clean_float(cells[col_accepted]) if col_accepted and col_accepted < len(cells) else None,
-                # ── fields BB prints that were previously discarded ───────────
-                "isin":                 isin,
-                "is_reissue":           is_reissue,
-                "reissue_remaining":    reissue_rem,
-                "original_tenor_label": orig_label,
-                "original_tenor_years": orig_years,
-                # SALE value is the cash the market actually paid; the accepted
-                # FACE value above is the par amount. On a premium re-issue they
-                # differ materially (02-Sep-2026 20Y: face 3,500.00, sale
-                # 3,689.28), and only the sale value is a cash flow.
-                "sale_value_bdt_crore": _clean_float(_cell(col_sale)),
-                "bids_received_count":  _clean_int(_cell(col_nbids_rcv)),
-                "bids_accepted_count":  _clean_int(_cell(col_nbids_acc)),
-                "yield_range_received": _range_text(_cell(col_rng_rcv)),
-                "yield_range_accepted": _range_text(_cell(col_rng_acc)),
-                "weighted_avg_price":   _clean_float(_cell(col_wap)),
-                "devolvement_yield_pct": std_val,
-                "source": BB_TREASURY_URL,
-            })
+        results.append({
+            "snapshot_date":     snapshot_date,
+            # The page prints the ISSUE date; the auction was the previous
+            # working day (bills: Sun→Mon, bonds: Tue→Wed, holidays skipped).
+            "auction_date":      (calendar_utils.previous_working_day(issue_date)
+                                  if issue_date else snapshot_date),
+            "issue_date":        issue_date,
+            "security_type":     stype,
+            "tenor_label":       tenor_label,
+            "tenor_years":       _tenor_years(tenor_label),
+            "cutoff_yield_pct":  cutoff,
+            "offered_bdt_crore": _clean_float(_cell_at(cells, col_offered)),
+            "accepted_bdt_crore":_clean_float(_cell_at(cells, col_accepted)),
+            # ── fields BB prints that were previously discarded ───────────
+            "isin":                 isin,
+            "is_reissue":           is_reissue,
+            "reissue_remaining":    reissue_rem,
+            "original_tenor_label": orig_label,
+            "original_tenor_years": orig_years,
+            # SALE value is the cash the market actually paid; the accepted
+            # FACE value above is the par amount. On a premium re-issue they
+            # differ materially (02-Sep-2026 20Y: face 3,500.00, sale
+            # 3,689.28), and only the sale value is a cash flow.
+            "sale_value_bdt_crore": _clean_float(_cell_at(cells, col_sale)),
+            "bids_received_count":  _clean_int(_cell_at(cells, col_nbids_rcv)),
+            "bids_accepted_count":  _clean_int(_cell_at(cells, col_nbids_acc)),
+            "yield_range_received": _range_text(_cell_at(cells, col_rng_rcv)),
+            "yield_range_accepted": _range_text(_cell_at(cells, col_rng_acc)),
+            "weighted_avg_price":   _clean_float(_cell_at(cells, col_wap)),
+            "devolvement_yield_pct": std_val,
+            "source": BB_TREASURY_URL,
+        })
 
     # ── Table 1 (Standard Tenor & Yield) is deliberately NOT used ─────────────
     # It carries BB's interpolated STANDARD-tenor benchmark yields (e.g. an exact
@@ -287,6 +313,13 @@ def _parse_page(html: str, snapshot_date: datetime.date) -> List[Dict]:
     # showing 10.36% where the 15Y auction actually cleared at 9.0975%. The desk
     # wants the auction cut-off, so the cut-off from Table 0 is kept as-is.
 
+    if meta is not None:
+        meta.update(SW.fingerprint(
+            "treasury", BB_TREASURY_URL, selector="table[0]", headers=headers,
+            rows_seen=len(data_rows), rows_parsed=len(results), skips=skips,
+            unmapped=notes.get("unmapped"), mapped=idx))
+    if skips:
+        log.info("  skipped %d row(s): %s", sum(skips.values()), skips)
     log.info("Parsed %d yield points from page (snapshot %s)", len(results), snapshot_date)
     return results
 
@@ -377,6 +410,10 @@ def fetch_primary_yields_months(months: List[tuple]) -> List[Dict]:
     MAX_CONSECUTIVE_CAPTURE_FAILS = 3
 
     all_rows: List[Dict] = []
+    # One structural fingerprint per page read, handed to the caller through
+    # LAST_STRUCTURE so the pipeline can register what BB's page looked like
+    # without this fetcher importing the database.
+    structure: List[Dict] = []
     state = {"cookies": None, "ua": None, "posts": 0, "fails": 0}
 
     def capture() -> bool:
@@ -419,7 +456,19 @@ def fetch_primary_yields_months(months: List[tuple]) -> List[Dict]:
             except Exception as exc2:
                 log.warning("  %s: still blocked (%s) — skipping", mstr, exc2)
                 continue
-        rows = _parse_page(html, snap_date)
+        meta = {}
+        try:
+            rows = _parse_page(html, snap_date, meta)
+        except SW.StructureChanged as exc:
+            # One month BB has reshaped must not kill the whole fetch, and must
+            # not be silent either: the fingerprint carries the reason, and the
+            # guardian turns it into an escalation.
+            structure.append(meta or SW.fingerprint(
+                "treasury", BB_TREASURY_URL, error=str(exc)))
+            log.error("  %s: %s", mstr, exc)
+            continue
+        if meta:
+            structure.append(meta)
         log.info("  %s => %d rows", mstr, len(rows))
         all_rows.extend(rows)
 
@@ -430,6 +479,7 @@ def fetch_primary_yields_months(months: List[tuple]) -> List[Dict]:
         if key not in seen:
             seen[key] = r
     result = sorted(seen.values(), key=lambda r: (r["tenor_label"], str(r["auction_date"])))
+    LAST_STRUCTURE[:] = structure
     log.info("Treasury fetch complete: %d unique yield points", len(result))
     return result
 

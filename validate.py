@@ -69,6 +69,8 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
     by_table: dict[str, int] = {}
     waiting: list[str] = []
     by_table_waiting: dict[str, int] = {}
+    notices: list[str] = []
+    by_table_notice: dict[str, int] = {}
 
     def add(table: str, msg: str, severity: str = "defect"):
         """Record a finding.
@@ -81,8 +83,20 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
                              data. Before this split, BB being late turned every
                              refresh red ~28x a day, which is exactly how a real
                              failure comes to look like the wallpaper.
+
+        severity="notice"  — BB changed the SHAPE of a page and the parse is
+                             still clean. Not our data being wrong and not BB
+                             being late: a third thing, which is why it gets a
+                             third bucket. It must be visible and dated, and it
+                             must NOT fail the build — a red build for a
+                             reworded header is how a real failure becomes the
+                             wallpaper, which is the mistake this whole split
+                             exists to undo.
         """
-        bucket, counts = (waiting, by_table_waiting) if severity == "waiting" else (issues, by_table)
+        bucket, counts = {
+            "waiting": (waiting, by_table_waiting),
+            "notice": (notices, by_table_notice),
+        }.get(severity, (issues, by_table))
         counts[table] = counts.get(table, 0) + 1
         if sum(1 for i in bucket if i.startswith(table)) < limit_per_rule:
             bucket.append(f"{table}: {msg}")
@@ -782,6 +796,50 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
                                 f"has stopped, so every freshness check below is measuring "
                                 f"data nobody is trying to update")
 
+        # ── did BB change the SHAPE of a page? ──────────────────────────────
+        # Everything else here notices data that stopped arriving. This notices
+        # the source moving, which is the failure that produces plausible WRONG
+        # numbers rather than missing ones — and the one no freshness rule can
+        # ever see, because nothing is late and nothing is empty.
+        #
+        # Two tiers, and the distinction is the whole point: a reworded header
+        # that still parses is a dated notice, while a change that costs rows
+        # is a defect. Treating them alike in either direction is fatal — all
+        # red, and the alarm becomes wallpaper; all quiet, and we silently
+        # publish BB's new layout read through the old parser.
+        try:
+            srows = q("SELECT source, verdict, reasons, last_seen, selector, "
+                      "       column_count, seen_count "
+                      "FROM source_snapshots WHERE verdict <> 'ok' "
+                      "ORDER BY last_seen DESC")
+        except Exception:
+            s.rollback()          # table not migrated yet on this DB
+            srows = []
+        import json as _sj
+        seen_sources = set()
+        for src, verdict, reasons, last_seen, selector, ncols, seen_count in srows:
+            # Only the CURRENT shape of each source: a change recorded weeks ago
+            # and since settled is history, not news.
+            if src in seen_sources:
+                continue
+            seen_sources.add(src)
+            if last_seen is None or (datetime.datetime.utcnow() - last_seen).days > 4:
+                continue
+            try:
+                why = "; ".join(_sj.loads(reasons) or []) if reasons else ""
+            except Exception:
+                why = str(reasons)
+            if verdict == "degraded":
+                add("source", f"{src}: BB's page changed AND the parse got worse — {why}. "
+                              f"Figures from this source are suspect until the parser is "
+                              f"checked against the new layout")
+            else:
+                add("source", f"{src}: BB's page changed but the parse is still clean — "
+                              f"{why} (selector {selector or '-'}, {ncols} columns, "
+                              f"seen {seen_count}x). Read by header text, so the figures "
+                              f"line up; confirm the new layout means what it says",
+                    "notice")
+
         # ── a step that ran and wrote NOTHING is not a healthy step ──────────
         # Judging a fetch by "did it raise?" cannot tell "BB published nothing"
         # from "we are broken" — and that is exactly the pair that mattered.
@@ -950,6 +1008,11 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
         "waiting": waiting,
         "waiting_count": sum(by_table_waiting.values()),
         "by_table_waiting": by_table_waiting,
+        # Source-shape changes that still parse: not a defect, not BB being
+        # late, and not something to discover months later in a diff.
+        "notices": notices,
+        "notice_count": sum(by_table_notice.values()),
+        "by_table_notice": by_table_notice,
     }
 
 

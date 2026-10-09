@@ -37,7 +37,10 @@ def record(session, report: dict, now: datetime.datetime | None = None) -> dict:
     """Fold one integrity report into the ledger. Returns what changed."""
     now = now or datetime.datetime.utcnow()
     seen: dict[str, tuple] = {}
-    for sev, key in (("defect", "issues"), ("waiting", "waiting")):
+    # Notices age in the ledger exactly like the rest: "BB reworded a header"
+    # is only useful with a date on it, and it resolves itself automatically
+    # once the new shape has held long enough to be BB's normal.
+    for sev, key in (("defect", "issues"), ("waiting", "waiting"), ("notice", "notices")):
         for line in report.get(key) or []:
             table = line.split(":", 1)[0].strip()
             seen[fingerprint(line)] = (sev, table, line)

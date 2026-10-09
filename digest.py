@@ -135,6 +135,19 @@ def build() -> tuple:
         except Exception as exc:
             ages, _fp = {}, (lambda x: x)
             lines.append(f"_(issue ledger unavailable: {exc})_\n")
+        # BB changed the shape of a page and the parse still came out clean.
+        # Above "waiting on BB" because somebody has to look at it, and below
+        # the defects because nothing is wrong yet.
+        if rep.get("notices"):
+            lines.append(f"**BB changed a page: {rep.get('notice_count')}** — the parse is "
+                         f"still clean because columns are read by header text, not position; "
+                         f"confirm the new layout means what we think it means\n")
+            for nt in rep["notices"][:10]:
+                a = ages.get(_fp(nt))
+                age = f" _(since {a['age_days']}d ago)_" if a and a.get("age_days") else ""
+                lines.append(f"- {nt}{age}")
+            lines.append("")
+
         if rep.get("waiting"):
             lines.append(f"**Waiting on Bangladesh Bank: {rep.get('waiting_count')}** — "
                          f"not our data and not actionable, listed so it is never forgotten\n")
