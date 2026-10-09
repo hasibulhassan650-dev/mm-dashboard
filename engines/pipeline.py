@@ -837,20 +837,48 @@ def _store_omo_txns(session, txns: list, now: datetime.datetime) -> tuple:
 
 
 def run_omo_fetch(days_back: int = 28, max_files: int = 20) -> dict:
-    """Fetch last N OMO press release PDFs and store transactions to DB."""
-    from fetchers.omo import fetch_omo_data
+    """Fetch last N OMO press release PDFs and store transactions to DB.
+
+    Tries the no-browser path first: BB's listing and its PDFs both come back
+    over curl_cffi, which is faster and has fewer moving parts than driving
+    Chrome. Chrome remains the fallback.
+
+    A fetch that produces NOTHING now returns a reason. It used to return an
+    empty list after logging an error, so the caller recorded "OMO OK |
+    new_rows=0" and eleven days of missing data looked exactly like a quiet
+    market.
+    """
+    from fetchers.omo import fetch_omo_data, fetch_omo_no_browser
     init_db()
     session = get_session()
     try:
-        txns = fetch_omo_data(days_back=days_back, max_files=max_files)
+        meta, reason = {}, None
+        try:
+            res = fetch_omo_no_browser(days_back=days_back, max_files=max_files)
+            txns = res["rows"]
+            reason = res.get("reason")
+            meta = {k: v for k, v in res.items() if k not in ("rows", "pdf_failures")}
+        except Exception as exc:
+            log.warning("OMO no-browser fetch failed (%s) — falling back to Chrome", exc)
+            txns, reason = fetch_omo_data(days_back=days_back, max_files=max_files), None
+            meta = {"selector": "chrome-fallback"}
+            if not txns:
+                reason = f"no-browser path raised {type(exc).__name__}; Chrome returned nothing"
+
+        if not txns:
+            # Empty is a RESULT, not a success. Say why, and say it where the
+            # pipeline run records it.
+            msg = f"omo: fetched nothing — {reason or 'no reason reported'}"
+            log.error(msg)
+            return {"rows": 0, "pdfs": 0, "errors": [msg], "empty_reason": reason, **meta}
+
         saved, superseded = _store_omo_txns(session, txns, datetime.datetime.utcnow())
         session.commit()
-        log.info("OMO fetch: %d rows stored, %d date(s) superseded by corrections, from %d PDFs",
+        log.info("OMO fetch: %d rows stored, %d date(s) superseded by corrections, from %d txns",
                  saved, superseded, len(txns))
-        # Grand-total reconciliation failures (set by the parser) → run errors, so
-        # they surface on the dashboard's last_run_errors and to the watchdog.
         recon = sorted({t["recon_mismatch"] for t in txns if t.get("recon_mismatch")})
-        return {"rows": saved, "pdfs": max_files, "errors": recon}
+        return {"rows": saved, "txns": len(txns), "pdfs": meta.get("pdfs", max_files),
+                "errors": recon, **meta}
     except Exception as exc:
         session.rollback()
         log.exception("OMO fetch failed")

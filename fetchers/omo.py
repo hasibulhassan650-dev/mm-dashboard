@@ -668,8 +668,11 @@ def _wait_for_content(drv, timeout: int = 60) -> bool:
     from selenium.webdriver.support.ui import WebDriverWait
     from selenium.webdriver.support import expected_conditions as EC
     try:
+        # Either markup counts as "the page has content". Waiting only for the
+        # old one is what turned a BB rename into an eleven-day silence.
         WebDriverWait(drv, timeout).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "a.pdf-file"))
+            EC.presence_of_element_located(
+                (By.CSS_SELECTOR, "a.pdf-file, a.pdf-list, a[href$='.pdf']"))
         )
         return True
     except Exception:
@@ -692,6 +695,143 @@ def _wait_for_download(download_dir: str, prev_files: set, timeout: int = 40) ->
 
 
 # ── Main fetch ────────────────────────────────────────────────────────────────
+
+# ── Link extraction, tolerant of BB changing its markup ─────────────────────
+#
+# BB has published these links two different ways:
+#
+#   old:  <a class="pdf-file" pdf-link="https://…/pr14322_20261008.pdf">more....</a>
+#   new:  <a class="pdf-list" onclick="loadPDFDynamically('https://…pdf')">more....</a>
+#
+# The fetcher waited for `a.pdf-file` and read the `pdf-link` attribute. When BB
+# switched, the wait timed out, the fetcher logged an error and returned [], the
+# caller recorded "OMO OK | new_rows=0", and eleven days of data went missing
+# while every health check reported green.
+#
+# So the URL is now taken from whichever of these is present, and the SELECTOR
+# THAT MATCHED is reported back to the caller — a change of shape is a fact
+# worth recording even when the data still parses.
+
+_ONCLICK_URL = re.compile(r"""loadPDFDynamically\(\s*['"]([^'"]+)['"]""")
+
+
+def extract_pdf_links(soup) -> tuple:
+    """-> (links, selector_used). Each link is {url, title}.
+
+    Tries every markup BB has used, newest first, and falls back to any anchor
+    whose href is a PDF. Returning the selector lets the caller notice that BB
+    moved without anyone having to predict which way.
+    """
+    strategies = (
+        ("a.pdf-list[onclick]",
+         lambda a: (_ONCLICK_URL.search(a.get("onclick") or "") or [None, None])[1]
+         if _ONCLICK_URL.search(a.get("onclick") or "") else None,
+         lambda soup: soup.select("a.pdf-list[onclick]")),
+        ("a.pdf-file[pdf-link]",
+         lambda a: (a.get("pdf-link") or "").strip() or None,
+         lambda soup: soup.select("a.pdf-file")),
+        ("a[href$=.pdf]",
+         lambda a: (a.get("href") or "").strip() or None,
+         lambda soup: [a for a in soup.find_all("a")
+                       if (a.get("href") or "").lower().strip().endswith(".pdf")]),
+    )
+    for name, geturl, find in strategies:
+        out = []
+        for a in find(soup):
+            url = geturl(a)
+            if not url:
+                continue
+            url = url.strip()
+            td = a.find_parent("td") or a.find_parent("tr")
+            title = td.get_text(" ", strip=True).replace("more....", "").strip() if td else ""
+            out.append({"url": url, "title": title})
+        if out:
+            return out, name
+    return [], None
+
+
+def fetch_omo_links(days_back: int = 28, max_files: int = 20) -> dict:
+    """OMO press-release links, without a browser.
+
+    The listing is plain HTML behind BB's F5 challenge, so curl_cffi reads it in
+    one request — all 160-odd rows, no DataTables pagination. Chrome stays as a
+    fallback in fetch_omo_data for the day this stops working.
+    """
+    from bs4 import BeautifulSoup
+    from fetchers.bb_session import bb_get, get_f5_cookies
+
+    cutoff = datetime.date.today() - datetime.timedelta(days=days_back)
+    ck, ua = get_f5_cookies(BB_PRESS_URL)
+    html = bb_get(BB_PRESS_URL, ck, ua)
+    if hasattr(html, "text"):
+        html = html.text
+    soup = BeautifulSoup(html, "lxml")
+
+    all_links, selector = extract_pdf_links(soup)
+    rows_seen = len(soup.find_all("tr"))
+    omo, skipped_old, skipped_other = [], 0, 0
+    for link in all_links:
+        if "open market operations" not in link["title"].lower():
+            skipped_other += 1
+            continue
+        rdate = _parse_date_from_text(link["title"]) or _parse_date_from_text(link["url"])
+        if rdate and rdate < cutoff:
+            skipped_old += 1
+            continue
+        omo.append({**link, "report_date": rdate})
+    omo.sort(key=lambda x: str(x["report_date"] or ""), reverse=True)
+    return {
+        "links": omo[:max_files],
+        # Everything below is for the guardian: a change of shape at the source
+        # is recorded whether or not the data still parses.
+        "selector": selector,
+        "rows_seen": rows_seen,
+        "anchors_found": len(all_links),
+        "skipped_not_omo": skipped_other,
+        "skipped_too_old": skipped_old,
+    }
+
+
+def fetch_omo_no_browser(days_back: int = 28, max_files: int = 20) -> dict:
+    """Links + parsed transactions with no browser at all.
+
+    Returns a REASON when it comes back empty. `fetch_omo_data` used to return a
+    bare [] after logging an error, which the caller could not tell apart from
+    "BB published nothing" — that is the whole reason this outage was silent.
+    """
+    from fetchers.bb_session import bb_get_bytes, get_f5_cookies
+
+    info = fetch_omo_links(days_back=days_back, max_files=max_files)
+    meta = {k: v for k, v in info.items() if k != "links"}
+    links = info["links"]
+    if not links:
+        reason = ("no anchors matched any known markup — BB has probably changed the page"
+                  if not info["anchors_found"] else
+                  f"{info['anchors_found']} links found but none is an OMO release "
+                  f"within {days_back} days")
+        return {"rows": [], "reason": reason, **meta}
+
+    ck, ua = get_f5_cookies(BB_PRESS_URL)
+    txns, failed = [], []
+    for entry in links:
+        try:
+            # RAW bytes: bb_get decodes to text and would corrupt the PDF.
+            data = bb_get_bytes(entry["url"], ck, ua)
+            if not data[:5].startswith(b"%PDF"):
+                failed.append(f"{entry['url']}: not a PDF")
+                continue
+            got = parse_omo_pdf(data, entry["report_date"], entry["url"])
+            txns.extend(got)
+            log.info("  %s -> %d transactions", entry["title"][:60], len(got))
+        except Exception as exc:
+            failed.append(f"{entry['url']}: {type(exc).__name__} {exc}")
+    reason = None
+    if not txns:
+        reason = (f"{len(links)} OMO PDFs found but none parsed"
+                  + (f"; first error: {failed[0]}" if failed else ""))
+    return {"rows": txns, "reason": reason, "pdfs": len(links),
+            "pdf_failures": failed, **meta}
+
 
 def fetch_omo_data(days_back: int = 28, max_files: int = 20) -> List[Dict]:
     """
@@ -752,14 +892,14 @@ def fetch_omo_data(days_back: int = 28, max_files: int = 20) -> List[Dict]:
         while not stop_early:
             soup = BeautifulSoup(driver.page_source, "lxml")
 
-            for a in soup.find_all("a", class_="pdf-file"):
-                pdf_url = (a.get("pdf-link") or "").strip()
+            page_links, _sel = extract_pdf_links(soup)
+            for link in page_links:
+                pdf_url = link["url"]
                 if not pdf_url or pdf_url in seen_urls:
                     continue
                 seen_urls.add(pdf_url)
 
-                td    = a.find_parent("td")
-                title = td.get_text(" ", strip=True).replace("more....", "").strip() if td else ""
+                title = link["title"]
                 if "open market operations" not in title.lower():
                     continue
 

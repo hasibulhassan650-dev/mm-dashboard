@@ -197,6 +197,34 @@ def bb_get(url: str, cookies: dict, ua: str) -> str:
     return resp.text
 
 
+def bb_get_bytes(url: str, cookies: dict, ua: str) -> bytes:
+    """Same as bb_get but returns the RAW BODY.
+
+    bb_get returns resp.text, which decodes the body as text. That is right for
+    HTML and destroys a PDF: the bytes are decoded, and re-encoding them cannot
+    recover the original, so the file is corrupt and every parse fails for a
+    reason that looks like a bad parser. Anything binary must come through here.
+    """
+    from curl_cffi import requests as cf
+
+    session = cf.Session(impersonate="chrome")
+    session.headers.update({
+        "User-Agent":      ua,
+        "Referer":         url,
+        "Accept":          "application/pdf,*/*",
+        "Accept-Language": "en-US,en;q=0.9",
+    })
+    for name, val in cookies.items():
+        session.cookies.set(name, val, domain="www.bb.org.bd")
+
+    resp = session.get(url, timeout=60)
+    body = resp.content
+    # The CAPTCHA comes back as HTML even when a PDF was asked for.
+    if body[:200].lower().find(b"human visitor") != -1 or body[:200].lower().find(b"support id") != -1:
+        raise RuntimeError("F5 CAPTCHA returned — challenge may have rotated")
+    return body
+
+
 def fetch_with_retry(fetch_once, attempts: int = 3, delay: int = 4, label: str = "fetch"):
     """
     Call `fetch_once()` (a full capture-cookies -> request -> parse cycle),
