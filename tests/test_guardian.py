@@ -285,3 +285,51 @@ class TestSentinelHonoursSeverity:
         v = self._run(monkeypatch, self._payload([]))
         assert v["ok"] is False
         assert any("Interbank Repo" in p for p in v["problems"]), v["problems"]
+
+
+class TestTheDigestLeadsWithEscalations:
+    """The eleven-day OMO outage was IN the digest the whole time.
+
+    It was one bullet, below an all-clear summary line, inside a list truncated
+    at ten items, in the same grey tone as "BB is a day late". Being present in
+    a report nobody can triage is not a notification. An escalation — our fetch
+    is broken, or a feed has been dead past its tolerance — now goes above the
+    summary, in bold, uncapped. If this ordering regresses, the alarm goes back
+    to being wallpaper, which is the exact failure the desk found by hand.
+    """
+
+    def _body(self, monkeypatch, issues, close_db=True):
+        import digest
+        eng, s = _mem()
+        s.add(PipelineRun(run_utc=NOW(), kind="refresh", errors="[]",
+                          quality=json.dumps({"ledger": {"opened": 0}})))
+        s.commit()
+        monkeypatch.setattr(digest, "get_session", lambda: s)
+        monkeypatch.setattr(digest, "integrity_check", lambda: {
+            "ok": not issues, "issue_count": len(issues),
+            "by_table": {"freshness": len(issues)}, "issues": issues,
+            "waiting": [],
+        })
+        body, problems = digest.build()
+        return body
+
+    def test_an_escalation_appears_above_the_summary_line(self, monkeypatch):
+        esc = "freshness: omo: ESCALATED — nothing newer than 2026-09-29, 7 working days"
+        body = self._body(monkeypatch, ["freshness: secondary: 1 day missing", esc])
+        assert "ESCALATION(S)" in body
+        assert body.index(esc) < body.index("**Our data:"), \
+            "the escalation must be read before the defect count, not after it"
+
+    def test_escalations_are_never_cut_by_the_ten_item_cap(self, monkeypatch):
+        # Twelve ordinary findings would have pushed the escalation out of the
+        # list entirely. That is how a dead feed stays invisible.
+        issues = [f"freshness: s{i}: 1 day missing" for i in range(12)]
+        esc = "freshness: omo: ESCALATED — nothing newer than 2026-09-29"
+        body = self._body(monkeypatch, issues + [esc])
+        assert esc in body, "an escalation was dropped by the truncation cap"
+        assert "and 2 more" in body, "truncation must say how many it hid"
+
+    def test_a_clean_run_says_so_without_inventing_an_escalation_heading(self, monkeypatch):
+        body = self._body(monkeypatch, [])
+        assert "all checks pass" in body
+        assert "ESCALATION" not in body

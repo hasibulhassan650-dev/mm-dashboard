@@ -99,9 +99,27 @@ def build() -> tuple:
             problems.append(f"{rep.get('issue_count')} integrity issue(s)")
             by = ", ".join(f"`{k}`={v}" for k, v in sorted(rep.get("by_table", {}).items(),
                                                            key=lambda x: -x[1]))
+            issues = rep.get("issues", [])
+            # ESCALATIONS LEAD. For eleven days this report opened with an
+            # all-clear while a whole feed was dead, because the one finding
+            # that mattered was filed where nothing read it. Anything escalated
+            # now goes ABOVE the summary line, in full, and is never cut by the
+            # [:10] slice -- the worst finding is the one a cap would drop.
+            esc = [i for i in issues
+                   if "ESCALATED" in i or i.startswith("guardian:")
+                   or i.startswith("empty-fetch:")]
+            rest = [i for i in issues if i not in esc]
+            if esc:
+                lines.append(f"### 🚨 {len(esc)} ESCALATION(S) — act on these now\n")
+                for i in esc:
+                    lines.append(f"- **{i}**")
+                lines.append("")
             lines.append(f"**Our data: {rep.get('issue_count')} defect(s)** — {by}\n")
-            for i in rep.get("issues", [])[:10]:
+            for i in rest[:10]:
                 lines.append(f"- {i}")
+            if len(rest) > 10:
+                lines.append(f"- _…and {len(rest) - 10} more; "
+                             f"`python audit.py` lists every one_")
             lines.append("")
 
         # Waiting on BB is reported every single day but is NOT counted as a

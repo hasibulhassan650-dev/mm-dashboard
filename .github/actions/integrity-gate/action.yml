@@ -58,16 +58,45 @@ runs:
         fi
 
         echo "Integrity FAILED — filing alert issue"
+
+        # The title is the subject line of the email this sends, so it has to
+        # carry the actual problem. "checks failing" told the reader nothing and
+        # looked identical whether one series was a day late or an entire feed
+        # had been dead for a fortnight.
+        python - <<'PY' > alert_title.txt
+        import json
+        rep = json.load(open("integrity.json"))
+        issues = rep.get("issues") or []
+        esc = [i for i in issues if "ESCALATED" in i]
+        pick = (esc or issues or ["checks failing"])[0]
+        # "freshness: omo: ESCALATED — nothing newer than ..." -> drop the prefix
+        for p in ("freshness: ", "guardian: "):
+            if pick.startswith(p):
+                pick = pick[len(p):]
+                break
+        pick = pick.replace("ESCALATED — ", "").strip()
+        if len(pick) > 110:
+            pick = pick[:107] + "..."
+        more = f" (+{len(issues) - 1} more)" if len(issues) > 1 else ""
+        kind = "ESCALATION" if esc else "DATA INTEGRITY"
+        print(f"{kind}: {pick}{more}")
+        PY
+        title=$(cat alert_title.txt)
+        echo "title: $title"
+
         body="Automated data-integrity alert from ${CONTEXT} run [${GITHUB_RUN_ID}](https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}):
 
         \`\`\`json
         $(cat integrity.json)
         \`\`\`"
         if [ -n "$n" ]; then
+          # Keep the title current: a stale title describing a resolved problem
+          # while a worse one is open is how an alert stops being read.
+          gh issue edit "$n" --repo "$GITHUB_REPOSITORY" --title "$title" || true
           gh issue comment "$n" --repo "$GITHUB_REPOSITORY" --body "$body"
         else
           gh issue create --repo "$GITHUB_REPOSITORY" \
-            --title "DATA INTEGRITY ALERT: checks failing" \
+            --title "$title" \
             --label data-integrity --body "$body"
         fi
         exit 1
