@@ -25,8 +25,46 @@ _YIELD_TENORS = {"14D", "28D", "91D", "182D", "364D", "2Y", "3Y", "3Y_FRTB",
                  "5Y", "10Y", "15Y", "20Y", "25Y"}
 
 
+import engines.expectations as _EXPECT
+
+
+def _holidays_set():
+    """Gazetted holidays, so a closed day is never reported as a gap."""
+    try:
+        import calendar_utils
+        rows = calendar_utils.load_calendar_rows()
+        return {r[0] if hasattr(r[0], "year") else r["calendar_date"] for r in rows}
+    except Exception:
+        return set()
+
+
+def _empty_fetches(session) -> dict:
+    """Steps whose most recent run stored nothing and said why.
+
+    Reads the reasons the fetchers now return. A step that reports an
+    empty_reason has told us it failed; before this existed the same situation
+    was recorded as "OK | new_rows=0".
+    """
+    import json
+    from sqlalchemy import text as _t
+    row = session.execute(_t(
+        "SELECT new_rows FROM pipeline_runs WHERE new_rows IS NOT NULL "
+        "ORDER BY run_utc DESC LIMIT 1")).fetchone()
+    if not row or not row[0]:
+        return {}
+    try:
+        data = json.loads(row[0])
+    except Exception:
+        return {}
+    out = {}
+    for step, info in (data.items() if isinstance(data, dict) else []):
+        if isinstance(info, dict) and info.get("empty_reason"):
+            out[step] = info["empty_reason"]
+    return out
+
+
 def integrity_check(limit_per_rule: int = 8) -> dict:
-    s = get_session()
+    s = s_ = get_session()
     issues: list[str] = []
     by_table: dict[str, int] = {}
     waiting: list[str] = []
@@ -667,12 +705,71 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
                 continue
             if mx is None or mx < min_ok:
                 fetched = _fetch_is_healthy(src_table) if src_table else False
-                if fetched:
+                # WAITING EXPIRES. This is the fix for an eleven-day OMO outage
+                # in which this very check fired, called the gap "implausible",
+                # and still filed it as `waiting` — which never fails a build
+                # and never alerts. "BB is a day late" and "BB has stopped
+                # publishing" look identical in the data; only elapsed time
+                # separates them, so the dataset's declared tolerance decides.
+                ds = _EXPECT.BY_KEY.get(name)
+                age = (today - mx).days if mx else None
+                escalated = False
+                if ds is not None and age is not None:
+                    escalated = ds.severity_for_age(age) == "defect"
+
+                if fetched and not escalated:
                     add("freshness", f"{name}: BB has published nothing newer than {mx} "
                                      f"(our last successful fetch was within 14h) — {desc}", "waiting")
+                elif escalated:
+                    tol = ds.tolerance_days
+                    add("freshness",
+                        f"{name}: ESCALATED — nothing newer than {mx}, {age} days and counting. "
+                        f"{ds.label} is published {ds.cadence.replace('_', ' ')} by {ds.source}, "
+                        f"so a gap beyond {tol} days is ours, not BB's"
+                        + (" (our fetch reports success, which means it is succeeding at "
+                           "fetching nothing)" if fetched else ""))
                 else:
                     add("freshness", f"{name}: latest={mx} (need ≥{min_ok}) and OUR fetch is not "
                                      f"current either — {desc}")
+
+        # ── a step that ran and wrote NOTHING is not a healthy step ──────────
+        # Judging a fetch by "did it raise?" cannot tell "BB published nothing"
+        # from "we are broken" — and that is exactly the pair that mattered.
+        # run_omo_fetch now reports an empty_reason; anything that does is a
+        # defect regardless of how clean the run looked.
+        for step, reason in _empty_fetches(s_).items():
+            add("freshness", f"{step}: the fetch step ran and stored NOTHING — {reason}")
+
+        # ── gaps INSIDE a series ────────────────────────────────────────────
+        # Staleness only inspects the newest row, so a working day missing from
+        # the middle is invisible to it. interbank_repo was missing 27-30 Sep
+        # inside its own range while its latest row looked current.
+        for ds in _EXPECT.DATASETS:
+            # Only daily series: a "missing working day" is meaningless for a
+            # monthly series (whose date column is a YYYY-MM string) or for an
+            # event series where silence is normal.
+            if not ds.gap_check or ds.cadence != _EXPECT.WORKING_DAY:
+                continue
+            try:
+                rows = q(f"SELECT DISTINCT {ds.date_column} FROM {ds.table} "
+                         f"WHERE {ds.date_column} >= :since", since=today - datetime.timedelta(days=45))
+            except Exception:
+                # Roll back, or the aborted transaction poisons every check
+                # after this one and the report silently truncates.
+                s.rollback()
+                continue
+            present = {r[0] if hasattr(r[0], "year") else None for r in rows}
+            present.discard(None)
+            if not present:
+                continue
+            gaps = _EXPECT.missing_working_days(
+                present, max(min(present), today - datetime.timedelta(days=45)),
+                max(present), holidays=_holidays_set())
+            if gaps:
+                shown = ", ".join(str(g) for g in gaps[:6])
+                more = f" (+{len(gaps) - 6} more)" if len(gaps) > 6 else ""
+                add("freshness", f"{ds.key}: {len(gaps)} working day(s) missing INSIDE the "
+                                 f"series — {shown}{more}")
 
         # ---- policy corridor freshness (tolerant until first fetch populates it) ----
         # The daily fetcher re-confirms the corridor from BB's homepage; if it

@@ -38,8 +38,9 @@ def _mem():
     return eng, sessionmaker(bind=eng)()
 
 
-def _stale_repo(s, days=9):
-    """A repo row old enough to trip the >5 day freshness rule."""
+def _stale_repo(s, days=6):
+    """A repo row stale enough to trip the freshness rule but still INSIDE the
+    dataset's tolerance, so it is BB being late rather than us being broken."""
     s.add(InterbankRepo(trade_date=D.today() - datetime.timedelta(days=days),
                         num_deals=30, amount_crore=2979.24, tenor_min_days=1,
                         tenor_max_days=7, rate_min_pct=8.5, rate_max_pct=8.95,
@@ -62,8 +63,9 @@ def _repo_lines(rep, key):
 
 class TestSeverity:
     def test_bb_late_is_waiting_and_does_not_fail_the_build(self, monkeypatch):
-        # Our fetch ran an hour ago and reported no error for this step, so the
-        # staleness is BB's. It must be visible but must NOT turn the build red.
+        # Our fetch ran an hour ago and reported no error for this step, and the
+        # gap is still within the dataset's tolerance, so this is BB being late.
+        # It must be visible but must NOT turn the build red.
         eng, s = _mem(); _stale_repo(s); _run(s); s.commit()
         rep = _check(monkeypatch, eng)
         assert _repo_lines(rep, "waiting"), rep["waiting"]
@@ -96,6 +98,35 @@ class TestSeverity:
         eng, s = _mem(); _stale_repo(s); _run(s, hours_ago=100); s.commit()
         rep = _check(monkeypatch, eng)
         assert _repo_lines(rep, "issues") and not _repo_lines(rep, "waiting")
+
+    def test_waiting_expires_into_a_defect(self, monkeypatch):
+        """The failure this whole split got wrong.
+
+        For eleven days OMO data was missing while the fetch reported success,
+        so the staleness stayed `waiting` -- which never fails a build and never
+        alerts. validate's own message even called the gap implausible. Beyond
+        the dataset's tolerance the verdict must flip, however healthy the fetch
+        claims to be: 'BB is a day late' and 'BB has stopped publishing' look
+        identical in the data, and only elapsed time separates them.
+        """
+        eng, s = _mem()
+        _stale_repo(s, days=12)          # far beyond a daily series' tolerance
+        _run(s)                          # and OUR fetch says it is fine
+        s.commit()
+        rep = _check(monkeypatch, eng)
+        esc = [i for i in rep["issues"] if i.startswith("freshness: repo")]
+        assert esc, f"11 days stale must escalate, got waiting={rep['waiting']}"
+        assert "ESCALATED" in esc[0]
+        assert not _repo_lines(rep, "waiting"), "it must leave waiting entirely"
+
+    def test_the_escalation_says_whose_fault_it_is(self, monkeypatch):
+        # A fetch that reports success while storing nothing is succeeding at
+        # fetching nothing; the message has to say so or it reads as BB's fault.
+        eng, s = _mem(); _stale_repo(s, days=12); _run(s); s.commit()
+        msg = [i for i in _check(monkeypatch, eng)["issues"]
+               if i.startswith("freshness: repo")][0]
+        assert "ours, not BB" in msg
+        assert "succeeding at" in msg
 
     def test_a_wrong_value_is_always_a_defect(self, monkeypatch):
         # Severity applies to FRESHNESS only. A bad number is ours no matter how
