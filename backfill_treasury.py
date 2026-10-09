@@ -108,6 +108,14 @@ def main():
         log.info("PROBE saved %d new rows", saved)
         return
 
+    # --refetch re-reads months we already have. Normally skipping them is the
+    # point (it makes the backfill resumable), but when the PARSER gains fields
+    # BB was always publishing -- ISIN, the re-issuance marker, the sale value --
+    # every stored month is missing them, and "already in DB" is exactly the
+    # wrong test. The upsert updates in place, so this adds no duplicates.
+    refetch = "--refetch" in args
+    args = [a for a in args if not a.startswith("--")]
+
     if len(args) == 2:
         start = datetime.date(int(args[0]), 1, 1)
         end = datetime.date(int(args[1]), 12, 28)
@@ -117,9 +125,15 @@ def main():
 
     all_months = month_range(start, min(end, datetime.date.today()))
     done = done_months_from_db()
-    pending = [(m, s) for (m, s) in all_months if f"{s.year}-{s.month:02d}" not in done]
-    log.info("Backfill %s → %s: %d months total, %d already in DB, %d pending",
-             start, end, len(all_months), len(all_months) - len(pending), len(pending))
+    if refetch:
+        pending = list(all_months)
+        log.info("Backfill %s → %s: %d months, RE-FETCHING ALL (--refetch): stored "
+                 "months are re-read so newly parsed columns get filled",
+                 start, end, len(all_months))
+    else:
+        pending = [(m, s) for (m, s) in all_months if f"{s.year}-{s.month:02d}" not in done]
+        log.info("Backfill %s → %s: %d months total, %d already in DB, %d pending",
+                 start, end, len(all_months), len(all_months) - len(pending), len(pending))
 
     total_saved = 0
     for ci, chunk in enumerate(chunks(pending, CHUNK_MONTHS)):

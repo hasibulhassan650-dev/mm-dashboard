@@ -21,6 +21,11 @@ on:
         description: "End year (inclusive)"
         required: false
         default: "2026"
+      refetch:
+        description: "Re-read months already in the DB (use after the parser gains columns)"
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   backfill:
@@ -56,7 +61,7 @@ jobs:
       - name: Run treasury backfill (Chrome under virtual display)
         run: |
           xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" \
-            python backfill_treasury.py "${{ inputs.start_year }}" "${{ inputs.end_year }}"
+            python backfill_treasury.py "${{ inputs.start_year }}" "${{ inputs.end_year }}" ${{ inputs.refetch && '--refetch' || '' }}
 
       - name: Data integrity gate
         if: always()
