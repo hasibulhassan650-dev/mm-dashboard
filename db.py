@@ -153,8 +153,37 @@ class PrimaryYieldSnapshot(Base):
     tenor_label        = Column(String(15))
     tenor_years        = Column(Float)
     cutoff_yield_pct   = Column(Float)
-    offered_bdt_crore  = Column(Float)
-    accepted_bdt_crore = Column(Float)
+    offered_bdt_crore  = Column(Float)     # bids RECEIVED (face value)
+    accepted_bdt_crore = Column(Float)     # bids ACCEPTED, FACE value (par)
+    # ── what BB prints and we previously discarded ───────────────────────────
+    # BB's results table carries the ISIN, a re-issuance marker inside the same
+    # cell, and a SALE value distinct from the accepted face value. All nullable
+    # on purpose: the older BB layouts have fewer columns, and a 0 here would
+    # read as "no bids" or "sold at par" rather than "not published".
+    isin                 = Column(String(12))
+    # True when BB marks the auction "(Re-issuance: N Yr.)" — the only place a
+    # re-issue is flagged, and why one ISIN legitimately has several issue
+    # dates with different cut-offs. The unique key stays
+    # (tenor_label, auction_date); ISIN must never become the key.
+    is_reissue           = Column(Boolean, default=False)
+    reissue_remaining    = Column(String(20))
+    # tenor_label holds BB's REMAINING maturity (a re-issued 20Y with 2.73 years
+    # left is '2Y'), which is right for the curve. This is what the security
+    # actually is, which is what an instrument listing must show.
+    original_tenor_label = Column(String(15))
+    original_tenor_years = Column(Float)
+    # The CASH the market paid. On a premium re-issue it differs materially
+    # from the accepted face value (02-Sep-2026 20Y: face 3,500.00, sale
+    # 3,689.28) and only this is a cash flow.
+    sale_value_bdt_crore = Column(Float)
+    bids_received_count  = Column(Integer)
+    bids_accepted_count  = Column(Integer)
+    # Kept verbatim ("8.7280-11.7100"): two numbers, and collapsing them to one
+    # would invent a figure BB did not print.
+    yield_range_received = Column(String(40))
+    yield_range_accepted = Column(String(40))
+    weighted_avg_price   = Column(Float)
+    devolvement_yield_pct = Column(Float)
     source             = Column(String(300))
     ingested_utc       = Column(DateTime)
 
@@ -613,6 +642,19 @@ def init_db():
         "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS source_pub_date DATE",
         "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS source_serial VARCHAR(40)",
         "ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS quality TEXT",
+        # BB's results page has always carried these; the parser now keeps them.
+        "ALTER TABLE primary_yield_snapshots ADD COLUMN IF NOT EXISTS isin VARCHAR(12)",
+        "ALTER TABLE primary_yield_snapshots ADD COLUMN IF NOT EXISTS is_reissue BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE primary_yield_snapshots ADD COLUMN IF NOT EXISTS reissue_remaining VARCHAR(20)",
+        "ALTER TABLE primary_yield_snapshots ADD COLUMN IF NOT EXISTS original_tenor_label VARCHAR(15)",
+        "ALTER TABLE primary_yield_snapshots ADD COLUMN IF NOT EXISTS original_tenor_years REAL",
+        "ALTER TABLE primary_yield_snapshots ADD COLUMN IF NOT EXISTS sale_value_bdt_crore REAL",
+        "ALTER TABLE primary_yield_snapshots ADD COLUMN IF NOT EXISTS bids_received_count INTEGER",
+        "ALTER TABLE primary_yield_snapshots ADD COLUMN IF NOT EXISTS bids_accepted_count INTEGER",
+        "ALTER TABLE primary_yield_snapshots ADD COLUMN IF NOT EXISTS yield_range_received VARCHAR(40)",
+        "ALTER TABLE primary_yield_snapshots ADD COLUMN IF NOT EXISTS yield_range_accepted VARCHAR(40)",
+        "ALTER TABLE primary_yield_snapshots ADD COLUMN IF NOT EXISTS weighted_avg_price REAL",
+        "ALTER TABLE primary_yield_snapshots ADD COLUMN IF NOT EXISTS devolvement_yield_pct REAL",
         "ALTER TABLE primary_yield_snapshots ADD COLUMN IF NOT EXISTS issue_date DATE",
         # ── Invariants: the layer BELOW every code path, so a writer that skips
         # the canonical upsert (reconcile.py did, for months) cannot land a broken

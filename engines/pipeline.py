@@ -402,6 +402,25 @@ def upsert_primary_yield(session, row: dict):
         existing.cutoff_yield_pct   = row["cutoff_yield_pct"]
         existing.offered_bdt_crore  = row.get("offered_bdt_crore")
         existing.accepted_bdt_crore = row.get("accepted_bdt_crore")
+        # Only overwrite the newer fields when this parse actually produced
+        # them: an older BB layout yields None, and None must not wipe a value
+        # a richer page already gave us.
+        for src, dest in (("isin", "isin"),
+                          ("reissue_remaining", "reissue_remaining"),
+                          ("original_tenor_label", "original_tenor_label"),
+                          ("original_tenor_years", "original_tenor_years"),
+                          ("sale_value_bdt_crore", "sale_value_bdt_crore"),
+                          ("bids_received_count", "bids_received_count"),
+                          ("bids_accepted_count", "bids_accepted_count"),
+                          ("yield_range_received", "yield_range_received"),
+                          ("yield_range_accepted", "yield_range_accepted"),
+                          ("weighted_avg_price", "weighted_avg_price"),
+                          ("devolvement_yield_pct", "devolvement_yield_pct")):
+            v = row.get(src)
+            if v is not None:
+                setattr(existing, dest, v)
+        if row.get("is_reissue"):
+            existing.is_reissue = True
         existing.ingested_utc       = now
     else:
         session.add(PrimaryYieldSnapshot(
@@ -414,6 +433,18 @@ def upsert_primary_yield(session, row: dict):
             cutoff_yield_pct   = row["cutoff_yield_pct"],
             offered_bdt_crore  = row.get("offered_bdt_crore"),
             accepted_bdt_crore = row.get("accepted_bdt_crore"),
+            isin                 = row.get("isin"),
+            is_reissue           = bool(row.get("is_reissue")),
+            reissue_remaining    = row.get("reissue_remaining"),
+            original_tenor_label = row.get("original_tenor_label"),
+            original_tenor_years = row.get("original_tenor_years"),
+            sale_value_bdt_crore = row.get("sale_value_bdt_crore"),
+            bids_received_count  = row.get("bids_received_count"),
+            bids_accepted_count  = row.get("bids_accepted_count"),
+            yield_range_received = row.get("yield_range_received"),
+            yield_range_accepted = row.get("yield_range_accepted"),
+            weighted_avg_price   = row.get("weighted_avg_price"),
+            devolvement_yield_pct= row.get("devolvement_yield_pct"),
             source             = row.get("source", ""),
             ingested_utc       = now,
         ))

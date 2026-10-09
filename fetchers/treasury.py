@@ -67,6 +67,36 @@ def _rem_to_tenor(s: str):
         return f"{y}Y", "T_BOND"
     return None, None
 
+_ISIN_RE = re.compile(r"\b(BD[0-9A-Z]{10})\b")
+# BB writes the re-issue marker inside the ISIN cell itself, e.g.
+#   "BD0929441204 (Re-issuance: 2.73 Yr.)"
+# That is the ONLY place a re-issue is flagged, and it is what makes one ISIN
+# legitimately appear at several issue dates with different cut-offs.
+_REISSUE_RE = re.compile(r"re[-\s]?issu\w*\s*[:\-]?\s*([0-9.]+\s*\w*)", re.I)
+
+
+def _parse_isin_cell(cell: str):
+    """-> (isin, is_reissue, remaining_label). Any part may be None/False."""
+    if not cell:
+        return None, False, None
+    m = _ISIN_RE.search(cell.replace(" ", ""))
+    isin = m.group(1) if m else None
+    r = _REISSUE_RE.search(cell)
+    return isin, bool(r), (r.group(1).strip() if r else None)
+
+
+def _clean_int(s):
+    v = _clean_float(s)
+    return int(v) if v is not None else None
+
+
+def _range_text(s):
+    """A yield range like '8.7280-11.7100' is kept verbatim: it is two numbers
+    and collapsing it to one would invent a figure BB did not print."""
+    s = (s or "").strip()
+    return s or None
+
+
 def _parse_page(html: str, snapshot_date: datetime.date) -> List[Dict]:
     from bs4 import BeautifulSoup
     soup = BeautifulSoup(html, "lxml")
@@ -97,6 +127,16 @@ def _parse_page(html: str, snapshot_date: datetime.date) -> List[Dict]:
     col_std     = None   # "Standard / devolvement yield"
     col_offered = None
     col_accepted= None
+    # Columns BB has always printed and we never kept. All optional: the older
+    # layouts genuinely have fewer columns, so a missing one must come out as
+    # None, never 0 — a zero here would read as "no bids" or "sold at par".
+    col_isin      = None   # "ISIN Number", also carries the re-issuance marker
+    col_nbids_rcv = None   # bids received — number
+    col_rng_rcv   = None   # bids received — range of yields
+    col_nbids_acc = None   # bids accepted — number
+    col_sale      = None   # bids accepted — SALE value (the cash actually paid)
+    col_rng_acc   = None   # bids accepted — range of yields
+    col_wap       = None   # weighted average price (taka)
 
     # Scan data rows to infer columns (more reliable than header for merged cells)
     # Strategy: find the first data row and deduce columns positionally
@@ -109,26 +149,41 @@ def _parse_page(html: str, snapshot_date: datetime.date) -> List[Dict]:
         if _parse_date(cells[0]) is not None:
             # Found a data row — determine layout based on column count
             if n >= 14:
-                # Full layout: Issue|ISIN|RemMat|TenorName|BidsRcvd(3)|BidsAcpt(5)|WtdAvgPx|Cutoff|Std
+                # Verified against BB's live page (Sep-2026), 14 columns:
+                #  0 Issue date          1 ISIN Number        2 Remaining maturity
+                #  3 Tenor and name      4 Bids rcvd: no      5 Bids rcvd: face value
+                #  6 Bids rcvd: yields   7 Bids acc: no       8 Bids acc: FACE value
+                #  9 Bids acc: SALE value   10 Bids acc: yields
+                # 11 Weighted avg price  12 Cut off yield    13 Standard/Devolvement yield
                 col_issue   = 0
+                col_isin    = 1
                 col_rem     = 2
                 col_name    = 3
+                col_nbids_rcv = 4
                 col_offered = 5
+                col_rng_rcv = 6
+                col_nbids_acc = 7
                 col_accepted= 8
+                col_sale    = 9
+                col_rng_acc = 10
+                col_wap     = 11
                 col_cutoff  = 12
                 col_std     = 13
             elif n >= 9:
                 # Compact layout (some historical pages): Issue|ISIN|RemMat|TenorName|Offered|Accepted|Price|Cutoff|Std?
                 col_issue   = 0
+                col_isin    = 1
                 col_rem     = 2
                 col_name    = 3
                 col_offered = 4
                 col_accepted= 5
+                col_wap     = 6
                 col_cutoff  = 7
                 col_std     = 8 if n > 8 else None
             elif n >= 6:
                 # Minimal layout: Issue|ISIN|RemMat|TenorName|...|Cutoff
                 col_issue   = 0
+                col_isin    = 1
                 col_rem     = 2
                 col_name    = 3
                 col_cutoff  = n - 1  # last column
@@ -180,6 +235,19 @@ def _parse_page(html: str, snapshot_date: datetime.date) -> List[Dict]:
             if cutoff is None or cutoff <= 0:
                 continue
 
+            def _cell(idx):
+                return cells[idx] if (idx is not None and idx < len(cells)) else None
+
+            isin, is_reissue, reissue_rem = _parse_isin_cell(_cell(col_isin) or "")
+
+            # tenor_label above comes from BB's REMAINING-maturity column, so a
+            # re-issued 20-year bond with 2.73 years left is labelled 2Y. That is
+            # right for the yield curve and wrong for an instrument listing,
+            # where the security is a 20-year bond. Keep BB's "Tenor and name"
+            # reading too; the two are different facts, not a correction.
+            orig_label, _orig_type = _rem_to_tenor(name_cell)
+            orig_years = _tenor_years(orig_label) if orig_label else None
+
             results.append({
                 "snapshot_date":     snapshot_date,
                 # The page prints the ISSUE date; the auction was the previous
@@ -193,6 +261,23 @@ def _parse_page(html: str, snapshot_date: datetime.date) -> List[Dict]:
                 "cutoff_yield_pct":  cutoff,
                 "offered_bdt_crore": _clean_float(cells[col_offered]) if col_offered and col_offered < len(cells) else None,
                 "accepted_bdt_crore":_clean_float(cells[col_accepted]) if col_accepted and col_accepted < len(cells) else None,
+                # ── fields BB prints that were previously discarded ───────────
+                "isin":                 isin,
+                "is_reissue":           is_reissue,
+                "reissue_remaining":    reissue_rem,
+                "original_tenor_label": orig_label,
+                "original_tenor_years": orig_years,
+                # SALE value is the cash the market actually paid; the accepted
+                # FACE value above is the par amount. On a premium re-issue they
+                # differ materially (02-Sep-2026 20Y: face 3,500.00, sale
+                # 3,689.28), and only the sale value is a cash flow.
+                "sale_value_bdt_crore": _clean_float(_cell(col_sale)),
+                "bids_received_count":  _clean_int(_cell(col_nbids_rcv)),
+                "bids_accepted_count":  _clean_int(_cell(col_nbids_acc)),
+                "yield_range_received": _range_text(_cell(col_rng_rcv)),
+                "yield_range_accepted": _range_text(_cell(col_rng_acc)),
+                "weighted_avg_price":   _clean_float(_cell(col_wap)),
+                "devolvement_yield_pct": std_val,
                 "source": BB_TREASURY_URL,
             })
 
