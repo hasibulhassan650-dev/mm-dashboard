@@ -47,7 +47,7 @@ DERIVED = "derived"      # we compute it; staleness means OUR pipeline stalled
 STALE_AFTER: Dict[str, int] = {
     WORKING_DAY: 2,      # WORKING days — two consecutive missed publications
     WEEKLY: 10,          # calendar days
-    MONTHLY: 40,
+    MONTHLY: 45,
     DERIVED: 3,
     EVENT: None,
 }
@@ -55,7 +55,11 @@ STALE_AFTER: Dict[str, int] = {
 TOLERANCE: Dict[str, int] = {
     WORKING_DAY: 4,      # WORKING days — a full trading week of silence is ours
     WEEKLY: 14,          # calendar days: two missed cycles
-    MONTHLY: 50,         # a monthly series that has missed its month outright
+    # BB's econdata publishes a month in arrears and then some: checked
+    # 2026-10-10, BB's own reserves page carried nothing newer than 2026-08,
+    # i.e. 70 days. Escalating at 50 would have called BB's normal cadence our
+    # failure -- the false-alarm side of the same mistake, and just as corrosive.
+    MONTHLY: 85,
     DERIVED: 5,          # our own pipeline, so no publication excuse
     EVENT: None,         # never stale by time alone
 }

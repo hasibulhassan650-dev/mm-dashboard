@@ -118,14 +118,58 @@ def parse_interbank_repo_html(html: str) -> List[Dict]:
 
 
 def fetch_interbank_repo() -> List[Dict]:
-    """The default page — roughly the last month of trading days."""
+    """The default page.
+
+    NOT "roughly the last month", as this said for months: BB shows only the
+    LAST FIVE TRADING DAYS here. That matters more than it sounds. A missed run
+    does not just delay the data, it loses it, because the day scrolls off --
+    which is how 27-30 September went missing and could not be noticed from the
+    newest row alone.
+
+    The page carries a `date_picker`, so the history IS recoverable a month at a
+    time; see fetch_interbank_repo_month.
+    """
     from curl_cffi import requests as creq
     try:
         r = creq.get(_URL, impersonate="chrome", timeout=40)
         r.raise_for_status()
         rows = parse_interbank_repo_html(r.text)
-        log.info("Interbank repo: parsed %d rows", len(rows))
+        log.info("Interbank repo: parsed %d rows (BB shows only the last 5 trading days)",
+                 len(rows))
         return rows
     except Exception as exc:
         log.error("Interbank repo fetch failed: %s", exc)
         return []
+
+
+def fetch_interbank_repo_month(month: datetime.date) -> List[Dict]:
+    """One month of interbank repo, via the page's own date picker.
+
+    The default view is a five-day window, so anything older has to be asked
+    for explicitly. Used to repair gaps and to backfill history.
+    """
+    from curl_cffi import requests as creq
+    label = month.strftime("%B, %Y")
+    try:
+        r = creq.post(_URL, data={"date_picker": label}, impersonate="chrome", timeout=40)
+        r.raise_for_status()
+        rows = parse_interbank_repo_html(r.text)
+        log.info("Interbank repo %s: parsed %d rows", label, len(rows))
+        return rows
+    except Exception as exc:
+        log.error("Interbank repo fetch failed for %s: %s", label, exc)
+        return []
+
+
+def fetch_interbank_repo_range(start: datetime.date, end: datetime.date) -> List[Dict]:
+    """Every month between start and end inclusive."""
+    out, seen = [], set()
+    d = start.replace(day=1)
+    while d <= end:
+        for row in fetch_interbank_repo_month(d):
+            key = str(row.get("trade_date"))
+            if key not in seen:
+                seen.add(key)
+                out.append(row)
+        d = (d.replace(day=28) + datetime.timedelta(days=7)).replace(day=1)
+    return out

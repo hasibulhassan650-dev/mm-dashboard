@@ -399,11 +399,18 @@ def main():
     # ── 13. Interbank repo — the secured money market ────────────────────────
     log.info("--- Step 13: Interbank repo ---")
     try:
-        from fetchers.interbank_repo import fetch_interbank_repo
+        from fetchers.interbank_repo import fetch_interbank_repo_range
         from db import InterbankRepo
         from engines.pipeline import replace_daily_rows
         import datetime as _dt
-        rows_rp = fetch_interbank_repo()
+        # Fetch the CURRENT and PREVIOUS month through the page's date picker,
+        # not the default view. BB shows only the last FIVE TRADING DAYS there,
+        # so a few missed runs lose those days permanently -- which is exactly
+        # how 27-30 September went missing. Asking for the month makes a missed
+        # run self-healing instead of destructive, and covers month boundaries.
+        _today = _dt.date.today()
+        _prev = (_today.replace(day=1) - _dt.timedelta(days=1))
+        rows_rp = fetch_interbank_repo_range(_prev, _today)
         now_utc = _dt.datetime.utcnow()
         for r in rows_rp:
             r["ingested_utc"] = now_utc

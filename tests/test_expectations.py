@@ -62,8 +62,8 @@ class TestWaitingExpires:
     @pytest.mark.parametrize("key,age,expect", [
         ("yields", 7, "waiting"),      # weekly: a missed cycle is plausible
         ("yields", 20, "defect"),      # several missed cycles is not
-        ("reserves", 30, "waiting"),   # monthly: BB publishes in arrears
-        ("reserves", 60, "defect"),
+        ("reserves", 60, "waiting"),   # monthly: BB publishes ~2 months in arrears
+        ("reserves", 100, "defect"),   # but not three
         ("callmoney", 2, "waiting"),
         ("callmoney", 6, "defect"),
     ])
