@@ -65,26 +65,34 @@ def fix_sequence():
         s.close()
 
 
-def upsert(rows) -> int:
+def upsert(rows) -> tuple:
+    """Store every fetched row. Returns (inserted, updated).
+
+    This used to call the canonical upsert ONLY when the row was absent, so an
+    existing auction was skipped entirely. That made --refetch useless: it
+    re-read 173 pages and wrote nothing, because every row already existed. The
+    canonical upsert handles both cases and is what fills the columns a newer
+    parser produces, so always delegate to it.
+    """
     if not rows:
-        return 0
-    now = datetime.datetime.utcnow()
+        return 0, 0
+    from engines.pipeline import upsert_primary_yield
     session = get_session()
-    saved = 0
+    inserted = updated = 0
     try:
         for r in rows:
             exists = session.query(PrimaryYieldSnapshot).filter_by(
                 tenor_label=r["tenor_label"], auction_date=r["auction_date"]
             ).first()
-            if not exists:
-                # canonical upsert only — it is what stores issue_date
-                from engines.pipeline import upsert_primary_yield
-                upsert_primary_yield(session, r)
-                saved += 1
+            upsert_primary_yield(session, r)
+            if exists:
+                updated += 1
+            else:
+                inserted += 1
         session.commit()
     finally:
         session.close()
-    return saved
+    return inserted, updated
 
 
 def chunks(lst, n):
@@ -104,8 +112,8 @@ def main():
             log.info("  %s | %s | %s | cutoff=%s offered=%s accepted=%s",
                      r["auction_date"], r["security_type"], r["tenor_label"],
                      r["cutoff_yield_pct"], r["offered_bdt_crore"], r["accepted_bdt_crore"])
-        saved = upsert(rows)
-        log.info("PROBE saved %d new rows", saved)
+        ins, upd = upsert(rows)
+        log.info("PROBE saved %d new, updated %d", ins, upd)
         return
 
     # --refetch re-reads months we already have. Normally skipping them is the
@@ -136,13 +144,16 @@ def main():
                  start, end, len(all_months), len(all_months) - len(pending), len(pending))
 
     total_saved = 0
+    total_updated = 0
     for ci, chunk in enumerate(chunks(pending, CHUNK_MONTHS)):
         log.info("=== chunk %d/%d: %s … %s ===", ci + 1,
                  (len(pending) + CHUNK_MONTHS - 1) // CHUNK_MONTHS, chunk[0][0], chunk[-1][0])
         rows = fetch_primary_yields_months(chunk)
-        saved = upsert(rows)
-        total_saved += saved
-        log.info("  chunk done: fetched %d rows, saved %d new (running total %d)", len(rows), saved, total_saved)
+        ins, upd = upsert(rows)
+        total_saved += ins
+        total_updated += upd
+        log.info("  chunk done: fetched %d rows, %d new, %d updated (running %d new / %d updated)",
+                 len(rows), ins, upd, total_saved, total_updated)
 
     # report DB coverage
     session = get_session()

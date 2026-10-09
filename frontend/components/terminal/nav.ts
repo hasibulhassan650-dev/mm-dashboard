@@ -12,6 +12,7 @@ export const NAV: NavItem[] = [
   { href: "/",            label: "Overview",        icon: "grid" },
   { href: "/auctions",    label: "Auctions",        icon: "doc" },
   { href: "/schedule",    label: "Schedule",        icon: "flow" },
+  { href: "/auction-data", label: "Auction Data",    icon: "doc" },
   { href: "/cashflows",   label: "Cash Flows",      icon: "flow" },
   { href: "/forecast",    label: "Forecast",        icon: "pulse" },
   { href: "/omo",         label: "OMO",             icon: "layers" },

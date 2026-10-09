@@ -65,6 +65,28 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
             if r[0] not in _YIELD_TENORS:
                 add("yields", f"unknown tenor label '{r[0]}'")
 
+        # ---- one auction stored twice under two tenor labels ----
+        # primary_yield_snapshots is keyed (tenor_label, auction_date), and for a
+        # RE-ISSUE the label has been derived two different ways over time: from
+        # BB's remaining-maturity column ("2Y" on a 5-year bond with 2.6 years
+        # left) and from its "Tenor and name" column ("5Y"). When the convention
+        # changed, the re-parse inserted BESIDE the existing row instead of
+        # updating it, so one auction exists twice.
+        #
+        # The ISIN plus the auction date identify the auction, and identical
+        # amounts and cut-off confirm it: two genuine auctions never clear at the
+        # same rate for the same size on the same day for the same security.
+        # Found once, Feb-2026 BD0928101056 (labels 2Y and 5Y). It double-counts
+        # in anything summing this table, including the desk's auction sheet.
+        for r in q("SELECT isin, auction_date, COUNT(*) n, "
+                   "COUNT(DISTINCT tenor_label) labels, "
+                   "COUNT(DISTINCT cutoff_yield_pct) cuts "
+                   "FROM primary_yield_snapshots WHERE isin IS NOT NULL "
+                   "GROUP BY isin, auction_date HAVING COUNT(*) > 1"):
+            add("yields", f"{r[0]} auctioned {r[1]} is stored {r[2]} times under {r[3]} tenor "
+                          f"labels ({r[4]} distinct cut-off) — one auction, two rows; it "
+                          f"double-counts wherever this table is summed")
+
         # ---- one auction booked twice in the ladder ----
         # BB's results page prints ONE date per auction; the other is derived
         # from it. Which one it prints was settled in Sep-2026: it is the ISSUE

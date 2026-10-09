@@ -197,3 +197,104 @@ def get_next_auction(limit: int = Query(3, ge=1, le=10)):
         }
     finally:
         session.close()
+
+
+@router.get("/auction-sheet")
+def get_auction_sheet(date_from: str = Query(None, description="YYYY-MM-DD"),
+                      date_to: str = Query(None, description="YYYY-MM-DD")):
+    """Every auction in the desk's own T-Bill / T-Bond spreadsheet layout."""
+    from .auction_logic import auction_format_sheet
+    session = get_session()
+    try:
+        return auction_format_sheet(session, date_from=date_from, date_to=date_to)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    finally:
+        session.close()
+
+
+@router.get("/auction-sheet/export")
+def export_auction_sheet(date_from: str = Query(None), date_to: str = Query(None)):
+    """The sheet as a workbook.
+
+    Sheet 1 carries the desk's EIGHT columns in their exact order and nothing
+    else, so the whole block can be copied straight into an existing
+    spreadsheet. Everything extra lives on sheet 2 rather than shifting the
+    columns someone is pasting.
+    """
+    from .auction_logic import auction_format_sheet
+    from .export_logic import build_workbook, filename
+    session = get_session()
+    try:
+        p = auction_format_sheet(session, date_from=date_from, date_to=date_to)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    finally:
+        session.close()
+
+    sheet = [{
+        "ISIN": r["isin"],
+        "Issue Date": r["issue_date"],
+        "Maturity Date": r["maturity_date"],
+        "Tenure": r["tenure_years"],
+        "Auctioned Amount": r["auctioned_amount_crore"],
+        "Successful Market Bid": r["successful_market_bid_crore"],
+        # BB publishes a devolvement YIELD, not an amount: blank, never 0.
+        "Devolvement on Bangladesh Bank": r["devolvement_on_bb_crore"],
+        "Coupon": r["coupon_pct"],
+    } for r in p["rows"]]
+
+    detail = [{
+        "ISIN": r["isin"], "Security": r["security_name"],
+        "Auction Date": r["auction_date"], "Issue Date": r["issue_date"],
+        "Maturity Date": r["maturity_date"],
+        "Maturity Derived": "yes" if r["maturity_is_derived"] else "",
+        "Type": r["security_type"], "Tenor": r["tenor_label"],
+        "Re-issue": "yes" if r["is_reissue"] else "",
+        "Re-issue Remaining": r["reissue_remaining"],
+        "Bids Received (crore)": r["bids_received_crore"],
+        "Bids Received (count)": r["bids_received_count"],
+        "Bids Accepted (count)": r["bids_accepted_count"],
+        "Accepted Face (crore)": r["auctioned_amount_crore"],
+        "Sale Value (crore)": r["successful_market_bid_crore"],
+        "Weighted Avg Price": r["weighted_avg_price"],
+        "Cut-off Yield %": r["cutoff_yield_pct"],
+        "Devolvement Yield %": r["devolvement_yield_pct"],
+        "Coupon %": r["coupon_pct"],
+        "Coupon Note": ("zero-coupon (discount instrument)" if r["coupon_not_applicable"]
+                        else "current reset, not the rate at this auction"
+                        if r["coupon_is_current_reset"] else ""),
+    } for r in p["rows"]]
+
+    body = build_workbook(
+        "Bangladesh T-Bill / T-Bond Auction Data",
+        [("Auction data", sheet), ("Full detail", detail)],
+        facts=[("Window", f"{p['from']} to {p['to']}"), ("Unit", "BDT crore"),
+               ("Auctions", p["count"]),
+               ("With ISIN", f"{p['with_isin']} of {p['count']}"),
+               ("With sale value", f"{p['with_sale_value']} of {p['count']}"),
+               ("Re-issues", p["reissue_count"]),
+               ("ISINs auctioned more than once", len(p["isins_auctioned_more_than_once"])),
+               ("Source", "Bangladesh Bank treasury results")],
+        caveats=[
+            "One row per AUCTION, not per security. A re-issue is the same ISIN sold again at a "
+            "later date with its own cut-off, so an ISIN can appear several times with different "
+            "issue dates — that is correct, not a duplicate.",
+            "'Auctioned Amount' is the accepted FACE value (par). 'Successful Market Bid' is the "
+            "SALE value — the cash the market actually paid. On a premium re-issue they differ "
+            "materially, and only the sale value is a cash flow.",
+            "'Devolvement on Bangladesh Bank' is blank because BB publishes a devolvement YIELD "
+            "rather than an amount. Blank means not published, NOT zero devolved.",
+            "Coupon is blank for T-Bills: they are zero-coupon discount instruments, so the "
+            "return is the discount and a coupon figure would be fiction. For an FRTB the coupon "
+            "RESETS each period, so the figure shown is the current reset and not necessarily the "
+            "rate that applied at that auction — the Full detail sheet flags those rows.",
+            "Blank ISIN or sale value means BB's page for that month predates those columns. "
+            "Re-run the Treasury Backfill with --refetch to fill them.",
+        ],
+        notes={"Auction data":
+               "Exactly the eight columns of the desk's own sheet, in order, for copy-paste. "
+               "Everything else is on 'Full detail' so these columns never shift."},
+    )
+    return Response(content=body, media_type=XLSX_MEDIA, headers={
+        "Content-Disposition": f'attachment; filename="{filename("bd_auction_data", p["from"], p["to"])}"'})

@@ -149,7 +149,11 @@ def test_no_nav_label_claims_to_be_auctions_except_the_auctions_page():
     landed there and concluded there was no auctions page."""
     pairs = re.findall(r'href:\s*"([^"]+)",\s*label:\s*"([^"]+)"', _read(NAV))
     assert pairs, "could not parse href/label pairs from the nav"
-    confusing = [(h, l) for h, l in pairs if "auction" in l.lower() and h != "/auctions"]
+    # Any /auction* page may say "auction". The point is a page that is NOT
+    # about auctions claiming the word -- /fx was "FX Auctions" (BB's USD/BDT
+    # intervention) and was the only entry carrying it.
+    confusing = [(h, l) for h, l in pairs
+                 if "auction" in l.lower() and not h.startswith("/auction")]
     assert not confusing, (
         f"these nav labels say 'auction' but do not point at /auctions: {confusing}"
     )

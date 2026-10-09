@@ -16,6 +16,8 @@ async function get<T>(path: string, params?: Record<string, string | number>): P
  *  file is produced by the API with openpyxl (bold frozen headers, number
  *  formats, autofilter, a cover sheet) rather than assembled in the browser. */
 export const exportUrl = {
+  auctionSheet: (p: { from?: string; to?: string }) =>
+    `${BASE}/api/securities/auction-sheet/export?date_from=${p.from ?? ""}&date_to=${p.to ?? ""}`,
   auctions: (p: { months?: number; from?: string; to?: string }) =>
     p.from || p.to
       ? `${BASE}/api/securities/auctions/export?date_from=${p.from ?? ""}&date_to=${p.to ?? ""}`
@@ -88,6 +90,18 @@ export const api = {
   flowsForecast:   async (days = 28): Promise<LiquidityForecast> => {
     try { return await get<LiquidityForecast>("/api/flows/forecast", { days }); }
     catch { return { as_of: "", days: [], unit: "BDT crore" }; }
+  },
+  /** Every auction in the desk's T-Bill / T-Bond spreadsheet layout. */
+  auctionSheet:    async (p: { from?: string; to?: string } = {}): Promise<AuctionSheet> => {
+    const q: Record<string, string | number> = {};
+    if (p.from) q.date_from = p.from;
+    if (p.to) q.date_to = p.to;
+    try { return await get<AuctionSheet>("/api/securities/auction-sheet", q); }
+    catch {
+      return { from: "", to: "", unit: "BDT crore", as_of: "", count: 0, with_isin: 0,
+               with_sale_value: 0, reissue_count: 0, isins_auctioned_more_than_once: [],
+               rows: [] };
+    }
   },
   /** Every treasury auction in the window, with results where BB published
    *  them, plus per-product and monthly roll-ups. Defaults forward to the end
@@ -376,6 +390,57 @@ export interface AuctionRow {
   duplicate_results: boolean;
   roll_reason: string | null;
   is_past: boolean;
+}
+
+/** One auction in the desk's own spreadsheet layout.
+ *
+ *  One row per AUCTION, never per security: a re-issue is the same ISIN sold
+ *  again at a later date with its own cut-off, so an ISIN appears several
+ *  times with different issue dates. That is correct, not a duplicate. */
+export interface AuctionSheetRow {
+  isin: string | null;
+  issue_date: string | null;
+  maturity_date: string | null;
+  /** True when the ISIN is not in the security master and the maturity was
+   *  derived from issue date + tenor. */
+  maturity_is_derived: boolean;
+  tenure_years: number | null;
+  tenor_label: string | null;
+  security_type: Product;
+  /** Bids accepted, FACE value (par). */
+  auctioned_amount_crore: number | null;
+  /** Bids accepted, SALE value — the cash the market actually paid. Differs
+   *  materially from face on a premium re-issue. */
+  successful_market_bid_crore: number | null;
+  /** Always null: BB publishes a devolvement YIELD, not an amount. Blank means
+   *  not published, NOT zero devolved. */
+  devolvement_on_bb_crore: number | null;
+  coupon_pct: number | null;
+  /** The FRTB coupon resets each period, so this is the current reset and not
+   *  necessarily the rate that applied at this auction. */
+  coupon_is_current_reset: boolean;
+  /** T-Bills are zero-coupon discount instruments — a coupon would be fiction. */
+  coupon_not_applicable: boolean;
+  auction_date: string | null;
+  cutoff_yield_pct: number | null;
+  bids_received_crore: number | null;
+  bids_received_count: number | null;
+  bids_accepted_count: number | null;
+  weighted_avg_price: number | null;
+  devolvement_yield_pct: number | null;
+  is_reissue: boolean;
+  reissue_remaining: string | null;
+  security_name: string | null;
+}
+
+export interface AuctionSheet {
+  from: string; to: string; unit: string; as_of: string;
+  count: number;
+  with_isin: number;
+  with_sale_value: number;
+  reissue_count: number;
+  isins_auctioned_more_than_once: string[];
+  rows: AuctionSheetRow[];
 }
 
 export interface AuctionRollup {

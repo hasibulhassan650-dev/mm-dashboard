@@ -279,6 +279,65 @@ class TestOneAuctionBookedTwice:
         assert self._found(_run_check(monkeypatch, eng)) == []
 
 
+class TestOneAuctionStoredUnderTwoTenorLabels:
+    """primary_yield_snapshots is keyed (tenor_label, auction_date). For a
+    RE-ISSUE the label has been derived two ways over time -- from BB's
+    remaining-maturity column ("2Y" on a 5-year bond with 2.6 years left) and
+    from its "Tenor and name" column ("5Y"). When the convention changed, the
+    re-parse inserted BESIDE the existing row rather than updating it.
+
+    Found once in production: BD0928101056, auctioned 2026-02-03, identical
+    issue date, face, sale value and cut-off under both labels. It double-counts
+    in anything summing this table -- including the desk's auction sheet, where
+    it would have been copy-pasted into a model as a second auction."""
+
+    def _row(self, s, label, orig, isin="BD0928101056"):
+        s.add(PrimaryYieldSnapshot(
+            snapshot_date=D(2026, 2, 5), auction_date=D(2026, 2, 3), issue_date=D(2026, 2, 5),
+            security_type="T_BOND", tenor_label=label, tenor_years=2.0,
+            cutoff_yield_pct=10.4598, offered_bdt_crore=5000.0, accepted_bdt_crore=2500.0,
+            isin=isin, original_tenor_label=orig, sale_value_bdt_crore=2425.59))
+
+    def _found(self, rep):
+        return [i for i in rep["issues"] if "times under" in i]
+
+    def test_one_auction_under_two_labels_is_reported(self, monkeypatch):
+        eng, s = _mem()
+        self._row(s, "2Y", "5Y")
+        self._row(s, "5Y", "5Y")
+        s.commit()
+        found = self._found(_run_check(monkeypatch, eng))
+        assert len(found) == 1, found
+        assert "BD0928101056" in found[0]
+
+    def test_a_single_row_is_not_flagged(self, monkeypatch):
+        eng, s = _mem()
+        self._row(s, "2Y", "5Y")
+        s.commit()
+        assert self._found(_run_check(monkeypatch, eng)) == []
+
+    def test_a_genuine_reissue_on_a_different_date_is_not_flagged(self, monkeypatch):
+        # The same ISIN sold again weeks later is a re-issue, not a duplicate.
+        # A check that fired on this would flag BB's normal behaviour.
+        eng, s = _mem()
+        self._row(s, "2Y", "5Y")
+        s.add(PrimaryYieldSnapshot(
+            snapshot_date=D(2026, 3, 5), auction_date=D(2026, 3, 3), issue_date=D(2026, 3, 5),
+            security_type="T_BOND", tenor_label="2Y", tenor_years=2.0,
+            cutoff_yield_pct=10.02, offered_bdt_crore=5000.0, accepted_bdt_crore=2500.0,
+            isin="BD0928101056", original_tenor_label="5Y", sale_value_bdt_crore=2508.38))
+        s.commit()
+        assert self._found(_run_check(monkeypatch, eng)) == []
+
+    def test_rows_without_an_isin_are_left_alone(self, monkeypatch):
+        # Older months have no ISIN; they must not all collide into one group.
+        eng, s = _mem()
+        self._row(s, "2Y", "5Y", isin=None)
+        self._row(s, "5Y", "5Y", isin=None)
+        s.commit()
+        assert self._found(_run_check(monkeypatch, eng)) == []
+
+
 class TestFingerprintRegressions:
     def test_mls_at_9_5_is_left_alone(self):
         # 10-Jun / 08-Jul-2026: BB printed "MLS 28-Days ... 9.50". Not AR.

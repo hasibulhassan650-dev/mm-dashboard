@@ -210,3 +210,132 @@ def auction_book(session, months: Optional[int] = None,
             "confirmed": sum(1 for a in auctions if a["status"] == "CONFIRMED"),
         },
     }
+
+
+# ── The desk's T-Bill / T-Bond sheet ────────────────────────────────────────
+#
+# One row per AUCTION, in the exact column order the desk already works in:
+#
+#   ISIN | Issue Date | Maturity Date | Tenure | Auctioned Amount |
+#   Successful Market Bid | Devolvement on Bangladesh Bank | Coupon
+#
+# Three mappings that are easy to get wrong, all verified against BB's own
+# results table:
+#
+#   Auctioned Amount       = bids accepted, FACE value (par)
+#   Successful Market Bid  = bids accepted, SALE value -- the cash paid. On a
+#                            premium re-issue these differ materially
+#                            (02-Sep-2026 20Y: face 3,500.00, sale 3,689.28).
+#   Devolvement on BB      = BB's take-up. BB publishes a devolvement YIELD,
+#                            not an amount, so unless an amount is known this
+#                            stays BLANK. Never 0 -- "none devolved" and "not
+#                            published" are different claims and the desk's own
+#                            sheet writes "-" here.
+#
+# A RE-ISSUE is the same ISIN sold again at a later date with its own cut-off,
+# so the key is the auction, never the ISIN. BD0928131038 appears twice in the
+# desk's sheet (08-Oct-25 and 05-Nov-25) and must appear twice here.
+
+_SHEET = """
+    SELECT p.isin, p.issue_date, p.auction_date, p.security_type,
+           p.tenor_label, p.original_tenor_label, p.original_tenor_years,
+           p.tenor_years, p.accepted_bdt_crore, p.sale_value_bdt_crore,
+           p.offered_bdt_crore, p.cutoff_yield_pct, p.is_reissue,
+           p.reissue_remaining, p.bids_received_count, p.bids_accepted_count,
+           p.weighted_avg_price, p.devolvement_yield_pct,
+           s.maturity_date, s.coupon_rate_pct, s.security_name_norm
+    FROM primary_yield_snapshots p
+    LEFT JOIN securities s ON s.isin = p.isin
+    WHERE p.issue_date BETWEEN :f AND :t
+    ORDER BY p.issue_date DESC, p.security_type, p.tenor_label"""
+
+
+def _derive_maturity(issue, years, label):
+    """Fall back to issue + tenor when the ISIN is not in the security master.
+
+    Bills are quoted in days and bonds in years, and BB's own label carries the
+    unit, so use it rather than guessing from the number.
+    """
+    if issue is None:
+        return None
+    lbl = (label or "").upper()
+    try:
+        if lbl.endswith("D"):
+            return issue + datetime.timedelta(days=int(lbl[:-1]))
+        if years:
+            return datetime.date(issue.year + int(round(years)), issue.month, issue.day)
+    except (ValueError, TypeError):
+        return None
+    return None
+
+
+def auction_format_sheet(session, date_from: Optional[str] = None,
+                         date_to: Optional[str] = None,
+                         today: datetime.date = None) -> dict:
+    """Every auction in the desk's own spreadsheet layout."""
+    today = today or datetime.date.today()
+    f = _d(date_from) if date_from else datetime.date(2007, 1, 1)
+    t = _d(date_to) if date_to else datetime.date(today.year + 2, 12, 31)
+    if t < f:
+        raise ValueError(f"date_to {t} is before date_from {f}")
+
+    rows = session.execute(text(_SHEET), {"f": str(f), "t": str(t)}).fetchall()
+    out = []
+    for r in rows:
+        issue = _d(r.issue_date)
+        years = r.original_tenor_years if r.original_tenor_years is not None else r.tenor_years
+        label = r.original_tenor_label or r.tenor_label
+        maturity = _d(r.maturity_date) or _derive_maturity(issue, years, label)
+        # A T-Bill is a zero-coupon discount instrument: its return is the
+        # discount, so a coupon figure would be fiction. An FRTB's coupon RESETS
+        # each period, so securities.coupon_rate_pct holds the CURRENT reset and
+        # not the rate that applied at this auction -- flagged rather than shown
+        # as though it belonged to the auction.
+        is_bill = (r.security_type == "T_BILL")
+        is_frtb = (r.security_type == "FRTB")
+        out.append({
+            "isin": r.isin,
+            "issue_date": str(issue) if issue else None,
+            "maturity_date": str(maturity) if maturity else None,
+            "maturity_is_derived": bool(maturity and not r.maturity_date),
+            "tenure_years": round(float(years), 4) if years is not None else None,
+            "tenor_label": label,
+            "security_type": r.security_type,
+            "auctioned_amount_crore": r.accepted_bdt_crore,
+            "successful_market_bid_crore": r.sale_value_bdt_crore,
+            # BB publishes a devolvement YIELD, not an amount.
+            "devolvement_on_bb_crore": None,
+            "coupon_pct": None if is_bill else r.coupon_rate_pct,
+            "coupon_is_current_reset": bool(is_frtb and r.coupon_rate_pct is not None),
+            "coupon_not_applicable": is_bill,
+            # beyond the desk's columns, for the detail sheet
+            "auction_date": str(_d(r.auction_date)) if r.auction_date else None,
+            "cutoff_yield_pct": r.cutoff_yield_pct,
+            "bids_received_crore": r.offered_bdt_crore,
+            "bids_received_count": r.bids_received_count,
+            "bids_accepted_count": r.bids_accepted_count,
+            "weighted_avg_price": r.weighted_avg_price,
+            "devolvement_yield_pct": r.devolvement_yield_pct,
+            "is_reissue": bool(r.is_reissue),
+            "reissue_remaining": r.reissue_remaining,
+            "security_name": r.security_name_norm,
+        })
+
+    with_isin = sum(1 for x in out if x["isin"])
+    with_sale = sum(1 for x in out if x["successful_market_bid_crore"] is not None)
+    reissues = sum(1 for x in out if x["is_reissue"])
+    # One ISIN appearing at several issue dates IS a re-issue, and the number is
+    # worth showing: it is the thing the desk's sheet highlights.
+    seen: Dict[str, int] = {}
+    for x in out:
+        if x["isin"]:
+            seen[x["isin"]] = seen.get(x["isin"], 0) + 1
+    return {
+        "from": str(f), "to": str(t), "unit": "BDT crore", "as_of": str(today),
+        "count": len(out),
+        "with_isin": with_isin,
+        "with_sale_value": with_sale,
+        "reissue_count": reissues,
+        "isins_auctioned_more_than_once": sorted(k for k, v in seen.items() if v > 1),
+        "rows": out,
+    }
