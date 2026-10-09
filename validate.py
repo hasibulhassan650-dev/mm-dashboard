@@ -721,7 +721,10 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
                 # publishing" look identical in the data; only elapsed time
                 # separates them, so the dataset's declared tolerance decides.
                 ds = _EXPECT.BY_KEY.get(name)
-                age = (today - mx).days if mx else None
+                # Daily series are judged in WORKING days; counting calendar
+                # days would escalate every series each weekend.
+                age = ds.age(mx, today, _holidays_set()) if (ds and mx) else (
+                    (today - mx).days if mx else None)
                 escalated = False
                 if ds is not None and age is not None:
                     escalated = ds.severity_for_age(age) == "defect"
@@ -732,7 +735,9 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
                 elif escalated:
                     tol = ds.tolerance_days
                     add("freshness",
-                        f"{name}: ESCALATED — nothing newer than {mx}, {age} days and counting. "
+                        f"{name}: ESCALATED — nothing newer than {mx}, {age} "
+                        f"{'working ' if ds.cadence == _EXPECT.WORKING_DAY else ''}days "
+                        f"and counting. "
                         f"{ds.label} is published {ds.cadence.replace('_', ' ')} by {ds.source}, "
                         f"so a gap beyond {tol} days is ours, not BB's"
                         + (" (our fetch reports success, which means it is succeeding at "

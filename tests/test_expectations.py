@@ -42,17 +42,17 @@ class TestWaitingExpires:
         assert BY_KEY["omo"].severity_for_age(2) == "waiting"
 
     def test_a_daily_series_past_tolerance_becomes_a_defect(self):
-        # The exact case: OMO had not moved in 10 days and stayed `waiting`.
-        assert BY_KEY["omo"].severity_for_age(10) == "defect"
-        assert BY_KEY["omo"].severity_for_age(11) == "defect"
+        # The exact case: OMO had not moved in 10 calendar days -- about 7
+        # working days -- and stayed `waiting` throughout.
+        assert BY_KEY["omo"].severity_for_age(5) == "defect"
+        assert BY_KEY["omo"].severity_for_age(7) == "defect"
 
-    def test_a_few_days_late_is_still_only_waiting(self):
-        # Tolerance sits above the staleness rules that report the gap. If it
-        # did not, every late day would be a defect immediately and the alerts
-        # would become wallpaper -- the failure the waiting/defect split was
-        # introduced to fix in the first place.
+    def test_a_couple_of_missed_publications_is_still_only_waiting(self):
+        # Ages for a daily series are WORKING days. If one or two missed
+        # publications escalated immediately the alerts would become wallpaper,
+        # which is the failure the waiting/defect split exists to avoid.
+        assert BY_KEY["omo"].severity_for_age(2) == "waiting"
         assert BY_KEY["omo"].severity_for_age(4) == "waiting"
-        assert BY_KEY["omo"].severity_for_age(7) == "waiting"
 
     def test_the_boundary_is_where_it_is_declared(self):
         tol = BY_KEY["omo"].tolerance_days
@@ -65,7 +65,7 @@ class TestWaitingExpires:
         ("reserves", 30, "waiting"),   # monthly: BB publishes in arrears
         ("reserves", 60, "defect"),
         ("callmoney", 2, "waiting"),
-        ("callmoney", 9, "defect"),
+        ("callmoney", 6, "defect"),
     ])
     def test_each_cadence_has_its_own_patience(self, key, age, expect):
         assert BY_KEY[key].severity_for_age(age) == expect
@@ -77,8 +77,39 @@ class TestWaitingExpires:
         assert BY_KEY["policy"].severity_for_age(400) is None
 
     def test_a_derived_series_gets_no_publication_excuse(self):
-        # We compute it, so there is nobody else to be late.
-        assert BY_KEY["flows"].tolerance_days < BY_KEY["omo"].tolerance_days
+        # We compute it, so there is nobody else to be late. (Its tolerance is
+        # in CALENDAR days while a daily series is in WORKING days, so the two
+        # numbers are not comparable -- the point is the cadence, not the size.)
+        flows = BY_KEY["flows"]
+        assert flows.cadence == "derived"
+        assert flows.source == "computed"
+        assert flows.tolerance_days is not None
+
+
+class TestAgeIsMeasuredInTheRightUnit:
+    """Today being a Saturday must not make every daily series look late."""
+
+    def test_a_daily_series_counts_working_days_not_calendar_days(self):
+        omo = BY_KEY["omo"]
+        # Wed 7-Oct-2026 -> Sat 10-Oct: only Thursday is a working day between,
+        # because Bangladesh closes Friday and Saturday.
+        assert omo.age(D(2026, 10, 7), D(2026, 10, 10)) == 1
+        assert omo.severity_for_age(omo.age(D(2026, 10, 7), D(2026, 10, 10))) is None
+
+    def test_a_weekend_alone_never_makes_a_daily_series_late(self):
+        omo = BY_KEY["omo"]
+        for day in (D(2026, 10, 9), D(2026, 10, 10)):     # Friday, Saturday
+            assert omo.severity_for_age(omo.age(D(2026, 10, 8), day)) is None
+
+    def test_a_holiday_does_not_age_a_series_either(self):
+        omo = BY_KEY["omo"]
+        plain = omo.age(D(2026, 10, 4), D(2026, 10, 8))
+        with_hol = omo.age(D(2026, 10, 4), D(2026, 10, 8), holidays={D(2026, 10, 6)})
+        assert with_hol == plain - 1
+
+    def test_a_monthly_series_still_counts_calendar_days(self):
+        res = BY_KEY["reserves"]
+        assert res.age(D(2026, 8, 1), D(2026, 10, 10)) == 70
 
 
 class TestGapsInsideASeries:

@@ -45,16 +45,16 @@ DERIVED = "derived"      # we compute it; staleness means OUR pipeline stalled
 # was structurally blind for ten days and then called it `waiting` forever.
 # A daily series must be visible within one long weekend plus a day.
 STALE_AFTER: Dict[str, int] = {
-    WORKING_DAY: 4,      # Fri+Sat weekend plus a gazetted holiday, then a day
-    WEEKLY: 10,
+    WORKING_DAY: 2,      # WORKING days — two consecutive missed publications
+    WEEKLY: 10,          # calendar days
     MONTHLY: 40,
     DERIVED: 3,
     EVENT: None,
 }
 
 TOLERANCE: Dict[str, int] = {
-    WORKING_DAY: 7,      # a whole week with nothing published is not BB being late
-    WEEKLY: 14,          # two missed cycles
+    WORKING_DAY: 4,      # WORKING days — a full trading week of silence is ours
+    WEEKLY: 14,          # calendar days: two missed cycles
     MONTHLY: 50,         # a monthly series that has missed its month outright
     DERIVED: 5,          # our own pipeline, so no publication excuse
     EVENT: None,         # never stale by time alone
@@ -95,14 +95,30 @@ class Dataset:
     def tolerance_days(self) -> Optional[int]:
         return self._tolerance if self._tolerance is not None else TOLERANCE[self.cadence]
 
-    def severity_for_age(self, age_days: Optional[int]) -> Optional[str]:
-        """None | 'waiting' | 'defect' for a dataset last updated `age_days` ago."""
+    def age(self, latest: Optional[datetime.date], today: datetime.date,
+            holidays=None) -> Optional[int]:
+        """How far behind this dataset is, in the unit its cadence is published in.
+
+        A working-day series must be measured in WORKING DAYS. Counting calendar
+        days flags every daily series each weekend -- Bangladesh closes Friday
+        and Saturday, so on a Saturday everything is legitimately two to three
+        calendar days old. Alerting on that is how an alarm becomes wallpaper,
+        which is the failure the whole waiting/defect split exists to avoid.
+        """
+        if latest is None:
+            return None
+        if self.cadence == WORKING_DAY:
+            return working_days_between(latest, today, holidays)
+        return (today - latest).days
+
+    def severity_for_age(self, age: Optional[int]) -> Optional[str]:
+        """None | 'waiting' | 'defect', given an age already in the right unit."""
         tol = self.tolerance_days
-        if age_days is None or tol is None:
+        if age is None or tol is None:
             return None
-        if age_days <= 1:
+        if age <= 1:
             return None
-        return "defect" if age_days > tol else "waiting"
+        return "defect" if age > tol else "waiting"
 
     def __repr__(self):
         return f"<Dataset {self.key} {self.cadence}>"
@@ -121,7 +137,7 @@ DATASETS: List[Dataset] = [
             "Interbank repo", "BB interbank repo", step="repo"),
     Dataset("fxrates", "fx_rates_daily", "rate_date", WORKING_DAY,
             "FX rates", "BB exchange rate page", step="fxrates",
-            stale_after_days=5,
+            stale_after_days=3,
             note="Describes the PREVIOUS business day, so one day behind is normal."),
     Dataset("secondary", "mtm_snapshots", "settlement_date", WORKING_DAY,
             "Secondary market (GSOM)", "BB GSOM", step="gsom"),
