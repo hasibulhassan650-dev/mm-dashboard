@@ -236,7 +236,7 @@ def export_auction_sheet(date_from: str = Query(None), date_to: str = Query(None
         "ISIN": r["isin"],
         "Issue Date": r["issue_date"],
         "Maturity Date": r["maturity_date"],
-        "Tenure": r["tenure_years"],
+        "Tenure": r["tenure"],
         "Auctioned Amount": r["auctioned_amount_crore"],
         "Successful Market Bid": r["successful_market_bid_crore"],
         # BB publishes a devolvement YIELD, not an amount: blank, never 0.
@@ -250,6 +250,7 @@ def export_auction_sheet(date_from: str = Query(None), date_to: str = Query(None
         "Maturity Date": r["maturity_date"],
         "Maturity Derived": "yes" if r["maturity_is_derived"] else "",
         "Type": r["security_type"], "Tenor": r["tenor_label"],
+        "Tenure": r["tenure"], "Tenure Unit": r["tenure_unit"],
         "Re-issue": "yes" if r["is_reissue"] else "",
         "Re-issue Remaining": r["reissue_remaining"],
         "Bids Received (crore)": r["bids_received_crore"],

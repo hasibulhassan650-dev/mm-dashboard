@@ -39,6 +39,19 @@ DERIVED = "derived"      # we compute it; staleness means OUR pipeline stalled
 # is unreachable and every late day is instantly a defect -- which is the
 # opposite failure, and how alarms become wallpaper. The daily rules fire past
 # 4-5 days, so a full week of silence on a daily series is the escalation point.
+# When the staleness rule FIRES (becomes visible at all). Separate from
+# TOLERANCE, which is when it escalates. OMO's hand-picked rule fired only
+# after 10 DAYS -- for a series BB publishes every working day -- so the system
+# was structurally blind for ten days and then called it `waiting` forever.
+# A daily series must be visible within one long weekend plus a day.
+STALE_AFTER: Dict[str, int] = {
+    WORKING_DAY: 4,      # Fri+Sat weekend plus a gazetted holiday, then a day
+    WEEKLY: 10,
+    MONTHLY: 40,
+    DERIVED: 3,
+    EVENT: None,
+}
+
 TOLERANCE: Dict[str, int] = {
     WORKING_DAY: 7,      # a whole week with nothing published is not BB being late
     WEEKLY: 14,          # two missed cycles
@@ -58,7 +71,7 @@ class Dataset:
     def __init__(self, key: str, table: str, date_column: str, cadence: str,
                  label: str, source: str, step: Optional[str] = None,
                  gap_check: bool = True, tolerance_days: Optional[int] = None,
-                 note: str = ""):
+                 stale_after_days: Optional[int] = None, note: str = ""):
         self.key = key
         self.table = table
         self.date_column = date_column
@@ -68,7 +81,15 @@ class Dataset:
         self.step = step
         self.gap_check = gap_check
         self._tolerance = tolerance_days
+        self._stale_after = stale_after_days
         self.note = note
+
+    @property
+    def stale_after_days(self) -> Optional[int]:
+        """Days before the gap is reported at all."""
+        if self._stale_after is not None:
+            return self._stale_after
+        return STALE_AFTER[self.cadence]
 
     @property
     def tolerance_days(self) -> Optional[int]:
@@ -100,6 +121,7 @@ DATASETS: List[Dataset] = [
             "Interbank repo", "BB interbank repo", step="repo"),
     Dataset("fxrates", "fx_rates_daily", "rate_date", WORKING_DAY,
             "FX rates", "BB exchange rate page", step="fxrates",
+            stale_after_days=5,
             note="Describes the PREVIOUS business day, so one day behind is normal."),
     Dataset("secondary", "mtm_snapshots", "settlement_date", WORKING_DAY,
             "Secondary market (GSOM)", "BB GSOM", step="gsom"),

@@ -179,7 +179,7 @@ function Row({ r }: { r: AuctionSheetRow }) {
           </span>
         )}
       </td>
-      <td className="r mono">{r.tenure_years ?? "—"}</td>
+      <td className="r mono">{r.tenure ?? "—"}</td>
       <td className="r mono">{n2(r.auctioned_amount_crore)}</td>
       <td className="r mono">{n2(r.successful_market_bid_crore)}</td>
       <td className="r mono" style={{ color: "var(--fg-mute)" }}

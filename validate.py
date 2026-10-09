@@ -698,6 +698,15 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
              None),
         ]
         for name, sql, min_ok, desc, src_table in FRESHNESS_RULES:   # src_table = fetch step
+            # The threshold comes from the dataset's declared cadence, not from
+            # a number picked per rule. OMO's was 10 DAYS for a series published
+            # every working day, so nothing could be reported for ten days and
+            # the gap was then `waiting` forever. Forward-looking rules
+            # (auctions_forward, flows_forward) check a HORIZON, not recency,
+            # and keep their own threshold.
+            _ds = _EXPECT.BY_KEY.get(name)
+            if _ds is not None and _ds.stale_after_days and min_ok <= today:
+                min_ok = today - datetime.timedelta(days=_ds.stale_after_days)
             try:
                 mx = _max_date(sql)
             except Exception as exc:
@@ -731,6 +740,42 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
                 else:
                     add("freshness", f"{name}: latest={mx} (need ≥{min_ok}) and OUR fetch is not "
                                      f"current either — {desc}")
+
+        # ── the guardian watches itself ─────────────────────────────────────
+        # The issue ledger stopped being written and nothing noticed: two rows,
+        # both closed, nine days old, while an eleven-day outage ran. An alarm
+        # that can go quiet without anyone hearing is not an alarm, and it is
+        # the one thing no data check can reveal, because a silent ledger looks
+        # exactly like a clean one.
+        # The right signal is whether the guardian RAN, not whether it wrote a
+        # row: with nothing to report it correctly writes nothing, so "no issue
+        # recorded lately" is indistinguishable from a clean system. Each
+        # refresh stores its ledger result in pipeline_runs.quality; its
+        # ABSENCE from a recent run means the guardian did not run at all.
+        import json as _json
+        last = s.execute(text(
+            "SELECT run_utc, quality FROM pipeline_runs ORDER BY run_utc DESC LIMIT 1")).fetchone()
+        if last and last[0] is not None:
+            _run_at = last[0]
+            if isinstance(_run_at, str):          # SQLite hands timestamps back as text
+                _run_at = datetime.datetime.fromisoformat(_run_at[:19])
+            age_h = (datetime.datetime.utcnow() - _run_at).total_seconds() / 3600
+            if age_h < 36:
+                # NOT named `q`: that is the query helper used throughout this
+                # function, and shadowing it breaks every check after this one.
+                last_quality = {}
+                try:
+                    last_quality = _json.loads(last[1]) if last[1] else {}
+                except Exception:
+                    last_quality = {}
+                if "ledger" not in last_quality:
+                    add("guardian", "the last refresh did not record a guardian ledger result "
+                                    "— the guardian is not running inside the pipeline, so "
+                                    "anything it would have found is lost when the run ends")
+            else:
+                add("guardian", f"no pipeline run in {age_h/24:.1f} days — the refresh itself "
+                                f"has stopped, so every freshness check below is measuring "
+                                f"data nobody is trying to update")
 
         # ── a step that ran and wrote NOTHING is not a healthy step ──────────
         # Judging a fetch by "did it raise?" cannot tell "BB published nothing"

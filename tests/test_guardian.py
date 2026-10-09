@@ -47,9 +47,16 @@ def _stale_repo(s, days=6):
                         war_pct=8.8, ingested_utc=NOW()))
 
 
-def _run(s, *, hours_ago=1.0, errors=None):
+def _run(s, *, hours_ago=1.0, errors=None, guardian_ran=True):
+    """A refresh run. Production always stores a quality payload carrying the
+    guardian's ledger result; `guardian_ran=False` models the case where the
+    guardian did not run at all, which the heartbeat has to catch."""
+    quality = {"ok": True, "issue_count": 0}
+    if guardian_ran:
+        quality["ledger"] = {"opened": 0, "resolved": 0, "open_now": 0}
     s.add(PipelineRun(run_utc=NOW() - datetime.timedelta(hours=hours_ago), kind="refresh",
-                      errors=json.dumps(errors) if errors else None, elapsed_sec=10))
+                      errors=json.dumps(errors) if errors else None, elapsed_sec=10,
+                      quality=json.dumps(quality)))
 
 
 def _check(monkeypatch, eng):
@@ -140,6 +147,38 @@ class TestSeverity:
         rep = _check(monkeypatch, eng)
         assert any("implausible cut-off" in i for i in rep["issues"]), rep["issues"]
         assert rep["ok"] is False
+
+
+class TestTheGuardianWatchesItself:
+    """An alarm that can go quiet without anyone hearing is not an alarm, and it
+    is the one thing no data check reveals: a silent guardian looks exactly like
+    a clean system."""
+
+    def _guardian(self, rep):
+        return [i for i in rep["issues"] if i.startswith("guardian:")]
+
+    def test_a_refresh_that_did_not_run_the_guardian_is_a_defect(self, monkeypatch):
+        eng, s = _mem()
+        _run(s, guardian_ran=False)
+        s.commit()
+        found = self._guardian(_check(monkeypatch, eng))
+        assert found, "a run with no ledger result must be reported"
+        assert "not running inside the pipeline" in found[0]
+
+    def test_a_healthy_run_is_silent(self, monkeypatch):
+        eng, s = _mem()
+        _run(s)
+        s.commit()
+        assert self._guardian(_check(monkeypatch, eng)) == []
+
+    def test_a_stopped_pipeline_is_itself_the_finding(self, monkeypatch):
+        # Every freshness check below would be measuring data nobody is trying
+        # to update, so the staleness is a symptom and this is the cause.
+        eng, s = _mem()
+        _run(s, hours_ago=96)
+        s.commit()
+        found = self._guardian(_check(monkeypatch, eng))
+        assert found and "no pipeline run" in found[0]
 
 
 class TestLedger:

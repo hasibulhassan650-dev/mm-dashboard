@@ -293,11 +293,31 @@ def auction_format_sheet(session, date_from: Optional[str] = None,
         # as though it belonged to the auction.
         is_bill = (r.security_type == "T_BILL")
         is_frtb = (r.security_type == "FRTB")
+        # TENURE as the desk writes it: 91 / 182 / 364 for bills, whole years
+        # for bonds. A bill quoted as 0.2491 years is arithmetically correct and
+        # useless on a dealing sheet -- nobody calls it a quarter-year bill.
+        # The unit is implied by the instrument (and by the maturity date beside
+        # it); a separate unit column would shift every paste by one.
+        tenure, tenure_unit = None, None
+        lbl = (label or "").upper()
+        if lbl.endswith("D"):
+            try:
+                tenure, tenure_unit = int(lbl[:-1]), "days"
+            except ValueError:
+                tenure = None
+        elif years is not None:
+            yrs = float(years)
+            # whole years where BB issues whole years, so 3Y reads 3 not 3.0
+            tenure = int(round(yrs)) if abs(yrs - round(yrs)) < 0.02 else round(yrs, 2)
+            tenure_unit = "years"
+
         out.append({
             "isin": r.isin,
             "issue_date": str(issue) if issue else None,
             "maturity_date": str(maturity) if maturity else None,
             "maturity_is_derived": bool(maturity and not r.maturity_date),
+            "tenure": tenure,
+            "tenure_unit": tenure_unit,
             "tenure_years": round(float(years), 4) if years is not None else None,
             "tenor_label": label,
             "security_type": r.security_type,

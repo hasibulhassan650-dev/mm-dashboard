@@ -404,6 +404,10 @@ export interface AuctionSheetRow {
   /** True when the ISIN is not in the security master and the maturity was
    *  derived from issue date + tenor. */
   maturity_is_derived: boolean;
+  /** 91 / 182 / 364 for bills, whole years for bonds — as the desk writes it.
+   *  A bill quoted as 0.2491 years is correct and useless on a dealing sheet. */
+  tenure: number | null;
+  tenure_unit: "days" | "years" | null;
   tenure_years: number | null;
   tenor_label: string | null;
   security_type: Product;
