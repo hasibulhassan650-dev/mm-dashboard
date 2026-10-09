@@ -93,6 +93,33 @@ def _waiting_items(session) -> list:
     return out
 
 
+def _notice_items(session) -> list:
+    """Open "BB changed the shape of a page" items, with how long ago.
+
+    A third kind, and it needs its own treatment. Not a defect: columns are
+    read by header text, so a reworded header or an inserted column does not
+    corrupt a figure. Not waiting on BB either: somebody should look at it.
+    Shown in its own colour so neither of the other two meanings is diluted.
+    """
+    try:
+        rows = session.execute(text(
+            "SELECT table_name, message, first_seen, occurrences FROM data_issues "
+            "WHERE resolved_at IS NULL AND severity = 'notice' "
+            "ORDER BY first_seen")).fetchall()
+    except Exception:
+        return []
+    out = []
+    for table_name, message, first_seen, occurrences in rows:
+        age_h = _hours_since(first_seen)
+        out.append({
+            "table": table_name, "message": message,
+            "since": first_seen.isoformat() if first_seen is not None else None,
+            "age_days": int(age_h // 24) if age_h != float("inf") else None,
+            "occurrences": occurrences,
+        })
+    return out
+
+
 @router.get("/status")
 def get_status():
     """
@@ -178,6 +205,13 @@ def get_status():
                 "health_as_of": last_run,
                 "health_stale": bool(data_health is not None and run_age >= RUN_STALE_HOURS),
                 "waiting": _waiting_items(session),
+                "notices": _notice_items(session),
+                # Escalated findings, named separately from the rest of
+                # data_health: the whole lesson of the eleven-day outage is that
+                # a finding which reads like every other finding gets scrolled
+                # past. The site leads with these.
+                "escalations": [i for i in ((data_health or {}).get("issues") or [])
+                                if "ESCALATED" in i],
                 "as_of": str(today), "last_working_day": str(lwd)}
     finally:
         session.close()

@@ -311,6 +311,13 @@ export interface MetaStatus {
   /** Things Bangladesh Bank has not published yet. NOT defects in our data and
    *  never a build failure — but shown, with an age, so they cannot be forgotten. */
   waiting?: WaitingItem[];
+  /** BB changed the SHAPE of a page and the parse is still clean. Columns are
+   *  read by header text, so figures are not silently wrong — but the layout
+   *  moved and somebody should confirm it means what we think it means. */
+  notices?: WaitingItem[];
+  /** Findings past their dataset's tolerance: a feed that has been dead long
+   *  enough that "BB is late" no longer explains it. These lead the page. */
+  escalations?: string[];
   as_of?: string;
   last_working_day?: string;
 }
@@ -319,7 +326,7 @@ export interface MetaStatus {
 export interface LedgerIssue {
   fingerprint: string;
   table: string;
-  severity: "defect" | "waiting";
+  severity: "defect" | "waiting" | "notice";
   message: string;
   first_seen: string | null;
   last_seen: string | null;

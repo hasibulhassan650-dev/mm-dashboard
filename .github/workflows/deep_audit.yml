@@ -52,6 +52,48 @@ jobs:
         continue-on-error: true      # the report must post even when it finds problems
         run: python deep_audit.py
 
+      - name: Sweep every dataset for backlog
+        id: sweep
+        continue-on-error: true
+        run: python audit.py --window 180 --out audit.md --fail-on-defect
+
+      - name: Walk every BB page on purpose (the canary)
+        id: canary
+        continue-on-error: true      # a source that moved must still be reported
+        run: |
+          # Reads BB's pages and fingerprints their SHAPE. Nothing is parsed
+          # into the database. This is the only check that runs when no data is
+          # needed, which is the point: BB renamed its press-release links on a
+          # quiet weekend and the first evidence available was the next fetch.
+          python canary.py --strict | tee canary.txt
+
+      - name: Join the three reports
+        if: always()
+        env:
+          CANARY_OUTCOME: ${{ steps.canary.outcome }}
+        run: |
+          set -e
+          : > weekly.md
+          cat deep_audit.md >> weekly.md 2>/dev/null || echo "_(deep audit produced no report)_" >> weekly.md
+          echo "" >> weekly.md
+          echo "---" >> weekly.md
+          echo "" >> weekly.md
+          cat audit.md >> weekly.md 2>/dev/null || echo "_(dataset sweep produced no report)_" >> weekly.md
+          echo "" >> weekly.md
+          echo "---" >> weekly.md
+          echo "" >> weekly.md
+          echo "## Source canary" >> weekly.md
+          echo "" >> weekly.md
+          if [ "$CANARY_OUTCOME" = "failure" ]; then
+            echo "**At least one BB page has MOVED.** Columns are read by header text," >> weekly.md
+            echo "so the figures are not silently wrong — but confirm the new layout" >> weekly.md
+            echo "means what we think it means." >> weekly.md
+            echo "" >> weekly.md
+          fi
+          echo '```' >> weekly.md
+          cat canary.txt >> weekly.md 2>/dev/null || echo "(the canary did not run)" >> weekly.md
+          echo '```' >> weekly.md
+
       - name: Post the report to the digest issue
         run: |
           set -e
@@ -69,11 +111,11 @@ jobs:
             echo "::error::could not find or create the digest issue — the report has nowhere to go"
             exit 1
           fi
-          gh issue comment "$n" --repo "$GITHUB_REPOSITORY" --body-file deep_audit.md
+          gh issue comment "$n" --repo "$GITHUB_REPOSITORY" --body-file weekly.md
           echo "posted to issue #$n"
 
-      - name: Fail the run if the audit found something
-        if: steps.audit.outcome == 'failure'
+      - name: Fail the run if any of the three found something
+        if: steps.audit.outcome == 'failure' || steps.sweep.outcome == 'failure' || steps.canary.outcome == 'failure'
         run: |
-          echo "::error::The weekly deep audit found full-history mismatches — see the digest issue."
+          echo "::error::Weekly audit: history=${{ steps.audit.outcome }}, backlog sweep=${{ steps.sweep.outcome }}, source canary=${{ steps.canary.outcome }} — see the digest issue."
           exit 1

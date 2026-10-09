@@ -796,6 +796,20 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
                                 f"has stopped, so every freshness check below is measuring "
                                 f"data nobody is trying to update")
 
+        # ── values that parsed and are still wrong ──────────────────────────
+        # A unit change at the source is the quietest failure there is: BB
+        # printing million where it printed crore leaves every figure parseable,
+        # every type valid, every freshness rule green, and the whole series out
+        # by a factor of ten. Only the magnitude gives it away.
+        try:
+            from engines.drift import findings as _drift
+            for line in _drift(s_, today):
+                add("drift", line)
+        except Exception as exc:
+            s.rollback()
+            add("drift", f"the distribution check could not run ({exc}) — a unit "
+                         f"change at BB would currently be invisible")
+
         # ── did BB change the SHAPE of a page? ──────────────────────────────
         # Everything else here notices data that stopped arriving. This notices
         # the source moving, which is the failure that produces plausible WRONG

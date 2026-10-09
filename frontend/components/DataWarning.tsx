@@ -60,6 +60,84 @@ export function StaleDataBanner() {
   );
 }
 
+/**
+ * A feed that has been dead long enough that "Bangladesh Bank is late" no
+ * longer explains it.
+ *
+ * OMO data stopped on 29-Sep-2026 and the desk found out eleven days later, by
+ * hand. The check fired the whole time — it even called the gap "implausible" —
+ * but it was filed as "waiting on BB", which is deliberately quiet, and the one
+ * finding that mattered read exactly like the ones that did not. Escalations
+ * are therefore the loudest thing on the site and the only one that says, in
+ * words, which numbers not to trust.
+ */
+export function EscalationBanner() {
+  const s = useStatus();
+  const items = s?.escalations ?? [];
+  if (!items.length) return null;
+  const clean = (m: string) =>
+    m.replace(/^freshness:\s*/, "").replace(/ESCALATED\s*—\s*/, "");
+  return (
+    <div role="alert" style={{
+      background: "color-mix(in oklab, var(--neg) 18%, var(--panel))",
+      border: "2px solid var(--neg)", borderRadius: "var(--radius)",
+      padding: "11px 14px", marginBottom: "var(--gap)",
+    }}>
+      <div style={{ color: "var(--neg)", fontWeight: 700, fontSize: 13,
+                    display: "flex", gap: 8, alignItems: "baseline" }}>
+        <span style={{ fontSize: 15, lineHeight: 1 }}>⚠</span>
+        <span>
+          {items.length === 1 ? "A dataset is past its tolerance"
+                              : `${items.length} datasets are past their tolerance`}
+          {" "}— these are not up to date, whatever the page shows
+        </span>
+      </div>
+      <ul style={{ margin: "5px 0 0", paddingLeft: 26, color: "var(--fg-dim)", fontSize: 11.5 }}>
+        {items.slice(0, 4).map((m, i) => <li key={i}>{clean(m)}</li>)}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * Bangladesh Bank changed the shape of a page.
+ *
+ * Its own colour because it is its own meaning: not our data being wrong, not
+ * BB being late. Columns are mapped by header text rather than position, so a
+ * reworded header or an inserted column does not corrupt a figure — but the
+ * layout moved, and nobody should discover that months later in a diff.
+ */
+export function SourceChangeNotice() {
+  const s = useStatus();
+  const items = s?.notices ?? [];
+  if (!items.length) return null;
+  const src = (m: string) => m.replace(/^source:\s*/, "").split(":")[0];
+  return (
+    <div style={{
+      background: "color-mix(in oklab, var(--accent) 8%, var(--panel))",
+      border: "1px solid color-mix(in oklab, var(--accent) 34%, transparent)",
+      borderRadius: "var(--radius-sm)", padding: "7px 12px", marginBottom: "var(--gap)",
+      fontSize: 11.5, color: "var(--fg-dim)", display: "flex", gap: 8, flexWrap: "wrap",
+      alignItems: "baseline",
+    }}>
+      <span style={{ color: "var(--accent)", fontWeight: 600 }}>Bangladesh Bank changed a page:</span>
+      <span>
+        {items.map((n, i) => (
+          <span key={i} title={n.message}>
+            {i > 0 && " · "}
+            {src(n.message)}
+            {n.age_days != null && n.age_days > 0 &&
+              <span style={{ color: "var(--fg-mute)" }}> ({n.age_days}d)</span>}
+          </span>
+        ))}
+      </span>
+      <span style={{ color: "var(--fg-mute)" }}>
+        — columns are read by header, so the figures still line up.
+      </span>
+    </div>
+  );
+}
+
 /** Dataset key as used by validate.py's by_table (yields, omo, callmoney, …). */
 export function DataWarning({ dataset }: { dataset: string | string[] }) {
   const s = useStatus();
