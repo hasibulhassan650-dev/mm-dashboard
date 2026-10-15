@@ -20,7 +20,7 @@ import calendar_utils
 from config import GSOM_TBOND_URL, GSOM_FRTB_URL, GSOM_TBILL_URL
 from db import (
     init_db, get_session,
-    Security, CouponEvent, MaturityEvent, BuybackEvent,
+    Security, CouponEvent, MaturityEvent, BuybackEvent, PressRelease,
     AuctionEvent, HolidayCalendar, DailyNetFlow, MtmSnapshot,
     PrimaryYieldSnapshot, OMOTransaction,
 )
@@ -948,6 +948,79 @@ def run_holiday_fetch() -> dict:
         session.close()
 
 
+def store_press_rows(session, rows: list) -> tuple:
+    """Upsert classified press releases, keyed on BB's own serial.
+
+    Re-reading the listing refreshes `last_seen_utc` and nothing else, so a
+    release BB has edited keeps its first sighting and one BB has removed stops
+    being seen without being deleted. Returns (added, revised).
+    """
+    now = datetime.datetime.utcnow()
+    existing = {r.serial: r for r in session.query(PressRelease).all()}
+    added = updated = 0
+    for r in rows:
+        cur = existing.get(r["serial"])
+        if cur is None:
+            session.add(PressRelease(
+                serial=r["serial"], published_date=r["published_date"],
+                subject_date=r["subject_date"], title=(r["title"] or "")[:2000],
+                url=r["url"], category=r["category"], isin=r["isin"],
+                first_seen_utc=now, last_seen_utc=now))
+            added += 1
+        else:
+            cur.last_seen_utc = now
+            # BB does re-post a corrected release under the same serial.
+            if cur.title != r["title"] or cur.category != r["category"]:
+                cur.title, cur.category = (r["title"] or "")[:2000], r["category"]
+                cur.subject_date, cur.isin = r["subject_date"], r["isin"]
+                updated += 1
+    return added, updated
+
+
+def run_press_fetch() -> dict:
+    """Read BB's press-release listing, classify it and keep it.
+
+    This is the listing the OMO fetch reads for its PDFs, so the two share a
+    parser and a markup change is one fix rather than two. Keeping the whole
+    listing is what makes an unanswered question answerable: BB announced
+    Bangladesh's first bond buyback on 05-Oct-2026 and its result on the 8th,
+    and nothing in this system noticed either — the 1,716.14 crore that
+    reached the market on the 12th simply never appeared in the ladder.
+
+    Stores one row per release, keyed on BB's own serial (pr14322). Re-reading
+    the listing refreshes `last_seen_utc` and nothing else: a release BB has
+    edited keeps its first sighting, and one BB has removed stops being seen
+    without being deleted.
+    """
+    from fetchers.press import fetch_press_releases
+    init_db()
+    session = get_session()
+    try:
+        out = fetch_press_releases()
+        rows = out["rows"]
+        watch = _register_source(session, out["meta"])
+        if not rows:
+            msg = f"press: fetched nothing — {out.get('reason') or 'no reason reported'}"
+            log.error(msg)
+            return {"rows": 0, "errors": [msg], "empty_reason": out.get("reason"), **watch}
+
+        added, updated = store_press_rows(session, rows)
+        session.commit()
+        by_cat: dict = {}
+        for r in rows:
+            by_cat[r["category"]] = by_cat.get(r["category"], 0) + 1
+        log.info("Press releases: %d seen, %d new, %d revised — %s",
+                 len(rows), added, updated, by_cat)
+        return {"rows": len(rows), "added": added, "revised": updated,
+                "by_category": by_cat, "skipped": out["skipped"], "errors": [], **watch}
+    except Exception as exc:
+        session.rollback()
+        log.exception("Press fetch failed")
+        return {"rows": 0, "errors": [str(exc)]}
+    finally:
+        session.close()
+
+
 def run_omo_fetch(days_back: int = 28, max_files: int = 20) -> dict:
     """Fetch last N OMO press release PDFs and store transactions to DB.
 
@@ -988,6 +1061,24 @@ def run_omo_fetch(days_back: int = 28, max_files: int = 20) -> dict:
             skips={"not an OMO release": meta.get("skipped_not_omo") or 0,
                    "older than the window": meta.get("skipped_too_old") or 0},
             error=(reason or "") if not txns else ""))
+
+        # The listing this fetch just downloaded, kept whole. Daily, because
+        # that is how often BB announces things — a weekly watcher would have
+        # taken a week to notice the first buyback, which is about how long it
+        # took to notice by hand.
+        press_added = press_revised = 0
+        try:
+            from fetchers.press import classify_links
+            if meta.get("all_links"):
+                pr = classify_links(meta["all_links"])
+                press_added, press_revised = store_press_rows(session, pr["rows"])
+                session.commit()
+                if press_added:
+                    log.info("  press listing: %d new release(s) recorded", press_added)
+        except Exception as exc:
+            session.rollback()
+            log.warning("  press listing not stored: %s", exc)
+        meta.pop("all_links", None)
 
         if not txns:
             # Empty is a RESULT, not a success. Say why, and say it where the

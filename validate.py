@@ -850,6 +850,48 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
             add("drift", f"the distribution check could not run ({exc}) — a unit "
                          f"change at BB would currently be invisible")
 
+        # ── BB announced something and we have no record of acting on it ────
+        # The listing is kept so this question can be asked at all. BB
+        # announced Bangladesh's first bond buyback on 05-Oct-2026 and its
+        # result on the 8th; nothing here noticed either, and 1,716.14 crore
+        # reached the market on the 12th with no line in the ladder. A release
+        # in a category we HANDLE with no matching event is ours to answer.
+        try:
+            for r in q("SELECT serial, published_date, category, title FROM press_releases "
+                       # LOWER(...) LIKE, not ILIKE: ILIKE is Postgres-only and
+                       # this check then ran nowhere else, including its tests.
+                       "WHERE category = 'BUYBACK' "
+                       "AND LOWER(title) NOT LIKE '%notice%' "
+                       "ORDER BY published_date DESC LIMIT 12"):
+                serial, pub, _cat, title = r[0], r[1], r[2], r[3]
+                if not hasattr(pub, "year"):
+                    try:
+                        pub = datetime.date.fromisoformat(str(pub)[:10])
+                    except ValueError:
+                        continue
+                near = q("SELECT COUNT(*) FROM buyback_events "
+                         "WHERE settlement_date BETWEEN :lo AND :hi",
+                         lo=pub - datetime.timedelta(days=3),
+                         hi=pub + datetime.timedelta(days=21))
+                if not near or not near[0][0]:
+                    add("press", f"{serial} ({pub}) announces a BUYBACK and no buyback event "
+                                 f"is recorded within three weeks of it — cash moved and the "
+                                 f"ladder does not know: \"{(title or '')[:70]}\"")
+            # BGIIB is published weekly and nothing stores it yet. Stated once,
+            # with a count, rather than per release: a true gap in coverage is
+            # not the same as a defect in data we hold, and pretending
+            # otherwise would put thirteen identical lines in every report.
+            bg = q("SELECT COUNT(*), MAX(published_date) FROM press_releases "
+                   "WHERE category IN ('BGIIB', 'SUKUK')")
+            if bg and bg[0][0]:
+                add("press", f"{bg[0][0]} Islamic-window release(s) on record (latest "
+                             f"{bg[0][1]}) and no BGIIB dataset stores their figures — the "
+                             f"releases are captured, the auction results are not",
+                    "notice")
+        except Exception as exc:
+            s.rollback()
+            add("press", f"the announcement-vs-event check could not run ({exc})")
+
         # ── a buyback must agree with GSOM's outstanding ────────────────────
         # Two independent BB publications state the same fact: the press
         # release gives the accepted amount, and GSOM's daily table gives the

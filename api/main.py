@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from routers import (omo, yields, securities, flows, callmoney, fx, refrate, meta,
-                     policy, macro, forecast, fxmarket, repo)
+                     policy, macro, forecast, fxmarket, repo, press)
 
 app = FastAPI(title="MM Dashboard API", version="1.0.0")
 
@@ -45,6 +45,7 @@ app.include_router(macro.router,       prefix="/api/macro",       tags=["Macro"]
 app.include_router(forecast.router,    prefix="/api/forecast",    tags=["Forecast"])
 app.include_router(fxmarket.router,    prefix="/api/fxmarket",    tags=["FX Market"])
 app.include_router(repo.router,        prefix="/api/repo",        tags=["Interbank Repo"])
+app.include_router(press.router,       prefix="/api/press",       tags=["Press Releases"])
 
 
 @app.get("/health")

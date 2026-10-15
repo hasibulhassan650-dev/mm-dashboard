@@ -602,6 +602,40 @@ class PipelineRun(Base):
     quality      = Column(Text)            # JSON: integrity_check() report
 
 
+class PressRelease(Base):
+    """BB's press-release listing, classified and kept.
+
+    One page carries nearly everything BB announces: OMO operations, auction
+    results, auction notices, BGIIB (Islamic bond) results and — since
+    08-Oct-2026 — bond buybacks. Three failures of this project were all
+    sitting in it: the OMO links that moved and went unnoticed for eleven
+    days, the first buyback whose 1,716.14 crore never reached the ladder, and
+    the weekly BGIIB auctions this project still does not capture.
+
+    Storing the listing is what makes "BB announced something we have no
+    record of" answerable. A release in a category we handle but with no
+    matching event is a defect; an unrecognised release keeps its title
+    verbatim and is categorised OTHER, because a category invented for a
+    release nobody read is worse than admitting it is unread.
+    """
+    __tablename__ = "press_releases"
+    __table_args__ = (UniqueConstraint("serial"),)
+    id             = Column(Integer, primary_key=True, autoincrement=True)
+    serial         = Column(String(20), nullable=False)   # pr14322
+    published_date = Column(Date)
+    # The date the release is ABOUT, which is not when it was posted: "Open
+    # Market Operations as on 13 October 2026" went up on the 14th. Storing
+    # only the publication date is how a one-day lag becomes a permanent
+    # off-by-one in everything derived from it.
+    subject_date   = Column(Date)
+    title          = Column(Text)
+    url            = Column(Text)
+    category       = Column(String(24))
+    isin           = Column(String(12))
+    first_seen_utc = Column(DateTime)
+    last_seen_utc  = Column(DateTime)
+
+
 class BuybackEvent(Base):
     """A government buyback of its own bonds — an EARLY principal repayment.
 

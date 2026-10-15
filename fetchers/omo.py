@@ -782,6 +782,10 @@ def fetch_omo_links(days_back: int = 28, max_files: int = 20) -> dict:
     omo.sort(key=lambda x: str(x["report_date"] or ""), reverse=True)
     return {
         "links": omo[:max_files],
+        # Every link on the page, not just the OMO ones: the daily fetch is the
+        # only thing that reads this listing often enough to be a watcher, and
+        # it costs nothing extra to keep what it already downloaded.
+        "all_links": all_links,
         # Everything below is for the guardian: a change of shape at the source
         # is recorded whether or not the data still parses.
         "selector": selector,
@@ -802,7 +806,8 @@ def fetch_omo_no_browser(days_back: int = 28, max_files: int = 20) -> dict:
     from fetchers.bb_session import bb_get_bytes, get_f5_cookies
 
     info = fetch_omo_links(days_back=days_back, max_files=max_files)
-    meta = {k: v for k, v in info.items() if k != "links"}
+    meta = {k: v for k, v in info.items() if k not in ("links", "all_links")}
+    meta["all_links"] = info.get("all_links") or []
     links = info["links"]
     if not links:
         reason = ("no anchors matched any known markup — BB has probably changed the page"

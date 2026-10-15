@@ -172,6 +172,13 @@ export const api = {
     try { return await get<DiagnosticRow[]>("/api/forecast/diagnostics"); }
     catch { return []; }
   },
+  press:           async (days = 90): Promise<PressFeed> => {
+    try { return await get<PressFeed>(`/api/press?days=${days}`); }
+    catch {
+      return { as_of: "", window_days: days, count: 0, by_category: [],
+               latest_by_category: {}, follow_ups: [], releases: [] };
+    }
+  },
   monetary:        async (): Promise<MonetaryData> => {
     try { return await get<MonetaryData>("/api/macro/monetary"); }
     catch { return { monthly: [], latest: null, reserve_requirements: { current: null, history: [] } }; }
@@ -295,6 +302,30 @@ export interface DataHealth {
   issues?: string[];
   by_table?: Record<string, number>;
 }
+export interface PressRelease {
+  serial: string;
+  published_date: string;
+  /** The date the release is ABOUT — "as on 13 October" posted on the 14th. */
+  subject_date: string | null;
+  title: string;
+  url: string;
+  category: string | null;
+  isin: string | null;
+}
+
+export interface PressFeed {
+  as_of: string;
+  window_days: number;
+  count: number;
+  by_category: { category: string; label: string; total: number; last_7_days: number }[];
+  latest_by_category: Record<string, PressRelease>;
+  /** Computed by comparing the listing with the data we hold — not a summary
+   *  of BB's words. A paraphrase would be a new source of error in front of
+   *  the real one. */
+  follow_ups: { severity: "defect" | "notice"; text: string }[];
+  releases: PressRelease[];
+}
+
 export interface MetaStatus {
   datasets: Record<string, DatasetStatus>;
   last_run: string | null;

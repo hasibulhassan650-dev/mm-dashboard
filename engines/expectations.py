@@ -174,6 +174,12 @@ DATASETS: List[Dataset] = [
     Dataset("policy", "policy_rate_snapshots", "last_seen_date", EVENT,
             "Policy corridor", "BB homepage", step="policy", gap_check=False,
             note="Changes only when the MPC moves."),
+    Dataset("press", "press_releases", "published_date", WORKING_DAY,
+            "BB press releases", "BB press-release listing", step="press",
+            gap_check=False,
+            note="BB posts something most working days; a long silence here "
+                 "means the listing stopped being read, which is how the OMO "
+                 "outage hid. Gaps are not checked: BB skips days."),
     Dataset("buybacks", "buyback_events", "settlement_date", EVENT,
             "Bond buybacks", "BB press release (LMO)", step="press",
             gap_check=False,

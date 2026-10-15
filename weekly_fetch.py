@@ -444,6 +444,23 @@ def main():
         log.exception("Interbank repo fetch failed: %s", exc)
         errors.append(f"interbank_repo: {exc}")
 
+    # ── 14a. BB's press-release listing ──────────────────────────────────────
+    # The listing the OMO fetch already reads for its PDFs, kept whole and
+    # classified. It is the only record of what BB ANNOUNCED, which is what
+    # makes "BB announced a buyback and we have no event for it" answerable —
+    # a question nobody could ask when the first buyback settled.
+    log.info("--- Step 14a: BB press releases ---")
+    try:
+        from engines.pipeline import run_press_fetch
+        pr = run_press_fetch()
+        log.info("Press OK | %d seen, %d new, %d revised | %s", pr.get("rows", 0),
+                 pr.get("added", 0), pr.get("revised", 0), pr.get("by_category"))
+        for e in pr.get("errors") or []:
+            errors.append(e)
+    except Exception as exc:
+        log.exception("Press fetch failed: %s", exc)
+        errors.append(f"press: {exc}")
+
     # ── 14. BB's gazetted holiday list ───────────────────────────────────────
     # Weekly, because this is the one feed whose VALUE IS IN THE FUTURE: every
     # settlement date, maturity roll and working-day age is computed from it.
