@@ -65,6 +65,15 @@ def generate_auction_event(
         if accepted_crore is not None else None
     )
 
+    # The cash actually paid. Stays None when BB's page for that month was
+    # stored before the parser kept it — a blank says "we have par, not cash",
+    # where a copy of the face value would quietly claim precision we lack.
+    sale_crore = row.get("sale_value_bdt_crore")
+    sale_mill  = (
+        round(float(sale_crore) * CRORE_TO_MILLION, 4)
+        if sale_crore is not None else None
+    )
+
     # ── Build event ───────────────────────────────────────────────────────────
     event = {
         # Identity
@@ -95,6 +104,8 @@ def generate_auction_event(
         "offered_amount_bdt_mill":   offered_mill,
         "accepted_amount_bdt_crore": accepted_crore,
         "accepted_amount_bdt_mill":  accepted_mill,
+        "sale_value_bdt_crore":      sale_crore,
+        "sale_value_bdt_mill":       sale_mill,
         "weighted_avg_yield_pct":    row.get("weighted_avg_yield_pct"),
 
         # Status
@@ -210,11 +221,26 @@ def generate_all_auction_events(
 
 
 def best_outflow(event: Dict) -> float:
+    """Best-available CASH outflow: the money that actually leaves the market.
+
+    Three figures, in order of how close each is to the truth:
+
+      1. the SALE value — the cash the market paid. Bills are discount
+         instruments and a premium re-issue sells above par, so this is never
+         the same as the face value allotted. Across 2026 it differed on every
+         one of 172 auctions, and booking face value overstated the drain on
+         T-Bills alone by 15,861 crore over the year.
+      2. the accepted FACE value — par. Right to within the discount, which is
+         what we have for auctions stored before the parser kept the sale
+         value.
+      3. the OFFERED amount — BB's target, for auctions that have not happened
+         yet. A forecast, correctly labelled as one by outflow_status.
+
+    Never averaged, never mixed: each row uses the best single figure it has.
     """
-    Best-available outflow amount.
-    Uses accepted (confirmed) amount when available; falls back to offered.
-    """
-    if (event.get("outflow_status") == "CONFIRMED"
-            and event.get("accepted_amount_bdt_mill") is not None):
-        return float(event["accepted_amount_bdt_mill"])
+    if event.get("outflow_status") == "CONFIRMED":
+        if event.get("sale_value_bdt_mill") is not None:
+            return float(event["sale_value_bdt_mill"])
+        if event.get("accepted_amount_bdt_mill") is not None:
+            return float(event["accepted_amount_bdt_mill"])
     return float(event.get("offered_amount_bdt_mill", 0.0))

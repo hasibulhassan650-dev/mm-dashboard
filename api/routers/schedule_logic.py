@@ -92,12 +92,20 @@ _COUPONS = """
     FROM coupon_events c LEFT JOIN securities s ON c.isin = s.isin
     WHERE c.payment_date BETWEEN :start AND :end GROUP BY c.payment_date, s.security_type"""
 # An auction row is PLANNED (BB's calendar target) or CONFIRMED (what BB
-# accepted). Prefer accepted and fall back to offered — the precedence
-# /drilldown and the ladder already use, so the three never disagree about the
+# accepted). One precedence everywhere — sale value, then accepted face, then
+# offered — so /drilldown, the ladder and this page never disagree about the
 # size of the same auction.
-_AUCTIONS = """
+#
+# SALE VALUE FIRST, because that is the cash: a bill sells at a discount and a
+# premium re-issue above par, so the accepted FACE value is never what left the
+# market. engines/outflow.py best_outflow() is the same precedence on the
+# engine side; the duplication is forced by the api/ deploy boundary (the API
+# cannot import engines), so the two must be changed together.
+_AMT = "COALESCE(sale_value_bdt_mill, accepted_amount_bdt_mill, offered_amount_bdt_mill, 0)"
+
+_AUCTIONS = f"""
     SELECT settlement_date AS d, security_type AS st,
-           SUM(COALESCE(accepted_amount_bdt_mill, offered_amount_bdt_mill, 0)) AS amt
+           SUM({_AMT}) AS amt
     FROM auction_events
     WHERE settlement_date BETWEEN :start AND :end GROUP BY settlement_date, security_type"""
 
@@ -262,10 +270,10 @@ _DETAIL = (
                NULL AS tenor, NULL AS status, NULL AS offered
         FROM coupon_events c LEFT JOIN securities s ON c.isin = s.isin
         WHERE c.payment_date BETWEEN :start AND :end"""),
-    ("AUCTION", """
+    ("AUCTION", f"""
         SELECT settlement_date AS d, NULL AS isin, NULL AS nm,
                security_type AS st,
-               COALESCE(accepted_amount_bdt_mill, offered_amount_bdt_mill, 0) AS amt,
+               {_AMT} AS amt,
                weighted_avg_yield_pct AS rate, auction_date AS sched,
                tenor_label AS tenor, outflow_status AS status,
                offered_amount_bdt_mill AS offered

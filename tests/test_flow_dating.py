@@ -80,3 +80,76 @@ def test_totals_are_conserved_when_dates_roll():
               _coupon(200.0, datetime.date(2026, 7, 25), datetime.date(2026, 7, 26))]
     rows = build_daily_flows(events, [], [])
     assert round(sum(r["coupon_inflow_bdt_mill"] for r in rows), 6) == 300.0
+
+
+class TestTheLadderBooksCashNotPar:
+    """A T-Bill with a face value of 3,000 crore does not drain 3,000 crore.
+
+    Bills are discount instruments: on 07-Sep-2026 BB allotted 3,000.00 crore
+    of 91-day bills and the market paid 2,937.48 crore. The 62.52 crore
+    difference is the discount — it never left anyone's account. A premium
+    re-issue goes the other way (20Y on 02-Sep-2026: face 3,500.00, cash
+    3,689.28). Across 2026's 172 auctions the two differ on every single one,
+    and booking face value overstated the drain on T-Bills alone by 15,861
+    crore over the year.
+
+    The face value still matters — it is what BB allotted and what matures —
+    so both are kept. Only the ladder's cash line changes.
+    """
+
+    def _best(self, **kw):
+        from engines.outflow import best_outflow
+        return best_outflow(kw)
+
+    def test_the_cash_paid_wins_over_the_face_value(self):
+        assert self._best(outflow_status="CONFIRMED", sale_value_bdt_mill=29374.8,
+                          accepted_amount_bdt_mill=30000.0,
+                          offered_amount_bdt_mill=30000.0) == 29374.8
+
+    def test_a_premium_reissue_drains_MORE_than_par(self):
+        assert self._best(outflow_status="CONFIRMED", sale_value_bdt_mill=36892.8,
+                          accepted_amount_bdt_mill=35000.0,
+                          offered_amount_bdt_mill=35000.0) == 36892.8
+
+    def test_par_is_used_when_bb_never_published_the_cash(self):
+        """Older months were stored before the parser kept the sale value.
+
+        Par is wrong by the discount, which is the best we have for those rows
+        — but it must not be presented as if it were the cash figure, which is
+        why the column stays NULL rather than being filled with the face value.
+        """
+        assert self._best(outflow_status="CONFIRMED", sale_value_bdt_mill=None,
+                          accepted_amount_bdt_mill=30000.0,
+                          offered_amount_bdt_mill=29000.0) == 30000.0
+
+    def test_an_auction_that_has_not_happened_yet_uses_bbs_target(self):
+        assert self._best(outflow_status="PLANNED", sale_value_bdt_mill=None,
+                          accepted_amount_bdt_mill=None,
+                          offered_amount_bdt_mill=30000.0) == 30000.0
+
+    def test_a_planned_row_never_borrows_a_stale_result(self):
+        """outflow_status is the gate: a PLANNED row with leftover result
+        figures must still quote BB's target, or a re-homed auction (the
+        23-May-2026 case) would book someone else's cash twice."""
+        assert self._best(outflow_status="PLANNED", sale_value_bdt_mill=29374.8,
+                          accepted_amount_bdt_mill=30000.0,
+                          offered_amount_bdt_mill=25000.0) == 25000.0
+
+    def test_the_engine_and_the_api_agree_on_the_precedence(self):
+        """The api/ deploy boundary forces this precedence to exist twice.
+
+        engines/outflow.py cannot be imported by the API, so schedule_logic
+        repeats it in SQL. If the two ever drift, the same auction has two
+        sizes depending on which page you open — so the order is asserted
+        here, in both places, from one test.
+        """
+        import re
+        from pathlib import Path
+        sql = Path("api/routers/schedule_logic.py").read_text(encoding="utf-8")
+        m = re.search(r'_AMT = "COALESCE\(([^)]*)\)"', sql)
+        assert m, "schedule_logic no longer declares a single _AMT precedence"
+        order = [c.strip() for c in m.group(1).split(",")]
+        assert order[:3] == ["sale_value_bdt_mill", "accepted_amount_bdt_mill",
+                             "offered_amount_bdt_mill"], order
+        flows = Path("api/routers/flows.py").read_text(encoding="utf-8")
+        assert "r.sale_value_bdt_mill or r.accepted_amount_bdt_mill" in flows

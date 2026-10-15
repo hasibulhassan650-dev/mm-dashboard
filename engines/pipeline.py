@@ -161,6 +161,8 @@ def _upsert_auction(session, event: dict):
     om      = float(event.get("offered_amount_bdt_mill")  or 0)
     ac      = event.get("accepted_amount_bdt_crore")
     am      = event.get("accepted_amount_bdt_mill")
+    sc      = event.get("sale_value_bdt_crore")
+    sm      = event.get("sale_value_bdt_mill")
     status  = str(event.get("outflow_status") or "PLANNED")
     rd      = int(event.get("roll_days") or 0)
     rr      = str(event.get("roll_reason") or event.get("adjustment_reason") or "")
@@ -186,11 +188,12 @@ def _upsert_auction(session, event: dict):
               (fiscal_year,auction_no,auction_date,settlement_date,security_type,
                tenor_label,offered_amount_bdt_crore,offered_amount_bdt_mill,
                accepted_amount_bdt_crore,accepted_amount_bdt_mill,
+               sale_value_bdt_crore,sale_value_bdt_mill,
                outflow_status,roll_days,roll_reason,source,data_quality)
             VALUES
-              (:fy,:ano,:ad,:sd,:st,:tl,:oc,:om,:ac,:am,:os,:rd,:rr,:src,:dq)
+              (:fy,:ano,:ad,:sd,:st,:tl,:oc,:om,:ac,:am,:sc,:sm,:os,:rd,:rr,:src,:dq)
         """), {"fy":fy,"ano":ano,"ad":ad,"sd":sd,"st":stype,"tl":tenor,
-               "oc":oc,"om":om,"ac":ac,"am":am,"os":status,
+               "oc":oc,"om":om,"ac":ac,"am":am,"sc":sc,"sm":sm,"os":status,
                "rd":rd,"rr":rr,"src":src,"dq":dq})
 
 
@@ -273,8 +276,8 @@ def confirm_auctions_from_results(session) -> dict:
     from config import CRORE_TO_MILLION, fiscal_year
     res = session.execute(_t(
         "SELECT tenor_label, issue_date, auction_date, accepted_bdt_crore, cutoff_yield_pct, "
-        "security_type FROM primary_yield_snapshots WHERE issue_date IS NOT NULL "
-        "ORDER BY auction_date")).fetchall()
+        "security_type, sale_value_bdt_crore FROM primary_yield_snapshots "
+        "WHERE issue_date IS NOT NULL ORDER BY auction_date")).fetchall()
     cal = session.query(AuctionEvent).all()
     by_tenor: dict = {}
     for a in cal:
@@ -283,12 +286,17 @@ def confirm_auctions_from_results(session) -> dict:
     claimed: set = set()
     confirmed = moved = added = 0
 
-    def _apply(a, issue, adate, acc, cutoff):
+    def _apply(a, issue, adate, acc, cutoff, sale=None):
         nonlocal confirmed, moved
         if acc is not None:
             a.accepted_amount_bdt_crore = float(acc)
             a.accepted_amount_bdt_mill  = round(float(acc) * CRORE_TO_MILLION, 4)
             a.outflow_status            = "CONFIRMED"
+        if sale is not None:
+            # The cash, beside the par amount. Both are kept: the ladder needs
+            # the cash, and the face value is what BB allotted and what matures.
+            a.sale_value_bdt_crore = float(sale)
+            a.sale_value_bdt_mill  = round(float(sale) * CRORE_TO_MILLION, 4)
         if cutoff is not None:
             a.weighted_avg_yield_pct = float(cutoff)
         if a.settlement_date != issue:
@@ -302,20 +310,20 @@ def confirm_auctions_from_results(session) -> dict:
         return datetime.date.fromisoformat(v[:10]) if isinstance(v, str) else v
 
     pending = []
-    for tenor, issue, adate, acc, cutoff, stype in res:
+    for tenor, issue, adate, acc, cutoff, stype, sale in res:
         issue, adate = _d(issue), _d(adate)
         exact = [a for a in by_tenor.get(tenor, []) if a.auction_date == adate and id(a) not in claimed]
         if exact:
-            claimed.add(id(exact[0])); _apply(exact[0], issue, adate, acc, cutoff)
+            claimed.add(id(exact[0])); _apply(exact[0], issue, adate, acc, cutoff, sale)
         else:
-            pending.append((tenor, issue, adate, acc, cutoff, stype))
-    for tenor, issue, adate, acc, cutoff, stype in pending:
+            pending.append((tenor, issue, adate, acc, cutoff, stype, sale))
+    for tenor, issue, adate, acc, cutoff, stype, sale in pending:
         cands = [a for a in by_tenor.get(tenor, [])
                  if a.auction_date is not None and id(a) not in claimed
                  and issue - datetime.timedelta(days=10) <= a.auction_date <= issue]
         if cands:
             a = max(cands, key=lambda x: x.auction_date)
-            claimed.add(id(a)); _apply(a, issue, adate, acc, cutoff)
+            claimed.add(id(a)); _apply(a, issue, adate, acc, cutoff, sale)
             continue
         if cal_start is None or adate is None or adate < cal_start or acc is None:
             continue
@@ -329,7 +337,7 @@ def confirm_auctions_from_results(session) -> dict:
             source=_UNCALENDARED, data_quality="OK")
         session.add(a)
         by_tenor.setdefault(tenor, []).append(a)
-        claimed.add(id(a)); _apply(a, issue, adate, acc, cutoff)
+        claimed.add(id(a)); _apply(a, issue, adate, acc, cutoff, sale)
         added += 1
 
     # An uncalendared row exists only because a result row existed. If no result
@@ -1107,6 +1115,8 @@ def run_pipeline(
             "settlement_date":             a.settlement_date,
             "offered_amount_bdt_mill":     a.offered_amount_bdt_mill or 0.0,
             "accepted_amount_bdt_mill":    a.accepted_amount_bdt_mill,
+            # The cash paid, which is what drains liquidity on settlement day.
+            "sale_value_bdt_mill":         a.sale_value_bdt_mill,
             "outflow_status":              a.outflow_status,
             "security_type":               a.security_type,
             "data_quality":                a.data_quality,

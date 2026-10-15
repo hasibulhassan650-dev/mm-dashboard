@@ -38,10 +38,31 @@ def _mem():
     return eng, sessionmaker(bind=eng)()
 
 
-def _stale_repo(s, days=6):
+def _working_days_ago(age: int) -> datetime.date:
+    """A date exactly `age` WORKING days before today.
+
+    Counting calendar days here made these tests depend on the weekday they
+    ran on: six calendar days is four working days from a Wednesday and five
+    from a Thursday, which is either side of the escalation boundary. The suite
+    passed on 10-Oct and failed on 15-Oct with nothing changed but the date,
+    which is a test defect, not a code one — and precisely the sort that gets
+    "fixed" by loosening the threshold it was meant to protect.
+    """
+    import engines.expectations as _EX
+    d = D.today()
+    while _EX.working_days_between(d, D.today(), set()) < age:
+        d -= datetime.timedelta(days=1)
+    return d
+
+
+def _stale_repo(s, age=3):
     """A repo row stale enough to trip the freshness rule but still INSIDE the
-    dataset's tolerance, so it is BB being late rather than us being broken."""
-    s.add(InterbankRepo(trade_date=D.today() - datetime.timedelta(days=days),
+    dataset's tolerance, so it is BB being late rather than us being broken.
+
+    Working-day ages: the rule fires past 2 and escalates past 4, so 3 is
+    unambiguously inside the waiting band on every weekday of the year.
+    """
+    s.add(InterbankRepo(trade_date=_working_days_ago(age),
                         num_deals=30, amount_crore=2979.24, tenor_min_days=1,
                         tenor_max_days=7, rate_min_pct=8.5, rate_max_pct=8.95,
                         war_pct=8.8, ingested_utc=NOW()))
@@ -117,7 +138,7 @@ class TestSeverity:
         identical in the data, and only elapsed time separates them.
         """
         eng, s = _mem()
-        _stale_repo(s, days=12)          # far beyond a daily series' tolerance
+        _stale_repo(s, age=8)            # far beyond a daily series' tolerance of 4
         _run(s)                          # and OUR fetch says it is fine
         s.commit()
         rep = _check(monkeypatch, eng)
@@ -129,7 +150,7 @@ class TestSeverity:
     def test_the_escalation_says_whose_fault_it_is(self, monkeypatch):
         # A fetch that reports success while storing nothing is succeeding at
         # fetching nothing; the message has to say so or it reads as BB's fault.
-        eng, s = _mem(); _stale_repo(s, days=12); _run(s); s.commit()
+        eng, s = _mem(); _stale_repo(s, age=8); _run(s); s.commit()
         msg = [i for i in _check(monkeypatch, eng)["issues"]
                if i.startswith("freshness: repo")][0]
         assert "ours, not BB" in msg

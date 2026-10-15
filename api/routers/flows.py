@@ -87,6 +87,7 @@ def get_drilldown(date: str = Query(..., description="YYYY-MM-DD")):
         auctions = session.execute(text("""
             SELECT auction_date, settlement_date, security_type, tenor_label,
                    offered_amount_bdt_mill, accepted_amount_bdt_mill,
+                   sale_value_bdt_mill,
                    weighted_avg_yield_pct, outflow_status, roll_days, roll_reason
             FROM auction_events
             WHERE settlement_date = :date
@@ -95,7 +96,12 @@ def get_drilldown(date: str = Query(..., description="YYYY-MM-DD")):
 
         mat_total  = sum(r.principal_bdt_mill or 0 for r in maturities)
         coup_total = sum(r.amount_bdt_mill    or 0 for r in coupons)
-        auc_total  = sum((r.accepted_amount_bdt_mill or r.offered_amount_bdt_mill or 0) for r in auctions)
+        # Sale value first: the cash paid, not the face value allotted. Same
+        # precedence as engines/outflow.py best_outflow() and schedule_logic's
+        # _AMT — duplicated because the API cannot import engines, so all three
+        # change together or the same auction gets three different sizes.
+        auc_total  = sum((r.sale_value_bdt_mill or r.accepted_amount_bdt_mill
+                          or r.offered_amount_bdt_mill or 0) for r in auctions)
 
         # Additive only: every *_mill field below predates this and is relied on
         # by the existing page, so OMO and the netted crore lines arrive beside

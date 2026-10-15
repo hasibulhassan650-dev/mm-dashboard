@@ -34,15 +34,24 @@ log = logging.getLogger("canary")
 
 # Pages whose first table IS the data. Each is read once, its header row
 # fingerprinted, and nothing is parsed into the database.
+#
+# `plain` means the production fetcher reads this page with plain curl_cffi and
+# no F5 handshake — interbank_repo, the FX pages and the calendar all do. The
+# canary must read each page the way production reads it, or it reports on
+# something the pipeline never sees. The calendar taught that lesson: BB's TSPD
+# cookies are PATH-BOUND (fetchers/auction_live.py says so in as many words),
+# so cookies captured on the treasury page do not clear the calendar URL, and
+# the canary's first run called the calendar "degraded" when the only thing
+# wrong was the canary.
 TABLE_PAGES = (
-    ("treasury", BB_TREASURY_URL),
-    ("auction_calendar", BB_AUC_CALENDAR_URL),
-    ("holidays", BB_HOLIDAY_URL),
-    ("interbank_repo", "https://www.bb.org.bd/en/index.php/financialactivity/interbankrepo"),
-    ("interbank_fx", "https://www.bb.org.bd/en/index.php/fxmarket/interbank_fxmarket"),
-    ("call_money", "https://www.bb.org.bd/en/index.php/monetaryactivity/call_money_market"),
-    ("exchange_rates", "https://www.bb.org.bd/en/index.php/econdata/exchangerate"),
-    ("ref_rates", "https://www.bb.org.bd/en/index.php/monetaryactivity/money_market_ref_rate"),
+    ("treasury", BB_TREASURY_URL, False),
+    ("auction_calendar", BB_AUC_CALENDAR_URL, True),
+    ("holidays", BB_HOLIDAY_URL, True),
+    ("interbank_repo", "https://www.bb.org.bd/en/index.php/financialactivity/interbankrepo", True),
+    ("interbank_fx", "https://www.bb.org.bd/en/index.php/fxmarket/interbank_fxmarket", True),
+    ("call_money", "https://www.bb.org.bd/en/index.php/monetaryactivity/call_money_market", False),
+    ("exchange_rates", "https://www.bb.org.bd/en/index.php/econdata/exchangerate", True),
+    ("ref_rates", "https://www.bb.org.bd/en/index.php/monetaryactivity/money_market_ref_rate", False),
 )
 
 
@@ -79,27 +88,67 @@ def _headers_of(table) -> list:
     return SW.header_columns(header_rows)
 
 
-def look_at_table_page(name: str, url: str) -> dict:
+def _read_plain(url: str) -> str:
+    """curl_cffi with Chrome TLS impersonation — the way most fetchers read BB."""
+    from curl_cffi import requests as cr
+    r = cr.get(url, impersonate="chrome", timeout=30)
+    return r.text or ""
+
+
+def _soup(html: str):
+    """Parse the way the real fetchers parse.
+
+    BB's 2026 redesign renders the auction calendar as div grids
+    (.table_caption / .row-header / .row-data) with no <table> element at all,
+    and fetchers/auction_live.py rebuilds table markup before parsing. The
+    canary's first run reported the calendar "degraded — no table at all",
+    which was true of the HTML and false about the data: a canary that reads a
+    page differently from production reports on something the pipeline never
+    sees, and a false alarm every week is worse than no canary.
+    """
+    from bs4 import BeautifulSoup
+    from fetchers.auction_live import _normalize_div_layout
+    try:
+        html = _normalize_div_layout(html)
+    except Exception:
+        pass
+    return BeautifulSoup(html, "lxml")
+
+
+def look_at_table_page(name: str, url: str, plain: bool = True, session_ck=None) -> dict:
     from bs4 import BeautifulSoup
     from fetchers.bb_session import bb_get, get_f5_cookies
+    html, how = "", ""
     try:
-        ck, ua = get_f5_cookies(url)
-        html = bb_get(url, ck, ua)
-        if hasattr(html, "text"):
-            html = html.text
+        if plain:
+            html, how = _read_plain(url), "curl_cffi"
+        got_table = bool(html) and _biggest_table(_soup(html)) is not None
+        if not got_table:
+            # Either this page needs the F5 handshake, or plain reading came
+            # back without a table. One handshake is shared across the pages
+            # that need it: get_f5_cookies launches Chrome, and BB has
+            # throttled this project for bursts before.
+            ck, ua = session_ck if session_ck else get_f5_cookies(url)
+            html = bb_get(url, ck, ua)
+            if hasattr(html, "text"):
+                html = html.text
+            how = "f5+curl_cffi"
     except Exception as exc:
         return SW.fingerprint(name, url, error=f"could not read the page: "
                                                f"{type(exc).__name__} {exc}")
-    soup = BeautifulSoup(html, "lxml")
+    soup = _soup(html)
     table = _biggest_table(soup)
     if table is None:
-        return SW.fingerprint(name, url, error="the page has no table at all")
+        return SW.fingerprint(name, url, selector=how,
+                              error=f"read {len(html):,} bytes with {how} and found no "
+                                    f"table at all — BB is serving something else here")
     rows = table.find_all("tr")
     headers = _headers_of(table)
-    # "Parsed" here means "rows that look like data": the canary does not run
-    # the real parsers, so this is the honest count it can make.
-    data_rows = [tr for tr in rows if tr.find_all("td") and tr not in rows[:len(headers) and 2]]
-    return SW.fingerprint(name, url, selector="largest table", headers=headers,
+    # "Parsed" here means "rows that look like data": the canary never runs the
+    # real parsers, so a row with data cells and no header cells is the honest
+    # count it can make.
+    data_rows = [tr for tr in rows if tr.find_all("td") and not tr.find_all("th")]
+    return SW.fingerprint(name, url, selector=f"largest table via {how}", headers=headers,
                           rows_seen=len(rows), rows_parsed=len(data_rows))
 
 
@@ -125,8 +174,17 @@ def run(strict: bool = False) -> dict:
     s = get_session()
     moved, checked = [], []
     try:
-        for snap in [look_at_press_page()] + [look_at_table_page(n, u)
-                                              for n, u in TABLE_PAGES]:
+        from fetchers.bb_session import get_f5_cookies
+        try:
+            # Only the pages marked as needing it; the rest read plainly.
+            session_ck = (get_f5_cookies(BB_TREASURY_URL)
+                          if any(not pl for _, _, pl in TABLE_PAGES) else None)
+        except Exception as exc:
+            log.warning("could not pass the F5 challenge once for all pages (%s) — "
+                        "each page will try on its own", exc)
+            session_ck = None
+        for snap in [look_at_press_page()] + [look_at_table_page(n, u, pl, session_ck)
+                                              for n, u, pl in TABLE_PAGES]:
             verdict, reasons = SW.record(s, snap)
             s.commit()
             checked.append(snap["source"])

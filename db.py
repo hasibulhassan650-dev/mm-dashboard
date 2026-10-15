@@ -128,6 +128,17 @@ class AuctionEvent(Base):
     offered_amount_bdt_mill   = Column(Float)
     accepted_amount_bdt_crore = Column(Float)
     accepted_amount_bdt_mill  = Column(Float)
+    # The CASH the market actually paid, which is not the accepted face value
+    # above. Bills sell at a discount and a premium re-issue sells above par:
+    # across 2026's 172 auctions the two differ on every single one, and
+    # booking face value overstated the drain on T-Bills alone by 15,861 crore
+    # over the year. Face value is the par amount BB allotted; this is the
+    # money that left the banking system on settlement day. Blank for auctions
+    # stored before the parser kept it — never substituted with face value,
+    # because a figure that is right to the taka and a figure that is close are
+    # different things and the ladder should say which it has.
+    sale_value_bdt_crore      = Column(Float)
+    sale_value_bdt_mill       = Column(Float)
     weighted_avg_yield_pct    = Column(Float)
     resulting_isin            = Column(String(12))
     outflow_status            = Column(String(12), default="PLANNED")
@@ -680,6 +691,9 @@ def init_db():
         "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS source_pub_date DATE",
         "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS source_serial VARCHAR(40)",
         "ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS quality TEXT",
+        # The cash paid, beside the face value allotted. See AuctionEvent.
+        "ALTER TABLE auction_events ADD COLUMN IF NOT EXISTS sale_value_bdt_crore REAL",
+        "ALTER TABLE auction_events ADD COLUMN IF NOT EXISTS sale_value_bdt_mill REAL",
         # BB's results page has always carried these; the parser now keeps them.
         "ALTER TABLE primary_yield_snapshots ADD COLUMN IF NOT EXISTS isin VARCHAR(12)",
         "ALTER TABLE primary_yield_snapshots ADD COLUMN IF NOT EXISTS is_reissue BOOLEAN DEFAULT FALSE",
