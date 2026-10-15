@@ -598,6 +598,33 @@ class PipelineRun(Base):
     quality      = Column(Text)            # JSON: integrity_check() report
 
 
+class DataAbsence(Base):
+    """A date Bangladesh Bank does not publish, confirmed by looking.
+
+    The gap check treats a missing working day inside a series as OUR defect,
+    which is right in general and wrong for the days BB simply skips. On
+    Thursday 08-Oct-2026 the interbank FX turnover table carried no row while
+    call money, repo, OMO and reference rates all printed normally; BB's own
+    two-month view, re-read on 15-Oct, still has no 08-Oct. Nothing we can do
+    will ever fill it, so leaving it as a defect means one permanent red line
+    — and a permanently red check is one nobody reads.
+
+    An absence is only ever recorded from EVIDENCE: a successful fetch whose
+    window straddles the date and came back without it. It is never a mute
+    button, which is why the date must sit strictly inside the fetched range —
+    a failed fetch records nothing and stays a defect.
+    """
+    __tablename__ = "data_absences"
+    __table_args__ = (UniqueConstraint("dataset", "absent_date"),)
+    id           = Column(Integer, primary_key=True, autoincrement=True)
+    dataset      = Column(String(40), nullable=False)   # expectations key
+    absent_date  = Column(Date, nullable=False)
+    reason       = Column(Text)
+    source       = Column(Text)        # the page that was re-read
+    verified_utc = Column(DateTime)
+    checks       = Column(Integer, default=1)   # times re-confirmed
+
+
 class SourceSnapshot(Base):
     """What BB's pages LOOKED LIKE, fetch by fetch.
 

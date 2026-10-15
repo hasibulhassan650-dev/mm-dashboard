@@ -148,6 +148,23 @@ def build() -> tuple:
                 lines.append(f"- {nt}{age}")
             lines.append("")
 
+        # Days BB itself does not publish, each one established by re-reading a
+        # COMPLETE month of BB's own page. The gap check passes over them so one
+        # permanent hole does not sit red for ever — which means this line is
+        # the only thing standing between "known hole" and "invisible".
+        try:
+            from engines.absences import summary as _absence_summary
+            _abs = _absence_summary(s)
+        except Exception:
+            _abs = {}
+        if _abs:
+            parts = ", ".join(f"`{k}` {v['count']} (latest {v['latest']})"
+                              for k, v in sorted(_abs.items()))
+            lines.append(f"**Known holes at BB: {sum(v['count'] for v in _abs.values())}** — "
+                         f"{parts}. Confirmed absent from a complete month of BB's own "
+                         f"page, so the gap check passes over them; they are holes in the "
+                         f"record, not in our fetching.\n")
+
         if rep.get("waiting"):
             lines.append(f"**Waiting on Bangladesh Bank: {rep.get('waiting_count')}** — "
                          f"not our data and not actionable, listed so it is never forgotten\n")

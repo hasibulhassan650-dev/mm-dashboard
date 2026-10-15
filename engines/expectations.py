@@ -206,7 +206,20 @@ NOT_WATCHED: Dict[str, str] = {
     "policy_rate_history": "seeded history behind policy_rate_snapshots",
     "mtm_snapshots": "watched as 'secondary' above (listed for completeness)",
     "source_snapshots": "structural fingerprints; watched by the canary itself",
+    "data_absences": "days BB itself does not publish, each one evidence from a "
+                     "fetch; a ledger of holes, not a feed that can go stale",
 }
+
+
+def is_working_day(d: datetime.date, holidays=None) -> bool:
+    """Bangladesh weekend is Friday + Saturday; gazetted holidays on top.
+
+    One predicate for this whole module, so the age, the gap list and the
+    month boundaries in engines/absences.py cannot disagree about what a
+    working day is — two rules for one fact is how a gap gets excused on one
+    code path and reported on another.
+    """
+    return d.weekday() not in (4, 5) and d not in (holidays or set())
 
 
 def working_days_between(a: datetime.date, b: datetime.date, holidays=None) -> int:
@@ -214,7 +227,7 @@ def working_days_between(a: datetime.date, b: datetime.date, holidays=None) -> i
     holidays = holidays or set()
     n, d = 0, a + datetime.timedelta(days=1)
     while d <= b:
-        if d.weekday() not in (4, 5) and d not in holidays:
+        if is_working_day(d, holidays):
             n += 1
         d += datetime.timedelta(days=1)
     return n
@@ -232,7 +245,7 @@ def missing_working_days(present, start: datetime.date, end: datetime.date,
     have = set(present)
     out, d = [], start
     while d <= end:
-        if d.weekday() not in (4, 5) and d not in holidays and d not in have:
+        if is_working_day(d, holidays) and d not in have:
             out.append(d)
         d += datetime.timedelta(days=1)
     return out

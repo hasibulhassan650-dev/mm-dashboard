@@ -366,9 +366,24 @@ def main():
             r["ingested_utc"] = now_utc
         session = get_session()
         st = replace_daily_rows(session, InterbankFx, rows_fx, ("segment",))
+        # BB skips the occasional working day on this page (08-Oct-2026, while
+        # every other feed printed). Record those from THIS fetch's own window
+        # so the gap check stops calling BB's omission our defect — and only
+        # from a fetch that actually returned a range, never from a failure.
+        from sqlalchemy import text as _sa_text
+        from engines.absences import confirm_absences
+        from engines.pipeline import _load_holidays
+        _load_holidays(session)
+        hol = {r[0] for r in session.execute(_sa_text(
+            "SELECT calendar_date FROM holiday_calendar WHERE holiday_type IS NULL "
+            "OR holiday_type <> 'WORKING_DAY'")).fetchall() if hasattr(r[0], "year")}
+        gone = confirm_absences(session, "fxmarket",
+                                [r.get("trade_date") for r in rows_fx], hol,
+                                source="BB interbank FX market page")
         session.commit()
         session.close()
-        log.info("Interbank FX OK | %s (fetched %d)", st, len(rows_fx))
+        log.info("Interbank FX OK | %s (fetched %d)%s", st, len(rows_fx),
+                 f" | {len(gone)} day(s) confirmed absent at BB" if gone else "")
     except Exception as exc:
         log.exception("Interbank FX fetch failed: %s", exc)
         errors.append(f"interbank_fx: {exc}")

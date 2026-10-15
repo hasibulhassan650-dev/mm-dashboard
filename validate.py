@@ -26,6 +26,7 @@ _YIELD_TENORS = {"14D", "28D", "91D", "182D", "364D", "2Y", "3Y", "3Y_FRTB",
 
 
 import engines.expectations as _EXPECT
+import engines.absences as _absences
 
 
 def _holidays_set():
@@ -894,6 +895,13 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
             gaps = _EXPECT.missing_working_days(
                 present, max(min(present), today - datetime.timedelta(days=45)),
                 max(present), holidays=_holidays_set())
+            # Days BB itself does not publish, each established by re-reading
+            # BB's own page over a window that straddles the date. Skipped here
+            # so one permanent hole does not sit red for ever; counted below so
+            # it never becomes invisible. Recorded only from evidence — see
+            # engines/absences.py — so a fetch we failed to make is still ours.
+            known = _absences.absent_dates(s_, ds.key)
+            gaps = [g for g in gaps if g not in known]
             if gaps:
                 shown = ", ".join(str(g) for g in gaps[:6])
                 more = f" (+{len(gaps) - 6} more)" if len(gaps) > 6 else ""
