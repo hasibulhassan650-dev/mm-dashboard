@@ -31,13 +31,43 @@ import engines.absences as _absences
 
 
 def _holidays_set():
-    """Gazetted holidays, so a closed day is never reported as a gap."""
+    """Gazetted holidays, so a closed day is never reported as a gap.
+
+    This read the calendar through `calendar_utils.load_calendar_rows()` —
+    which takes the rows as an ARGUMENT and raises without them. The call
+    therefore failed on every invocation, was swallowed by the except, and
+    returned an EMPTY SET: every holiday-aware check in this file has been
+    running as though Bangladesh never closes.
+
+    It did no visible damage only because holiday_calendar itself was nearly
+    empty and the few dates it held fell on Fridays. With BB's real list
+    loaded, 20 and 21 October are gazetted weekday closures — so from next
+    Tuesday this would have reported "a working day missing INSIDE the series"
+    for every daily dataset at once, which is the false-alarm flood that
+    teaches everyone to ignore the report.
+    """
+    from sqlalchemy import text as _t
+    import calendar_utils as _c
     try:
-        import calendar_utils
-        rows = calendar_utils.load_calendar_rows()
-        return {r[0] if hasattr(r[0], "year") else r["calendar_date"] for r in rows}
+        s = get_session()
+        try:
+            rows = s.execute(_t("SELECT calendar_date FROM holiday_calendar WHERE "
+                                + _c.CLOSURE_SQL)).fetchall()
+        finally:
+            s.close()
     except Exception:
         return set()
+    out = set()
+    for r in rows:
+        v = r[0]
+        if hasattr(v, "year"):
+            out.add(v)
+        else:
+            try:
+                out.add(datetime.date.fromisoformat(str(v)[:10]))
+            except ValueError:
+                pass
+    return out
 
 
 def _empty_fetches(session) -> dict:
@@ -819,6 +849,41 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
             s.rollback()
             add("drift", f"the distribution check could not run ({exc}) — a unit "
                          f"change at BB would currently be invisible")
+
+        # ── a DERIVED OMO maturity must not land on a closure ───────────────
+        # fetchers/omo.py computes a deal's maturity as txn + tenor, rolled to
+        # the next working day, AT WRITE TIME — so every row written before the
+        # calendar learned about a holiday still points at it. Reading BB's
+        # holiday list on 15-Oct-2026 exposed three 7-day tranches dealt 13-14
+        # Oct, 15,464.92 crore in all, shown as returning on the two Durga Puja
+        # days when the banks are shut. Maturity-only lines are exempt: their
+        # date is BB's own printed statement of what expired, not ours to move.
+        try:
+            hol_now = _holidays_set()
+            work_wknd = _dset("SELECT calendar_date FROM holiday_calendar "
+                              "WHERE holiday_type = 'WORKING_DAY'")
+            for r in q("SELECT transaction_date, maturity_date, instrument, "
+                       "       accepted_bdt_crore FROM omo_transactions "
+                       "WHERE accepted_bdt_crore > 0 AND maturity_date >= :lo",
+                       lo=today - datetime.timedelta(days=120)):
+                m = r[1]
+                if not hasattr(m, "year"):
+                    # Raw SQL hands dates back as strings on SQLite and as
+                    # dates on Postgres. Skipping the strings made this check
+                    # pass vacuously everywhere except production.
+                    try:
+                        m = datetime.date.fromisoformat(str(m)[:10])
+                    except ValueError:
+                        continue
+                shut = (m in hol_now) or (m.weekday() in (4, 5) and m not in work_wknd)
+                if shut:
+                    add("omo", f"{r[2]} {r[3]:,.2f} cr dealt {r[0]} is shown maturing "
+                               f"{m} ({m.strftime('%A')}), a day the market is shut — "
+                               f"the derived maturity predates the calendar entry and "
+                               f"must roll to the next working day")
+        except Exception as exc:
+            s.rollback()
+            add("omo", f"the OMO maturity-vs-calendar check could not run ({exc})")
 
         # ── the calendar must reach past the dates we compute ───────────────
         # holiday_calendar is the one table whose value is entirely in the

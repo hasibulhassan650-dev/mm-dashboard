@@ -354,3 +354,71 @@ class TestTheDigestLeadsWithEscalations:
         body = self._body(monkeypatch, [])
         assert "all checks pass" in body
         assert "ESCALATION" not in body
+
+
+class TestADerivedOMOMaturityNeverLandsOnAClosure:
+    """15,464.92 crore shown returning on a day the banks are shut.
+
+    fetchers/omo.py computes a deal's maturity as transaction + tenor, rolled
+    to the next working day, AT WRITE TIME. Every row written before the
+    calendar learns about a holiday therefore keeps pointing at it. Reading
+    BB's holiday list on 15-Oct-2026 exposed three 7-day tranches dealt 13-14
+    Oct — CB_REPO 9,977.85, IBLF 4,776.42 and IBLF 710.65 — all maturing
+    across the two Durga Puja days. The desk plans its week off those dates.
+
+    A maturity-ONLY line is exempt and must stay exempt: its date is BB's own
+    printed statement of what expired that day, not a figure we derived, and
+    the OMO tranche ledger is reconciled against exactly those statements.
+    """
+
+    def _check(self, monkeypatch, rows, holidays):
+        from db import HolidayCalendar, OMOTransaction
+        eng, s = _mem()
+        for d, t in holidays:
+            s.add(HolidayCalendar(calendar_date=d, holiday_name="test", holiday_type=t))
+        for r in rows:
+            s.add(OMOTransaction(**r))
+        _run(s)
+        s.commit()
+        rep = _check(monkeypatch, eng)
+        return [i for i in rep["issues"] if i.startswith("omo:")]
+
+    def _deal(self, mat, accepted=9977.85, txn=None):
+        return {"transaction_date": txn or D(2026, 10, 13), "maturity_date": mat,
+                "instrument": "CB_REPO", "tenor_label": "7D", "tenor_days": 7,
+                "accepted_bdt_crore": accepted, "rate_pct": 9.5,
+                "direction": "INJECT", "source_pdf": "test"}
+
+    def test_a_maturity_on_a_gazetted_holiday_is_a_defect(self, monkeypatch):
+        found = self._check(monkeypatch, [self._deal(D(2026, 10, 20))],
+                            [(D(2026, 10, 20), "GAZETTED")])
+        assert found, "a 9,977.85 crore maturity on a closed day was not reported"
+        assert "9,977.85" in found[0] and "2026-10-20" in found[0]
+
+    def test_the_same_maturity_on_a_working_day_is_silent(self, monkeypatch):
+        assert self._check(monkeypatch, [self._deal(D(2026, 10, 22))],
+                           [(D(2026, 10, 20), "GAZETTED")]) == []
+
+    def test_a_weekend_maturity_is_a_defect_too(self, monkeypatch):
+        """Friday. No holiday table needed — the BD weekend is Fri/Sat."""
+        found = self._check(monkeypatch, [self._deal(D(2026, 10, 23))], [])
+        assert found and "Friday" in found[0]
+
+    def test_but_not_on_a_declared_working_saturday(self, monkeypatch):
+        """BB declares specific working weekends — 23-May-2026 was one."""
+        assert self._check(monkeypatch,
+                           [self._deal(D(2026, 5, 23), txn=D(2026, 5, 16))],
+                           [(D(2026, 5, 23), "WORKING_DAY")]) == []
+
+    def test_a_maturity_only_line_is_left_alone(self, monkeypatch):
+        """accepted = 0: BB printed that this expired on that day. Its date is
+        evidence, not arithmetic, and the tranche ledger reconciles to it."""
+        row = self._deal(D(2026, 10, 20), accepted=0.0)
+        row["maturity_bdt_crore"] = 4776.42
+        assert self._check(monkeypatch, [row], [(D(2026, 10, 20), "GAZETTED")]) == []
+
+    def test_a_regional_holiday_does_not_move_a_maturity(self, monkeypatch):
+        """13-Apr-2026 is a holiday in three hill districts; the market traded."""
+        assert self._check(monkeypatch,
+                           [self._deal(D(2026, 4, 13), txn=D(2026, 4, 6))],
+                           [(D(2026, 4, 13), "REGIONAL_HOLIDAY")]) == []
