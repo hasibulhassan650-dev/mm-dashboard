@@ -161,9 +161,15 @@ def parse_page(html: str) -> dict:
                    f"{dates[0].strftime('%A')} but BB prints {day_cell.split(',')[0]!r}")
             continue
 
+        # BB marks a part-of-the-country holiday in the name itself, e.g.
+        # "Chaitra Sankranti (only applicable for Rangamati, Khagrachari &
+        # Bandarban Hill District)". Those are kept, typed apart, and are NOT
+        # closures: the money market traded normally on 13-Apr-2026.
+        regional = bool(re.search(r"only\s+(applicable|for)\b", name, re.I))
         for d in dates:
             rows.append({"calendar_date": d, "holiday_name": name,
-                         "holiday_type": "GAZETTED", "source": BB_HOLIDAY_URL})
+                         "holiday_type": "REGIONAL_HOLIDAY" if regional else "GAZETTED",
+                         "source": BB_HOLIDAY_URL})
 
     meta = SW.fingerprint("holidays", BB_HOLIDAY_URL, selector="largest table",
                           headers=headers, rows_seen=len(data_rows),

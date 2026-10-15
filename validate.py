@@ -25,6 +25,7 @@ _YIELD_TENORS = {"14D", "28D", "91D", "182D", "364D", "2Y", "3Y", "3Y_FRTB",
                  "5Y", "10Y", "15Y", "20Y", "25Y"}
 
 
+import calendar_utils as _cal
 import engines.expectations as _EXPECT
 import engines.absences as _absences
 
@@ -251,7 +252,8 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
                 v = r[0]
                 out.add(datetime.date.fromisoformat(v[:10]) if isinstance(v, str) else v)
             return out
-        hol = _dset("SELECT calendar_date FROM holiday_calendar WHERE holiday_type <> 'WORKING_DAY'")
+        hol = _dset("SELECT calendar_date FROM holiday_calendar WHERE "
+                    + _cal.CLOSURE_SQL)
         from calendar_utils import get_next_working_day, load_calendar_rows
         load_calendar_rows(q("SELECT calendar_date, holiday_type FROM holiday_calendar"))  # working weekends too
         _lo = today - datetime.timedelta(days=21)
@@ -817,6 +819,36 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
             s.rollback()
             add("drift", f"the distribution check could not run ({exc}) — a unit "
                          f"change at BB would currently be invisible")
+
+        # ── the calendar must reach past the dates we compute ───────────────
+        # holiday_calendar is the one table whose value is entirely in the
+        # FUTURE: settlement dates, maturity rolls, auction dates and every
+        # working-day age are derived from it. On 15-Oct-2026 it ended 26-Aug
+        # and nothing had noticed, so the following Tuesday — Durga Puja — was
+        # being treated as a working day. "It has rows" was never the question.
+        try:
+            cal_max = _max_date("SELECT MAX(calendar_date) FROM holiday_calendar "
+                                "WHERE " + _cal.CLOSURE_SQL)
+        except Exception:
+            s.rollback()
+            cal_max = None
+        if cal_max is None:
+            add("calendar", "holiday_calendar has no closures at all — every settlement "
+                            "date is being computed as if the market never shuts")
+        else:
+            ahead = (cal_max - today).days
+            if ahead < 0:
+                add("calendar", f"holiday_calendar stops at {cal_max}, {-ahead} day(s) in the "
+                                f"PAST — every date derived from today onward assumes the "
+                                f"market only ever shuts at weekends")
+            elif ahead < 45:
+                # BB publishes the next year's list in late December, so a
+                # thinning horizon in November is BB's cadence, not our bug —
+                # until it runs out, which is a defect by the rule above.
+                add("calendar", f"holiday_calendar reaches only {cal_max} ({ahead} days out) "
+                                f"— coupons and settlements beyond it assume weekends are the "
+                                f"only closures. BB posts the next list in late December",
+                    "waiting")
 
         # ── did BB change the SHAPE of a page? ──────────────────────────────
         # Everything else here notices data that stopped arriving. This notices

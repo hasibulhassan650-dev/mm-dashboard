@@ -46,6 +46,23 @@ _holiday_set: Optional[Set[datetime.date]] = None
 # so a coupon, maturity or OMO settling that day is paid THAT day, not rolled.
 # Stored in holiday_calendar with holiday_type = WORKING_DAY.
 WORKING_DAY_TYPE = "WORKING_DAY"
+
+# BB's holiday list includes holidays that apply to part of the country:
+# "Chaitra Sankranti (only applicable for Rangamati, Khagrachari & Bandarban
+# Hill District)", 13-Apr-2026. The money market traded that day — 62,616
+# million in and 85,358 million out — so treating it as a national closure
+# would roll settlement dates that never rolled, which is the one thing worse
+# than not knowing about a holiday at all.
+REGIONAL_TYPE = "REGIONAL_HOLIDAY"
+
+# Row types that are NOT a market closure, and the SQL that says so. Every
+# query that reads closures out of holiday_calendar uses this, because six
+# copies of "holiday_type <> 'WORKING_DAY'" is six places to forget a third
+# type. api/ cannot import this module (deploy boundary), so the one copy
+# there is marked and must be changed with it.
+NON_CLOSURE_TYPES = (WORKING_DAY_TYPE, REGIONAL_TYPE)
+CLOSURE_SQL = ("(holiday_type IS NULL OR holiday_type NOT IN "
+               "('WORKING_DAY', 'REGIONAL_HOLIDAY'))")
 _working_weekend_set: Set[datetime.date] = set()
 
 
@@ -123,7 +140,12 @@ def load_calendar_rows(rows) -> None:
     hols, work = set(), set()
     for r in rows:
         d, t = (r.calendar_date, r.holiday_type) if hasattr(r, "calendar_date") else (r[0], r[1])
-        (work if t == WORKING_DAY_TYPE else hols).add(d)
+        if t == WORKING_DAY_TYPE:
+            work.add(d)
+        elif t == REGIONAL_TYPE:
+            continue        # a normal working day everywhere the market is
+        else:
+            hols.add(d)
     load_holidays(hols, work)
 
 

@@ -52,6 +52,12 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
+def _cal_closure() -> str:
+    """The one definition of what counts as a market closure."""
+    import calendar_utils
+    return calendar_utils.CLOSURE_SQL
+
+
 def main():
     start = datetime.datetime.now()
     log.info("=" * 60)
@@ -375,8 +381,8 @@ def main():
         from engines.pipeline import _load_holidays
         _load_holidays(session)
         hol = {r[0] for r in session.execute(_sa_text(
-            "SELECT calendar_date FROM holiday_calendar WHERE holiday_type IS NULL "
-            "OR holiday_type <> 'WORKING_DAY'")).fetchall() if hasattr(r[0], "year")}
+            "SELECT calendar_date FROM holiday_calendar WHERE "
+            + _cal_closure())).fetchall() if hasattr(r[0], "year")}
         gone = confirm_absences(session, "fxmarket",
                                 [r.get("trade_date") for r in rows_fx], hol,
                                 source="BB interbank FX market page")
@@ -437,6 +443,29 @@ def main():
     except Exception as exc:
         log.exception("Interbank repo fetch failed: %s", exc)
         errors.append(f"interbank_repo: {exc}")
+
+    # ── 14. BB's gazetted holiday list ───────────────────────────────────────
+    # Weekly, because this is the one feed whose VALUE IS IN THE FUTURE: every
+    # settlement date, maturity roll and working-day age is computed from it.
+    # It went unread until 15-Oct-2026, when the calendar ended 26-Aug and the
+    # system did not know that the following Tuesday was Durga Puja. BB posts
+    # the next year's list late in December, so a weekly read picks it up
+    # within days of publication instead of in January.
+    log.info("--- Step 14: BB gazetted holidays ---")
+    try:
+        from engines.pipeline import run_holiday_fetch
+        hol = run_holiday_fetch()
+        log.info("Holidays OK | %d parsed, %d added, %d upgraded, %d conflict(s)",
+                 hol.get("rows", 0), hol.get("added", 0), hol.get("upgraded", 0),
+                 hol.get("conflicts", 0))
+        for e in hol.get("errors") or []:
+            errors.append(e)
+        if hol.get("refused"):
+            errors.append(f"holidays: refused {sum(hol['refused'].values())} row(s) — "
+                          f"{hol['refused']}")
+    except Exception as exc:
+        log.exception("Holiday fetch failed: %s", exc)
+        errors.append(f"holidays: {exc}")
 
     # ── Summary ───────────────────────────────────────────────────────────────
     elapsed = (datetime.datetime.now() - start).seconds

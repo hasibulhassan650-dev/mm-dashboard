@@ -908,7 +908,7 @@ def run_holiday_fetch() -> dict:
             if cur is None:
                 session.add(HolidayCalendar(
                     calendar_date=d, holiday_name=r["holiday_name"],
-                    holiday_type="GAZETTED", fiscal_year=fiscal_year(d),
+                    holiday_type=r["holiday_type"], fiscal_year=fiscal_year(d),
                     source=r["source"][:200]))
                 added += 1
                 notes.append(f"+ {d} {r['holiday_name']}")
@@ -916,10 +916,10 @@ def run_holiday_fetch() -> dict:
                 conflicts += 1
                 notes.append(f"! {d} is stored as a DECLARED WORKING DAY but BB's holiday "
                              f"list says {r['holiday_name']} — left as it was")
-            elif cur.holiday_type != "GAZETTED":
+            elif cur.holiday_type != r["holiday_type"]:
                 was = cur.holiday_type or "untyped"
                 cur.holiday_name = r["holiday_name"]
-                cur.holiday_type = "GAZETTED"
+                cur.holiday_type = r["holiday_type"]
                 cur.source = r["source"][:200]
                 upgraded += 1
                 notes.append(f"~ {d} {r['holiday_name']} (was {was})")

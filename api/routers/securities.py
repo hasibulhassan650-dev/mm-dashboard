@@ -162,9 +162,16 @@ def get_next_auction(limit: int = Query(3, ge=1, le=10)):
         """), {"today": str(today)}).fetchall()
 
         holidays = {}
+        # Mirrors calendar_utils.CLOSURE_SQL. REGIONAL_HOLIDAY rows are BB
+        # holidays that apply to part of the country (13-Apr-2026 is a holiday
+        # only in three hill districts; the money market traded normally), so
+        # they are not closures. The api/ deploy boundary forbids importing
+        # calendar_utils, so this copy must change when that one does — a test
+        # asserts the two agree.
         for h in session.execute(text(
                 "SELECT calendar_date, holiday_name FROM holiday_calendar "
-                "WHERE holiday_type <> 'WORKING_DAY'")).fetchall():
+                "WHERE holiday_type IS NULL OR holiday_type NOT IN "
+                "('WORKING_DAY', 'REGIONAL_HOLIDAY')")).fetchall():
             d = h[0] if isinstance(h[0], datetime.date) else datetime.date.fromisoformat(str(h[0])[:10])
             holidays[d] = h[1]
 

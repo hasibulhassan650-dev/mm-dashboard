@@ -28,6 +28,7 @@ sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.abspath(_
 
 from sqlalchemy import inspect, text
 
+import calendar_utils as _cal
 import engines.expectations as EX
 from db import get_session
 
@@ -39,8 +40,8 @@ SEV_ORDER = {"defect": 0, "waiting": 1, None: 2}
 def _holidays(session) -> set:
     try:
         rows = session.execute(text(
-            "SELECT calendar_date FROM holiday_calendar "
-            "WHERE holiday_type IS NULL OR holiday_type <> 'WORKING_DAY'")).fetchall()
+            "SELECT calendar_date FROM holiday_calendar WHERE "
+            + _cal.CLOSURE_SQL)).fetchall()
         return {r[0] for r in rows if hasattr(r[0], "year")}
     except Exception:
         session.rollback()

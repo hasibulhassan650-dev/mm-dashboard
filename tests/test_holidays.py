@@ -146,3 +146,67 @@ class TestTheWholePage:
         with pytest.raises(SW.StructureChanged) as exc:
             parse_page(broken)
         assert "date" in str(exc.value)
+
+
+class TestARegionalHolidayIsNotAClosure:
+    """BB lists holidays that apply to part of the country.
+
+    "Chaitra Sankranti (only applicable for Rangamati, Khagrachari & Bandarban
+    Hill District)", 13-Apr-2026. Loading it as a national closure rolled
+    settlement dates that never rolled — and the evidence it was no closure
+    was already in our own data: the money market moved 62,616 million in and
+    85,358 million out that day. Keeping it, typed apart, is the only honest
+    option: silently dropping it would lose a fact BB published, and treating
+    it as a closure invents one it did not.
+    """
+
+    _REGIONAL = _page(
+        _row("Chaitra Sankranti (only applicable for Rangamati, Khagrachari "
+             "&amp; Bandarban Hill District)", "13 April 2026", "Monday", "1 Day")
+        + _row("Bengali New Year, 1433", "14 April, 2026", "Tuesday", "1 Day"))
+
+    def test_it_is_kept_but_typed_apart(self):
+        rows = {r["calendar_date"]: r["holiday_type"] for r in parse_page(self._REGIONAL)["rows"]}
+        assert rows[D(2026, 4, 13)] == "REGIONAL_HOLIDAY"
+        assert rows[D(2026, 4, 14)] == "GAZETTED", "the next day is national"
+
+    def test_the_calendar_does_not_treat_it_as_a_closure(self):
+        import calendar_utils as cal
+        cal.load_calendar_rows([
+            (D(2026, 4, 13), "REGIONAL_HOLIDAY"),
+            (D(2026, 4, 14), "GAZETTED"),
+        ])
+        try:
+            assert cal.is_working_day(D(2026, 4, 13)) is True
+            assert cal.is_working_day(D(2026, 4, 14)) is False
+        finally:
+            cal.load_holidays(set(), set())
+
+    def test_it_is_not_a_declared_working_weekend_either(self):
+        """Those force a Fri/Sat open. A regional holiday on a Monday is just
+        an ordinary working day and must not join that set."""
+        import calendar_utils as cal
+        cal.load_calendar_rows([(D(2026, 4, 13), "REGIONAL_HOLIDAY")])
+        try:
+            assert D(2026, 4, 13) not in cal.get_loaded_working_weekends()
+            assert D(2026, 4, 13) not in cal.get_loaded_holidays()
+        finally:
+            cal.load_holidays(set(), set())
+
+    def test_every_closure_query_uses_one_definition(self):
+        """Six copies of "holiday_type <> 'WORKING_DAY'" is six places to
+        forget a third type. The api/ copy is forced by the deploy boundary,
+        so it is asserted to match rather than trusted."""
+        import re
+        from pathlib import Path
+        import calendar_utils as cal
+        for f in ("validate.py", "audit.py", "weekly_fetch.py"):
+            src = Path(f).read_text(encoding="utf-8")
+            assert "holiday_type <> 'WORKING_DAY'" not in src.replace(
+                "# copies of", ""), f"{f} still hard-codes the closure test"
+        api = Path("api/routers/securities.py").read_text(encoding="utf-8")
+        wanted = {t.strip() for t in re.findall(r"'(WORKING_DAY|REGIONAL_HOLIDAY)'",
+                                                cal.CLOSURE_SQL)}
+        assert wanted, "CLOSURE_SQL names no non-closure types"
+        for t in wanted:
+            assert f"'{t}'" in api, f"api/ copy is missing {t}"
