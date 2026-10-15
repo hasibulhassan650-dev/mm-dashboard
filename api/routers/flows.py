@@ -94,12 +94,35 @@ def get_drilldown(date: str = Query(..., description="YYYY-MM-DD")):
             ORDER BY security_type, tenor_label
         """), {"date": date}).fetchall()
 
+        # Buybacks: early principal repayments BB settles outside the maturity
+        # schedule. Bangladesh's first was 12-Oct-2026, and without this the
+        # day showed 1,716.14 crore of cash arriving with nothing to explain
+        # it. `cash_paid_crore` is NULL when BB publishes no price, so the face
+        # value is used and the row carries both figures — the desk can see
+        # which one it is looking at.
+        buybacks = session.execute(text("""
+            SELECT b.isin, s.security_name_norm, s.security_type,
+                   b.announced_date, b.auction_date, b.settlement_date,
+                   b.bids_received_count, b.offered_face_crore,
+                   b.accepted_face_crore, b.cash_paid_crore, b.source, b.notes
+            FROM buyback_events b
+            LEFT JOIN securities s ON b.isin = s.isin
+            WHERE b.settlement_date = :date
+            ORDER BY b.accepted_face_crore DESC
+        """), {"date": date}).fetchall()
+
         mat_total  = sum(r.principal_bdt_mill or 0 for r in maturities)
         coup_total = sum(r.amount_bdt_mill    or 0 for r in coupons)
         # Sale value first: the cash paid, not the face value allotted. Same
         # precedence as engines/outflow.py best_outflow() and schedule_logic's
         # _AMT — duplicated because the API cannot import engines, so all three
         # change together or the same auction gets three different sizes.
+        # 1 crore = 10 million. Cash when BB published it, face when not —
+        # the same precedence as an auction's outflow and as
+        # engines/aggregation.buyback_amount().
+        bb_total   = sum(float(r.cash_paid_crore if r.cash_paid_crore is not None
+                               else (r.accepted_face_crore or 0)) * 10.0
+                         for r in buybacks)
         auc_total  = sum((r.sale_value_bdt_mill or r.accepted_amount_bdt_mill
                           or r.offered_amount_bdt_mill or 0) for r in auctions)
 
@@ -115,13 +138,16 @@ def get_drilldown(date: str = Query(..., description="YYYY-MM-DD")):
             "summary": {
                 "maturity_inflow_mill":  round(mat_total, 2),
                 "coupon_inflow_mill":    round(coup_total, 2),
-                "total_inflow_mill":     round(mat_total + coup_total, 2),
+                "buyback_inflow_mill":   round(bb_total, 2),
+                "total_inflow_mill":     round(mat_total + coup_total + bb_total, 2),
                 "auction_outflow_mill":  round(auc_total, 2),
-                "net_borrowing_mill":    round(auc_total - mat_total - coup_total, 2),
+                "net_borrowing_mill":    round(auc_total - mat_total - coup_total
+                                               - bb_total, 2),
             },
             "maturities": [dict(r._mapping) for r in maturities],
             "coupons":    [dict(r._mapping) for r in coupons],
             "auctions":   [dict(r._mapping) for r in auctions],
+            "buybacks":   [dict(r._mapping) for r in buybacks],
         }
     finally:
         session.close()

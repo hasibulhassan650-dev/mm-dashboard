@@ -802,6 +802,9 @@ export interface DrilldownResult {
   summary: {
     maturity_inflow_mill: number; coupon_inflow_mill: number;
     total_inflow_mill: number; auction_outflow_mill: number; net_borrowing_mill: number;
+    /** Early principal repaid through a buyback. Optional: an older deployed
+     *  API build omits it, and the page must degrade, not crash. */
+    buyback_inflow_mill?: number;
   };
   maturities: { isin: string; security_name_norm: string; security_type: string;
     payment_date: string; principal_bdt_mill: number; roll_days: number }[];
@@ -810,6 +813,15 @@ export interface DrilldownResult {
   auctions: { auction_date: string; security_type: string; tenor_label: string;
     offered_amount_bdt_mill: number; accepted_amount_bdt_mill: number;
     weighted_avg_yield_pct: number; outflow_status: string; roll_days: number }[];
+  /** Government buybacks of its own bonds settling on this date — an early
+   *  principal repayment. `cash_paid_crore` is null when BB published no
+   *  price, in which case the face value is what the ladder used. */
+  buybacks?: { isin: string; security_name_norm: string | null;
+    security_type: string | null; announced_date: string | null;
+    auction_date: string | null; settlement_date: string;
+    bids_received_count: number | null; offered_face_crore: number | null;
+    accepted_face_crore: number | null; cash_paid_crore: number | null;
+    source: string | null; notes: string | null }[];
   /** Added later and optional on purpose: the deployed API may still be the
    *  older build, and the page degrades rather than crashing. */
   omo?: (OmoMaturityItem & { leg: "DEALT" | "MATURING"; tenor_label: string | null;

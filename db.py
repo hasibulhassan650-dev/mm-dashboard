@@ -578,6 +578,10 @@ class DailyNetFlow(Base):
     auction_outflow_planned_mill   = Column(Float, default=0.0)
     auction_outflow_confirmed_mill = Column(Float, default=0.0)
     auction_outflow_best_mill      = Column(Float, default=0.0)
+    # Early principal repaid through a buyback. Its own line, not folded into
+    # principal_inflow: that figure reconciles against maturity_events and a
+    # buyback is not a maturity.
+    buyback_inflow_bdt_mill        = Column(Float, default=0.0)
     net_borrowing_bdt_mill         = Column(Float, default=0.0)
     inflow_security_count          = Column(Integer, default=0)
     coupon_payment_count           = Column(Integer, default=0)
@@ -596,6 +600,46 @@ class PipelineRun(Base):
     errors       = Column(Text)            # JSON: list of error strings
     elapsed_sec  = Column(Integer)
     quality      = Column(Text)            # JSON: integrity_check() report
+
+
+class BuybackEvent(Base):
+    """A government buyback of its own bonds — an EARLY principal repayment.
+
+    Bangladesh's first ever was announced on 08-Oct-2026 under the Liability
+    Management Operation: ISIN BD0926191026, the 2-year bond issued 06-Nov-2024,
+    56 bids for 2,016.14 crore of which 1,716.14 crore was accepted. BB's press
+    release states neither the settlement date nor the price, so both were
+    established from GSOM's daily outstanding, which fell from 66,665.80 to
+    49,504.40 million between 11 and 12 October — 17,161.40 million, exactly
+    the accepted amount. That drop is what proves the figure is FACE value and
+    that it settled on 12-Oct.
+
+    It is not a maturity (maturity_events allows one row per ISIN, and the bond
+    still matures on 06-Nov with its remaining 49,504.40 million) and it is not
+    an auction. It is cash BB paid into the market on a day nothing else
+    explained, so it belongs in the ladder on its own line.
+
+    `cash_paid_crore` stays NULL when BB does not publish the price. The bond
+    was quoted at a 7.96% yield against a 12.3% coupon, so it traded at a clear
+    premium and the cash paid exceeded par — but by how much is not published,
+    and the ladder falls back to face with that stated rather than inventing a
+    price. Same precedence as an auction with no published sale value.
+    """
+    __tablename__ = "buyback_events"
+    __table_args__ = (UniqueConstraint("isin", "settlement_date"),)
+    id                  = Column(Integer, primary_key=True, autoincrement=True)
+    isin                = Column(String(12), nullable=False)
+    announced_date      = Column(Date)
+    auction_date        = Column(Date)
+    settlement_date     = Column(Date, nullable=False)
+    bids_received_count = Column(Integer)
+    offered_face_crore  = Column(Float)      # bids submitted
+    accepted_face_crore = Column(Float)      # bids accepted — par retired
+    cash_paid_crore     = Column(Float)      # NULL unless BB publishes it
+    source              = Column(Text)       # the press release
+    verified_by         = Column(Text)       # how the figure was corroborated
+    notes               = Column(Text)
+    ingested_utc        = Column(DateTime)
 
 
 class DataAbsence(Base):
@@ -718,6 +762,7 @@ def init_db():
         "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS source_pub_date DATE",
         "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS source_serial VARCHAR(40)",
         "ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS quality TEXT",
+        "ALTER TABLE daily_net_flow ADD COLUMN IF NOT EXISTS buyback_inflow_bdt_mill REAL DEFAULT 0",
         # ONE AUCTION, ONE ROW. This table is keyed (tenor_label,
         # auction_date), which cannot stop the same auction being stored twice
         # under two different labels: on 10-Oct-2026 a 5-year bond re-issued

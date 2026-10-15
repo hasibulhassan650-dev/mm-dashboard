@@ -29,6 +29,8 @@ export default async function DrilldownPage({
   // degrade rather than crash while the API catches up.
   const liq = data.liquidity;
   const omo = data.omo ?? [];
+  // Optional on purpose: an older deployed API build omits it entirely.
+  const buybacks = data.buybacks ?? [];
 
   return (
     <div className="space-y-6">
@@ -84,15 +86,72 @@ export default async function DrilldownPage({
         </div>
       )}
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      <div className={`grid grid-cols-2 gap-4 ${buybacks.length ? "md:grid-cols-6" : "md:grid-cols-5"}`}>
         <StatCard label="Maturity Inflow" value={`${s.maturity_inflow_mill.toLocaleString()}`} sub="BDT million" color="green" />
         <StatCard label="Coupon Inflow"   value={`${s.coupon_inflow_mill.toLocaleString()}`}   sub="BDT million" color="green" />
+        {buybacks.length > 0 && (
+          <StatCard label="Buyback Inflow"
+            value={`${(s.buyback_inflow_mill ?? 0).toLocaleString()}`}
+            sub="early principal · BDT million" color="green" />
+        )}
         <StatCard label="Total Inflow"    value={`${s.total_inflow_mill.toLocaleString()}`}    sub="BDT million" color="blue" />
         <StatCard label="Auction Outflow" value={`${s.auction_outflow_mill.toLocaleString()}`} sub="BDT million" color="red" />
         <StatCard label="Net Borrowing"   value={`${s.net_borrowing_mill > 0 ? "▲" : "▼"} ${Math.abs(s.net_borrowing_mill).toLocaleString()}`}
           sub={s.net_borrowing_mill > 0 ? "net borrower" : "net repayer"}
           color={s.net_borrowing_mill > 0 ? "amber" : "green"} />
       </div>
+
+      {/* Buybacks settling today — shown only when there are any, because
+          Bangladesh's first was 12-Oct-2026 and they remain occasional. */}
+      {buybacks.length > 0 && (
+        <div className="rounded-xl border bd b-panel p-4">
+          <h2 className="text-sm font-medium t-dim mb-3">
+            Bond buyback — early principal repaid ({buybacks.length})
+          </h2>
+          <table className="w-full text-xs">
+            <thead><tr className="t-dim border-b bd">
+              <th className="pb-1 pr-2 text-left">ISIN</th>
+              <th className="pb-1 pr-2 text-left">Security</th>
+              <th className="pb-1 pr-2 text-right">Bids</th>
+              <th className="pb-1 pr-2 text-right">Offered (cr)</th>
+              <th className="pb-1 pr-2 text-right">Accepted face (cr)</th>
+              <th className="pb-1 pr-2 text-right">Cash paid (cr)</th>
+              <th className="pb-1 text-left">Auction</th>
+            </tr></thead>
+            <tbody>
+              {buybacks.map((b) => (
+                <tr key={b.isin + b.settlement_date} className="border-b bd">
+                  <td className="py-1 pr-2 mono">{b.isin}</td>
+                  <td className="py-1 pr-2">{b.security_name_norm ?? "—"}</td>
+                  <td className="py-1 pr-2 text-right mono">{b.bids_received_count ?? "—"}</td>
+                  <td className="py-1 pr-2 text-right mono">
+                    {b.offered_face_crore?.toLocaleString() ?? "—"}
+                  </td>
+                  <td className="py-1 pr-2 text-right mono">
+                    {b.accepted_face_crore?.toLocaleString() ?? "—"}
+                  </td>
+                  <td className="py-1 pr-2 text-right mono t-mute"
+                      title="BB publishes no price for a buyback, so the ladder uses the face value. This bond traded at a premium, so the true cash was higher.">
+                    {b.cash_paid_crore?.toLocaleString() ?? "not published"}
+                  </td>
+                  <td className="py-1 mono">{b.auction_date ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="text-xs t-mute mt-2">
+            A buyback is the government repaying principal early, so the cash
+            arrives in the market on settlement day and the bond goes on maturing
+            for less. Where <b>cash paid</b> is not published, the ladder uses the
+            accepted face value — understating the cash by the premium rather than
+            inventing a price.
+            {buybacks[0]?.source && (
+              <> <a href={buybacks[0].source} target="_blank" rel="noreferrer"
+                    className="underline">BB press release</a>.</>
+            )}
+          </p>
+        </div>
+      )}
 
       {/* OMO maturing today */}
       <div className="rounded-xl border bd b-panel p-4">

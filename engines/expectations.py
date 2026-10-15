@@ -174,6 +174,12 @@ DATASETS: List[Dataset] = [
     Dataset("policy", "policy_rate_snapshots", "last_seen_date", EVENT,
             "Policy corridor", "BB homepage", step="policy", gap_check=False,
             note="Changes only when the MPC moves."),
+    Dataset("buybacks", "buyback_events", "settlement_date", EVENT,
+            "Bond buybacks", "BB press release (LMO)", step="press",
+            gap_check=False,
+            note="Bangladesh's first was 08-Oct-2026; BB says it will hold more "
+                 "as conditions warrant, so silence here is normal and a gap "
+                 "is meaningless. Watched for coverage, not freshness."),
     Dataset("holidays", "holiday_calendar", "calendar_date", EVENT,
             "Holiday calendar", "BB gazette", step=None, gap_check=False,
             note="Annual gazette; coverage of the YEAR AHEAD is what matters, "

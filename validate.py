@@ -850,6 +850,68 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
             add("drift", f"the distribution check could not run ({exc}) — a unit "
                          f"change at BB would currently be invisible")
 
+        # ── a buyback must agree with GSOM's outstanding ────────────────────
+        # Two independent BB publications state the same fact: the press
+        # release gives the accepted amount, and GSOM's daily table gives the
+        # outstanding, which must fall by exactly that much on settlement. That
+        # is how 08-Oct-2026's figure was established as FACE value and its
+        # settlement date as 12-Oct — the release said neither. A buyback typed
+        # in by hand, or a release we misread, fails here rather than silently
+        # moving 1,716 crore of liquidity to the wrong day.
+        try:
+            for b in q("SELECT isin, settlement_date, accepted_face_crore, cash_paid_crore "
+                       "FROM buyback_events ORDER BY settlement_date"):
+                isin, sd, face, cash = b[0], b[1], b[2], b[3]
+                if not hasattr(sd, "year"):
+                    try:
+                        sd = datetime.date.fromisoformat(str(sd)[:10])
+                    except ValueError:
+                        continue
+                pre = q("SELECT outstanding_bdt_mill FROM mtm_snapshots WHERE isin = :i "
+                        "AND settlement_date < :d AND outstanding_bdt_mill IS NOT NULL "
+                        "ORDER BY settlement_date DESC LIMIT 1", i=isin, d=sd)
+                post = q("SELECT outstanding_bdt_mill FROM mtm_snapshots WHERE isin = :i "
+                         "AND settlement_date >= :d AND outstanding_bdt_mill IS NOT NULL "
+                         "ORDER BY settlement_date LIMIT 1", i=isin, d=sd)
+                if not pre or not post:
+                    add("buyback", f"{isin} buyback settling {sd} cannot be checked against "
+                                   f"GSOM: no outstanding figure on one side of the date",
+                        "waiting")
+                    continue
+                drop = float(pre[0][0]) - float(post[0][0])
+                want = float(face or 0) * 10.0        # 1 crore = 10 million
+                if abs(drop - want) > max(1.0, want * 0.001):
+                    add("buyback", f"{isin}: BB's release says {face:,.2f} crore was bought "
+                                   f"back ({want:,.1f} mill) but GSOM's outstanding fell "
+                                   f"{drop:,.1f} mill across {sd} — one of the two is "
+                                   f"misread, and the ladder is moving the wrong amount")
+                if cash is not None and face and cash < face:
+                    add("buyback", f"{isin}: cash paid {cash:,.2f} crore is below the "
+                                   f"{face:,.2f} crore face retired — possible, but only on "
+                                   f"a discount bond; check the release")
+        except Exception as exc:
+            s.rollback()
+            add("buyback", f"the buyback-vs-GSOM check could not run ({exc})")
+
+        # ── the ladder's buyback line must match the events ─────────────────
+        try:
+            led = {str(r[0])[:10]: float(r[1] or 0) for r in q(
+                "SELECT flow_date, buyback_inflow_bdt_mill FROM daily_net_flow "
+                "WHERE buyback_inflow_bdt_mill > 0")}
+            evt: dict = {}
+            for r in q("SELECT settlement_date, accepted_face_crore, cash_paid_crore "
+                       "FROM buyback_events"):
+                k = str(r[0])[:10]
+                crore = r[2] if r[2] is not None else (r[1] or 0)
+                evt[k] = evt.get(k, 0.0) + float(crore) * 10.0
+            for d in sorted(set(led) | set(evt)):
+                a, e = led.get(d, 0.0), evt.get(d, 0.0)
+                if abs(a - e) > max(1.0, e * 0.001):
+                    add("ladder-recon", f"{d} buyback: ladder {a:,.1f} != events {e:,.1f} "
+                                        f"mill — rebuild the flow pipeline")
+        except Exception:
+            s.rollback()
+
         # ── a DERIVED OMO maturity must not land on a closure ───────────────
         # fetchers/omo.py computes a deal's maturity as txn + tenor, rolled to
         # the next working day, AT WRITE TIME — so every row written before the

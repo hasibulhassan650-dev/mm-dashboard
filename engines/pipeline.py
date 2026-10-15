@@ -20,7 +20,7 @@ import calendar_utils
 from config import GSOM_TBOND_URL, GSOM_FRTB_URL, GSOM_TBILL_URL
 from db import (
     init_db, get_session,
-    Security, CouponEvent, MaturityEvent,
+    Security, CouponEvent, MaturityEvent, BuybackEvent,
     AuctionEvent, HolidayCalendar, DailyNetFlow, MtmSnapshot,
     PrimaryYieldSnapshot, OMOTransaction,
 )
@@ -1212,9 +1212,23 @@ def run_pipeline(
         )
 
         # ── 9. Aggregate ──────────────────────────────────────────────────────
+        # Buybacks: early principal repayments BB settles outside the maturity
+        # schedule. One row per event, read straight from its own table so a
+        # pipeline re-run can never drop it.
+        buyback_dicts = [{
+            "isin":                 b.isin,
+            "settlement_date":      b.settlement_date,
+            "accepted_face_crore":  b.accepted_face_crore,
+            "cash_paid_crore":      b.cash_paid_crore,
+        } for b in session.query(BuybackEvent).filter(
+            BuybackEvent.settlement_date >= date_from,
+            BuybackEvent.settlement_date <= date_to).all()]
+        if buyback_dicts:
+            log.info("  %d buyback event(s) in range", len(buyback_dicts))
+
         daily_rows = build_daily_flows(
             coupon_dicts, maturity_dicts, auction_dicts,
-            date_from, date_to,
+            date_from, date_to, buyback_events=buyback_dicts,
         )
 
         # ── 10. Persist daily_net_flow (replace range) ────────────────────────

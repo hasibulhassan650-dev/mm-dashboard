@@ -16,12 +16,32 @@ from engines.outflow import best_outflow
 log = logging.getLogger(__name__)
 
 
+def buyback_amount(event: Dict) -> float:
+    """The cash a buyback put into the market, in BDT million.
+
+    Same precedence as an auction's outflow, for the same reason: use the cash
+    when it is published, the face value when it is not, and say which. BB's
+    first buyback release (08-Oct-2026) gave 1,716.14 crore accepted and no
+    price. The bond was quoted at a 7.96% yield against a 12.3% coupon, so it
+    traded at a premium and the true cash was ABOVE par — showing par is wrong
+    by that premium, and showing nothing is wrong by the whole 1,716 crore.
+    Never derive a price: an invented number is the one error this project
+    will not make.
+    """
+    from config import CRORE_TO_MILLION
+    cash = event.get("cash_paid_crore")
+    face = event.get("accepted_face_crore")
+    crore = cash if cash is not None else (face or 0.0)
+    return round(float(crore) * CRORE_TO_MILLION, 4)
+
+
 def build_daily_flows(
     coupon_events:   List[Dict],
     maturity_events: List[Dict],
     auction_events:  List[Dict],
     date_from: datetime.date = None,
     date_to:   datetime.date = None,
+    buyback_events:  List[Dict] = None,
 ) -> List[Dict]:
     """
     Aggregate all events into one record per working day.
@@ -30,6 +50,7 @@ def build_daily_flows(
     Only working days with at least one event appear unless a full
     date range is passed (then zero rows are generated for empty days).
     """
+    buyback_events = buyback_events or []
     # Collect all unique event dates. Coupons/maturities are bucketed on their
     # PAYMENT date — the working day the cash actually reaches the holder — not
     # the scheduled due date.
@@ -60,6 +81,10 @@ def build_daily_flows(
         for d in working_day_range(date_from, date_to):
             dates.add(d)
 
+    for e in buyback_events:
+        if e.get("settlement_date"):
+            dates.add(e["settlement_date"])
+
     # Apply range filter
     if date_from:
         dates = {d for d in dates if d >= date_from}
@@ -74,9 +99,16 @@ def build_daily_flows(
         coupons_today = [e for e in coupon_events  if e["payment_date"] == flow_date]
         mats_today    = [e for e in maturity_events if e["payment_date"] == flow_date]
 
+        # A buyback is an EARLY principal repayment: cash BB pays into the
+        # market on a day nothing else explains. Its own line, because
+        # principal_inflow reconciles against maturity_events and a buyback is
+        # not a maturity — the bond goes on maturing, for less.
+        buybacks_today = [e for e in buyback_events
+                          if e.get("settlement_date") == flow_date]
         coupon_inflow    = sum(e["amount_bdt_mill"]     for e in coupons_today)
         principal_inflow = sum(e["principal_bdt_mill"]  for e in mats_today)
-        total_inflow     = coupon_inflow + principal_inflow
+        buyback_inflow   = sum(buyback_amount(e)        for e in buybacks_today)
+        total_inflow     = coupon_inflow + principal_inflow + buyback_inflow
 
         # ── Outflow ───────────────────────────────────────────────────────────
         auctions_today = [e for e in auction_events if e["settlement_date"] == flow_date]
@@ -117,6 +149,7 @@ def build_daily_flows(
             "flow_date":                      flow_date,
             "coupon_inflow_bdt_mill":         round(coupon_inflow, 4),
             "principal_inflow_bdt_mill":      round(principal_inflow, 4),
+            "buyback_inflow_bdt_mill":        round(buyback_inflow, 4),
             "total_inflow_bdt_mill":          round(total_inflow, 4),
             "auction_outflow_planned_mill":   round(planned_outflow, 4),
             "auction_outflow_confirmed_mill": round(confirmed_outflow, 4),
