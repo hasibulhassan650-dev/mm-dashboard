@@ -67,6 +67,14 @@ def _rem_to_tenor(s: str):
     if m:
         y = int(m.group(1))
         return f"{y}Y", "T_BOND"
+    # A FRACTIONAL year, which is how BB writes the remaining maturity inside
+    # the ISIN cell: "(Re-issuance: 2.60 Yr.)". FLOOR, not round: a bond with
+    # 2.60 years left sits on the 2Y point of the curve until it has less than
+    # two years to run, and rounding up would place it on a point it never
+    # reaches. BB's own column already floors it ("2yr").
+    m = re.match(r"^(\d+)\.\d+\s*(?:yr|year)s?", raw)
+    if m:
+        return f"{int(m.group(1))}Y", "T_BOND"
     return None, None
 
 _ISIN_RE = re.compile(r"\b(BD[0-9A-Z]{10})\b")
@@ -122,7 +130,17 @@ LAST_STRUCTURE: List[Dict] = []
 TREASURY_COLUMNS = (
     SW.Column("issue",     ["issue date"], required=True, fallbacks=[["date"]]),
     SW.Column("isin",      ["isin"]),
-    SW.Column("rem",       ["remaining maturity"], fallbacks=[["remaining"], ["rem"]]),
+    # REQUIRED, because without it the tenor label silently changes MEANING.
+    # The label is BB's REMAINING maturity (the point the bond occupies on the
+    # curve); the fallback path reads "Tenor and name", which is the ORIGINAL
+    # tenor. On 10-Oct-2026 a 5-year bond re-issued with 2.60 years left was
+    # stored a second time as "5Y" beside its correct "2Y" row — same ISIN,
+    # same cut-off, same 2,500 crore — and double-counted in the ladder,
+    # because this table is keyed (tenor_label, auction_date) so a wrong label
+    # lands BESIDE the right row instead of replacing it. A layout without
+    # this column must stop the parse and name it, not relabel every row.
+    SW.Column("rem",       ["remaining maturity"], required=True,
+              fallbacks=[["remaining"], ["rem"]]),
     SW.Column("name",      ["tenor and name"], fallbacks=[["tenor"], ["name"]]),
     SW.Column("nbids_rcv", ["received", "no of bids"]),
     SW.Column("offered",   ["received", "face value"], fallbacks=[["offered"]]),
@@ -164,6 +182,17 @@ def _parse_page(html: str, snapshot_date: datetime.date,
 
     results: List[Dict] = []
     skips: Dict[str, int] = {}
+    corrections: Dict[str, int] = {}
+
+    def correct(reason: str):
+        """A disagreement in BB's own page that the parser RESOLVED.
+
+        Counted separately from skips because nothing was dropped: a page of
+        re-issues whose column rounds differently from BB's marker is normal,
+        and counting those as skips would push the skip rate past its
+        threshold and report a healthy page as degraded.
+        """
+        corrections[reason] = corrections.get(reason, 0) + 1
 
     def skip(reason: str):
         # A `continue` is invisible; a counted skip is a number the guardian can
@@ -274,6 +303,25 @@ def _parse_page(html: str, snapshot_date: datetime.date,
         orig_label, _orig_type = _rem_to_tenor(name_cell)
         orig_years = _tenor_years(orig_label) if orig_label else None
 
+        # BB states the remaining maturity TWICE on a re-issue: in its own
+        # column ("2yr") and inside the ISIN cell ("Re-issuance: 2.60 Yr.").
+        # Two statements of one fact is the strongest check available, so when
+        # they disagree the explicit marker wins and the disagreement is
+        # counted rather than swallowed. This is what makes the 5Y-beside-2Y
+        # duplicate impossible to store silently a second time.
+        # Not for an FRTB: its label is a PRODUCT label (3Y_FRTB is the reset
+        # tenor, which is what the desk trades), not a point on the curve, so
+        # BB's remaining-maturity figure is not what names it.
+        if is_reissue and reissue_rem and stype != "FRTB"                 and not (tenor_label or "").endswith("_FRTB"):
+            marker_label, _m_type = _rem_to_tenor(reissue_rem)
+            if marker_label and marker_label != tenor_label:
+                correct(f"the remaining-maturity column ({tenor_label}) "
+                        f"disagreed with BB's own re-issuance marker "
+                        f"({marker_label}); used the marker")
+                tenor_label = marker_label
+                if stype in (None, "T_BOND"):
+                    stype = _m_type or stype
+
         results.append({
             "snapshot_date":     snapshot_date,
             # The page prints the ISSUE date; the auction was the previous
@@ -317,9 +365,12 @@ def _parse_page(html: str, snapshot_date: datetime.date,
         meta.update(SW.fingerprint(
             "treasury", BB_TREASURY_URL, selector="table[0]", headers=headers,
             rows_seen=len(data_rows), rows_parsed=len(results), skips=skips,
-            unmapped=notes.get("unmapped"), mapped=idx))
+            unmapped=notes.get("unmapped"), mapped=idx, corrections=corrections))
     if skips:
         log.info("  skipped %d row(s): %s", sum(skips.values()), skips)
+    if corrections:
+        log.warning("  corrected %d row(s) against BB's own cross-reference: %s",
+                    sum(corrections.values()), corrections)
     log.info("Parsed %d yield points from page (snapshot %s)", len(results), snapshot_date)
     return results
 

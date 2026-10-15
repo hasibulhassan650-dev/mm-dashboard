@@ -200,6 +200,7 @@ def fingerprint(source: str, url: str = "", selector: str = "",
                 rows_parsed: int = 0, skips: Optional[Dict[str, int]] = None,
                 unmapped: Optional[List[dict]] = None,
                 mapped: Optional[Dict[str, int]] = None,
+                corrections: Optional[Dict[str, int]] = None,
                 error: str = "") -> dict:
     """One fetch, described structurally."""
     headers = [norm(h) for h in headers]
@@ -219,6 +220,11 @@ def fingerprint(source: str, url: str = "", selector: str = "",
         "skip_reasons": skips,
         "unmapped": list(unmapped or []),
         "mapped": dict(mapped or {}),
+        # Rows the parser KEPT after resolving a disagreement in the source,
+        # deliberately NOT counted in rows_skipped: nothing was dropped, and
+        # folding them in would push the skip rate over its threshold and
+        # report a page full of re-issues as "degraded".
+        "corrections": dict(corrections or {}),
         "error": error,
     }
 
@@ -373,7 +379,9 @@ def record(session, snap: dict, now: datetime.datetime = None) -> Tuple[str, Lis
     row.rows_seen = snap.get("rows_seen")
     row.rows_parsed = snap.get("rows_parsed")
     row.rows_skipped = snap.get("rows_skipped")
-    row.skip_reasons = json.dumps(snap.get("skip_reasons") or {})
+    row.skip_reasons = json.dumps({**(snap.get("skip_reasons") or {}),
+                                   **({"(corrections)": snap["corrections"]}
+                                      if snap.get("corrections") else {})})
     row.unmapped = json.dumps(snap.get("unmapped") or [])
     row.mapped = json.dumps(snap.get("mapped") or {})
     row.verdict = verdict

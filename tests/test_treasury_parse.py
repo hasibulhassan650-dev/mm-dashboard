@@ -189,3 +189,88 @@ class TestOneIsinTwoAuctions:
         assert {str(r["issue_date"]) for r in rows} == {"2026-09-02", "2026-09-07"}
         # different auctions -> different cut-offs, both kept
         assert len({r["cutoff_yield_pct"] for r in rows}) == 2
+
+
+class TestOneAuctionCannotBeStoredUnderTwoLabels:
+    """The 10-Oct-2026 duplicate, and why it was not a storage problem.
+
+    ISIN BD0928101056, auctioned 03-Feb-2026: a 5-year bond re-issued with
+    2.60 years left. It ended up in the database TWICE — once correctly as
+    `2Y` (BB labels a re-issue by its REMAINING maturity, which is the point
+    it occupies on the curve) and once as `5Y`, with the same cut-off, the
+    same 2,500 crore and the same sale value. primary_yield_snapshots is keyed
+    (tenor_label, auction_date), so the wrong label did not overwrite the
+    right one, it landed beside it — and confirm_auctions_from_results then
+    gave each row its own auction_events row, double-counting 2,500 crore of
+    outflow on 05-Feb.
+
+    The cause was a silent fallback: when BB's remaining-maturity column could
+    not be identified, the parser read "Tenor and name" instead, which holds
+    the ORIGINAL tenor. Same code, same page, a label that means something
+    different. Two defences now:
+
+      * that column is REQUIRED — a layout without it stops the parse and says
+        so, rather than relabelling every row;
+      * BB states the remaining maturity twice on a re-issue (its own column,
+        and inside the ISIN cell as "Re-issuance: 2.60 Yr."), so the two are
+        compared and the explicit marker wins.
+    """
+
+    _REISSUE = """
+    <table>
+     <tr><th>Issue date *</th><th>ISIN Number</th><th>Remaining Maturity (aprx)</th>
+         <th>Tenor and name</th><th colspan="3">Bids received</th>
+         <th colspan="7">Bids accepted</th></tr>
+     <tr><th>No of bids</th><th>Face value (Cr.Tk.)</th><th>Range of yields (%)</th>
+         <th>No of bids</th><th>Face value (Cr.Tk.)</th><th>Sale value (Cr.Tk.)</th>
+         <th>Range of yields (%)</th><th>Weighted average Price (taka)</th>
+         <th>Cut off yield (%)</th><th>Standard/ Devolvement Yield (%)</th></tr>
+     <tr><td>05/02/2026</td><td>BD0928101056 (Re-issuance: 2.60 Yr.)</td><td>REM</td>
+         <td>5yr T.Bond</td><td>120</td><td>5000.00</td><td>9.8000-11.0000</td>
+         <td>60</td><td>2500.00</td><td>2425.59</td><td>10.1000-10.4598</td>
+         <td>97.0236</td><td>10.4598</td><td>10.50</td></tr>
+    </table>
+    """
+
+    def test_the_label_is_the_remaining_maturity_not_the_original_tenor(self):
+        rows = _parse_page(self._REISSUE.replace("REM", "2yr"), SNAP)
+        assert len(rows) == 1
+        assert rows[0]["tenor_label"] == "2Y"
+        assert rows[0]["original_tenor_label"] == "5Y"
+
+    def test_bbs_own_marker_overrides_a_disagreeing_column(self):
+        """BB's remaining-maturity column says 5yr; its ISIN cell says 2.60 Yr.
+
+        This is the shape of the bug: whatever made the column read as the
+        original tenor, the marker is explicit and wins.
+        """
+        rows = _parse_page(self._REISSUE.replace("REM", "5yr"), SNAP)
+        assert rows[0]["tenor_label"] == "2Y", \
+            "the explicit re-issuance marker must win over a disagreeing column"
+        assert rows[0]["original_tenor_label"] == "5Y"
+
+    def test_the_correction_is_counted_but_is_not_a_skip(self):
+        meta = {}
+        _parse_page(self._REISSUE.replace("REM", "5yr"), SNAP, meta)
+        assert meta["rows_parsed"] == 1
+        assert meta["rows_skipped"] == 0, "nothing was dropped"
+        assert sum(meta["corrections"].values()) == 1
+        assert "marker" in " ".join(meta["corrections"])
+
+    def test_a_layout_with_no_remaining_maturity_column_refuses(self):
+        """Rather than relabelling every row from the tenor-name column."""
+        import pytest as _pt
+        from fetchers import source_watch as SW
+        gone = self._REISSUE.replace("<th>Remaining Maturity (aprx)</th>",
+                                     "<th>Period left</th>").replace("REM", "2yr")
+        with _pt.raises(SW.StructureChanged) as exc:
+            _parse_page(gone, SNAP)
+        assert "rem" in str(exc.value)
+
+    def test_a_fractional_year_parses_as_its_floor(self):
+        """2.60 years left sits on the 2Y point until it has less than two
+        years to run; rounding up would place it on a point it never reaches."""
+        from fetchers.treasury import _rem_to_tenor
+        assert _rem_to_tenor("2.60 Yr") == ("2Y", "T_BOND")
+        assert _rem_to_tenor("2.60 Yr.") == ("2Y", "T_BOND")
+        assert _rem_to_tenor("19.75 Yr") == ("19Y", "T_BOND")

@@ -416,14 +416,21 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
                 if abs(a - e) > max(5.0, e * 0.005):
                     add("ladder-recon", f"{d} {label}: ladder {a:.0f} != events {e:.0f} mill "
                                         f"— daily_net_flow stale vs live rows; rebuild the flow pipeline")
-        # The BEST outflow (accepted when BB confirmed, else offered) is what the
-        # net-borrowing figure uses; it must track the confirmed amounts too.
+        # The BEST outflow is the CASH: sale value when BB published it, else the
+        # accepted face value, else BB's offered target. This must mirror
+        # engines/outflow.py best_outflow() exactly — if it does not, the check
+        # reports a mismatch on every auction for ever, and a guard that is
+        # always red is a guard nobody reads.
         best_evt: dict[str, float] = {}
-        for r in q("SELECT settlement_date, offered_amount_bdt_mill, accepted_amount_bdt_mill, outflow_status "
+        for r in q("SELECT settlement_date, offered_amount_bdt_mill, accepted_amount_bdt_mill, "
+                   "       outflow_status, sale_value_bdt_mill "
                    "FROM auction_events WHERE settlement_date >= :lo AND settlement_date <= :horizon",
                    lo=today - datetime.timedelta(days=60), horizon=horizon):
             k = str(r[0])[:10]
-            v = r[2] if (r[3] == "CONFIRMED" and r[2] is not None) else (r[1] or 0.0)
+            if r[3] == "CONFIRMED" and (r[4] is not None or r[2] is not None):
+                v = r[4] if r[4] is not None else r[2]
+            else:
+                v = r[1] or 0.0
             best_evt[k] = best_evt.get(k, 0.0) + float(v)
         ladder_best = {}
         for r in q("SELECT flow_date, auction_outflow_best_mill FROM daily_net_flow "

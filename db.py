@@ -691,6 +691,17 @@ def init_db():
         "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS source_pub_date DATE",
         "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS source_serial VARCHAR(40)",
         "ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS quality TEXT",
+        # ONE AUCTION, ONE ROW. This table is keyed (tenor_label,
+        # auction_date), which cannot stop the same auction being stored twice
+        # under two different labels: on 10-Oct-2026 a 5-year bond re-issued
+        # with 2.60 years left landed as both "2Y" (correct — BB labels a
+        # re-issue by its remaining maturity) and "5Y", same ISIN, same
+        # cut-off, same 2,500 crore, and double-booked 2,425.59 crore of cash
+        # outflow on 05-Feb. BB never auctions one ISIN twice on one day, so
+        # the pair is the invariant. Partial, because rows from before the
+        # parser kept the ISIN have NULL there and NULLs never conflict.
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_pys_auction_isin "
+        "ON primary_yield_snapshots (auction_date, isin) WHERE isin IS NOT NULL",
         # The cash paid, beside the face value allotted. See AuctionEvent.
         "ALTER TABLE auction_events ADD COLUMN IF NOT EXISTS sale_value_bdt_crore REAL",
         "ALTER TABLE auction_events ADD COLUMN IF NOT EXISTS sale_value_bdt_mill REAL",
