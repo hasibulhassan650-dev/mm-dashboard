@@ -143,9 +143,20 @@ class Column:
         self.fallbacks = [[norm(k) for k in group] for group in fallbacks]
 
     def matches(self, header: str, keys: Sequence[str] = None) -> bool:
+        """Whole words, never substrings.
+
+        Substring matching read BB's holiday table wrong on the first try:
+        the keyword "day" is inside "holiday", so the Day column mapped to the
+        holiday NAME, and the weekday cross-check then compared "Victory Day"
+        against a weekday name and silently passed. `norm` has already reduced
+        the text to single-spaced words, so padding both sides is enough — and
+        it still matches a multi-word key like "no of bids" inside "bids
+        received no of bids".
+        """
         keys = self.all_of if keys is None else keys
-        return (all(k in header for k in keys)
-                and not any(k in header for k in self.none_of))
+        padded = f" {header} "
+        return (all(f" {k} " in padded for k in keys)
+                and not any(f" {k} " in padded for k in self.none_of))
 
 
 def map_columns(headers: Sequence[str], spec: Sequence[Column],

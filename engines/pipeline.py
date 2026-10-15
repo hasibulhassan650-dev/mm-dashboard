@@ -865,6 +865,89 @@ def _register_source(session, snap: dict) -> dict:
     return {"source_verdict": verdict, "source_reasons": reasons}
 
 
+def run_holiday_fetch() -> dict:
+    """Read BB's published holiday list and seed holiday_calendar from it.
+
+    Nothing read this page until 15-Oct-2026. The calendar held 33 rows ending
+    26-Aug-2026, the recent ones marked INFERRED_CLOSURE — "the whole money
+    market went silent, so this was probably a holiday". That works backwards
+    and not at all forwards, so the system did not know that 20 and 21 October
+    2026 are Durga Puja: a Tuesday and a Wednesday, five days out, with every
+    settlement date and working-day age across them computed wrong.
+
+    Three rules, because a wrong holiday moves real settlement dates off real
+    days and is worse than a missing one:
+
+      * an INFERRED_CLOSURE on a date BB gazettes is UPGRADED, taking BB's own
+        name — that is exactly what its placeholder text asked for;
+      * a WORKING_DAY row is never touched. BB declares specific working
+        Saturdays (23-May-2026), and a clash with its own holiday list is a
+        contradiction to report, not to resolve by overwriting;
+      * a date we hold that BB does not list is left alone and reported. BB's
+        page covers the current year; silence there is not a denial.
+    """
+    from config import fiscal_year
+    from fetchers.holidays import fetch_holidays
+    init_db()
+    session = get_session()
+    try:
+        out = fetch_holidays()
+        rows = out["rows"]
+        watch = _register_source(session, out["meta"])
+        if not rows:
+            msg = f"holidays: fetched nothing — {out.get('reason') or 'no reason reported'}"
+            log.error(msg)
+            return {"rows": 0, "errors": [msg], "empty_reason": out.get("reason"), **watch}
+
+        existing = {h.calendar_date: h for h in session.query(HolidayCalendar).all()}
+        added = upgraded = conflicts = unchanged = 0
+        notes = []
+        for r in rows:
+            d = r["calendar_date"]
+            cur = existing.get(d)
+            if cur is None:
+                session.add(HolidayCalendar(
+                    calendar_date=d, holiday_name=r["holiday_name"],
+                    holiday_type="GAZETTED", fiscal_year=fiscal_year(d),
+                    source=r["source"][:200]))
+                added += 1
+                notes.append(f"+ {d} {r['holiday_name']}")
+            elif cur.holiday_type == "WORKING_DAY":
+                conflicts += 1
+                notes.append(f"! {d} is stored as a DECLARED WORKING DAY but BB's holiday "
+                             f"list says {r['holiday_name']} — left as it was")
+            elif cur.holiday_type != "GAZETTED":
+                was = cur.holiday_type or "untyped"
+                cur.holiday_name = r["holiday_name"]
+                cur.holiday_type = "GAZETTED"
+                cur.source = r["source"][:200]
+                upgraded += 1
+                notes.append(f"~ {d} {r['holiday_name']} (was {was})")
+            else:
+                unchanged += 1
+
+        ours_only = [d for d in existing
+                     if d.year in {r["calendar_date"].year for r in rows}
+                     and d not in {r["calendar_date"] for r in rows}
+                     and existing[d].holiday_type not in ("WORKING_DAY",)]
+        session.commit()
+        _load_holidays(session)
+        log.info("Holidays: %d added, %d upgraded, %d unchanged, %d conflict(s)",
+                 added, upgraded, unchanged, conflicts)
+        return {"rows": len(rows), "added": added, "upgraded": upgraded,
+                "unchanged": unchanged, "conflicts": conflicts,
+                "ours_not_in_bbs_list": [str(d) for d in sorted(ours_only)],
+                "notes": notes, "refused": out["refused"],
+                "errors": [f"holiday_calendar: {n[2:]}" for n in notes if n.startswith("! ")],
+                **watch}
+    except Exception as exc:
+        session.rollback()
+        log.exception("Holiday fetch failed")
+        return {"rows": 0, "errors": [str(exc)]}
+    finally:
+        session.close()
+
+
 def run_omo_fetch(days_back: int = 28, max_files: int = 20) -> dict:
     """Fetch last N OMO press release PDFs and store transactions to DB.
 
