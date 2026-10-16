@@ -297,3 +297,132 @@ def test_sentinel_flags_a_daily_series_behind_the_last_working_day(monkeypatch):
     monkeypatch.setattr(sentinel.subprocess, "check_output", lambda *a, **k: b"deadbee")
     v = sentinel.check()
     assert any("Call Money" in x for x in v["problems"]), v["problems"]
+
+
+# ── Two writers, one table: the failure of 16-Oct-2026 ───────────────────────
+
+class TestTheGazetteOutranksTheSeed:
+    """BB's holiday page is read into the same table a YAML seed owns.
+
+    load_holiday_file treats its file as the source of truth for a whole
+    FISCAL YEAR and deletes any row in that year the file does not list. That
+    rule exists for a real reason — the wrong "approximate" Eid dates outlived
+    their correction because loading was upsert-only — but it made the seed the
+    SECOND writer of a table BB's own gazette now feeds. Every refresh silently
+    deleted the eleven dates fetched from BB's page, 20 and 21 October 2026
+    among them, so the calendar ended on 26-Aug again and every settlement date
+    crossing Durga Puja went back to being wrong. Within hours of being fixed,
+    by hand, twice.
+
+    A seed may delete the rows it wrote. It may not delete BB's.
+    """
+
+    def _seed_file(self, tmp_path, dates):
+        p = tmp_path / "holidays_FY2026-27.yaml"
+        p.write_text(yaml.safe_dump({
+            "fiscal_year": "2026-27",
+            "holidays": [{"date": d, "name": "Seeded", "type": "GOVT_GAZETTE"}
+                         for d in dates],
+        }), encoding="utf-8")
+        return str(p)
+
+    def _load(self, monkeypatch, path, rows):
+        import seeds_loader
+        eng, s = _mem()
+        for d, name, typ, src in rows:
+            s.add(HolidayCalendar(calendar_date=d, holiday_name=name, holiday_type=typ,
+                                  fiscal_year="2026-27", source=src))
+        s.commit()
+        monkeypatch.setattr(seeds_loader, "get_session", lambda: sessionmaker(bind=eng)())
+        seeds_loader.load_holiday_file(path)
+        return sessionmaker(bind=eng)()
+
+    def test_a_date_from_bbs_page_survives_a_seed_load(self, tmp_path, monkeypatch):
+        s2 = self._load(
+            monkeypatch, self._seed_file(tmp_path, ["2026-07-01"]),
+            [(datetime.date(2026, 10, 20), "Durga Puja", "GAZETTED",
+              "https://www.bb.org.bd/en/index.php/mediaroom/holiday")])
+        kept = {h.calendar_date for h in s2.query(HolidayCalendar).all()}
+        assert datetime.date(2026, 10, 20) in kept, \
+            "the seed deleted a holiday read from BB's own gazette"
+
+    def test_a_stale_seeded_date_is_still_removed(self, tmp_path, monkeypatch):
+        """The deletion rule has to keep working, or the wrong Eid dates come
+        back. Only its reach changes."""
+        s2 = self._load(
+            monkeypatch, self._seed_file(tmp_path, ["2026-07-01"]),
+            [(datetime.date(2026, 5, 25), "Approximate Eid", "GOVT_GAZETTE",
+              "data/seeds/holidays_FY2026-27.yaml")])
+        kept = {h.calendar_date for h in s2.query(HolidayCalendar).all()}
+        assert datetime.date(2026, 5, 25) not in kept
+        assert datetime.date(2026, 7, 1) in kept
+
+    def test_a_row_with_no_recorded_source_is_treated_as_the_seeds(self):
+        """Anything predating provenance is the seed's to manage; only an
+        explicit BB source is protected."""
+        import inspect
+        import seeds_loader
+        src = inspect.getsource(seeds_loader.load_holiday_file)
+        assert "bb.org.bd" in src, "the protection is no longer anchored to BB's host"
+
+
+class TestOneAuctionOneRowInTheWriter:
+    """The crash of 16-Oct-2026, and the silent duplicate before it.
+
+    primary_yield_snapshots is keyed (tenor_label, auction_date), so a re-parse
+    that labels one auction differently — a re-issue read from BB's remaining-
+    maturity column one day and its tenor-and-name column the next — looks like
+    a brand-new row and lands BESIDE the right one, double-counting 2,500 crore
+    in the ladder. The partial unique index on (auction_date, isin) stops that,
+    but the writer did not know about it, so the insert raised a UniqueViolation
+    that killed the entire treasury step for a day.
+
+    Neither outcome is acceptable. The writer finds the row by ISIN and
+    corrects its label.
+    """
+
+    def _row(self, label, **kw):
+        base = {
+            "snapshot_date": datetime.date(2026, 2, 28),
+            "auction_date": datetime.date(2026, 2, 3),
+            "issue_date": datetime.date(2026, 2, 5),
+            "security_type": "T_BOND", "tenor_label": label, "tenor_years": 2.0,
+            "cutoff_yield_pct": 10.4598, "accepted_bdt_crore": 2500.0,
+            "isin": "BD0928101056", "is_reissue": True, "reissue_remaining": "2.60 Yr",
+            "original_tenor_label": "5Y",
+        }
+        return {**base, **kw}
+
+    def test_a_relabelled_auction_updates_instead_of_inserting(self):
+        from engines.pipeline import upsert_primary_yield
+        eng, s = _mem()
+        upsert_primary_yield(s, self._row("5Y"))
+        s.commit()
+        upsert_primary_yield(s, self._row("2Y"))
+        s.commit()
+        rows = s.query(PrimaryYieldSnapshot).all()
+        assert len(rows) == 1, f"one auction stored {len(rows)} times"
+        assert rows[0].tenor_label == "2Y", "the corrected label was not kept"
+        assert rows[0].tenor_years == 2.0
+
+    def test_two_genuinely_different_auctions_on_one_day_both_stand(self):
+        """Bills and bonds settle on the same day constantly. The invariant is
+        one ISIN per day, not one auction per day."""
+        from engines.pipeline import upsert_primary_yield
+        eng, s = _mem()
+        upsert_primary_yield(s, self._row("2Y"))
+        upsert_primary_yield(s, self._row("91D", isin="BD0909110266",
+                                          security_type="T_BILL", tenor_years=0.25,
+                                          cutoff_yield_pct=8.5899))
+        s.commit()
+        assert s.query(PrimaryYieldSnapshot).count() == 2
+
+    def test_a_row_with_no_isin_still_keys_on_the_label(self):
+        """Older months were stored before the parser kept the ISIN; they must
+        keep working exactly as before."""
+        from engines.pipeline import upsert_primary_yield
+        eng, s = _mem()
+        upsert_primary_yield(s, self._row("5Y", isin=None))
+        upsert_primary_yield(s, self._row("2Y", isin=None))
+        s.commit()
+        assert s.query(PrimaryYieldSnapshot).count() == 2

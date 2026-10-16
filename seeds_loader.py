@@ -39,12 +39,23 @@ def load_holiday_file(path: str) -> int:
             ))
         count += 1
 
-    # The seed file is the source of truth for its fiscal year: a date removed
-    # from the YAML must leave the DB too. Upsert-only loading is how the wrong
-    # "approximate" Eid dates outlived their correction (Sep-2026 audit).
+    # The seed file is the source of truth for the rows IT WROTE, and only
+    # those. A date removed from the YAML must leave the DB — upsert-only
+    # loading is how the wrong "approximate" Eid dates outlived their
+    # correction (Sep-2026 audit) — but deleting by fiscal year alone made
+    # this the SECOND writer of a table BB's own gazette now feeds. Every
+    # refresh silently removed the eleven dates read from BB's holiday page,
+    # 20 and 21 October 2026 among them, because a YAML file last edited in
+    # August did not list them. The calendar then ended on 26-Aug again and
+    # every settlement date crossing Durga Puja went back to being wrong.
+    #
+    # BB's published gazette outranks a hand-maintained seed, so rows sourced
+    # from BB are never touched here. They have their own writer, which
+    # reports what BB has dropped instead of deleting it.
     file_dates = {datetime.date.fromisoformat(i["date"]) for i in items}
     stale = [r for r in session.query(HolidayCalendar).filter_by(fiscal_year=fy).all()
-             if r.calendar_date not in file_dates]
+             if r.calendar_date not in file_dates
+             and "bb.org.bd" not in (r.source or "")]
     for r in stale:
         log.warning("Removing %s (%s) — no longer in %s", r.calendar_date, r.holiday_name, path)
         session.delete(r)

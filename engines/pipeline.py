@@ -404,9 +404,39 @@ def upsert_primary_yield(session, row: dict):
             PrimaryYieldSnapshot.auction_date == row["auction_date"],
         )
     ).scalar_one_or_none()
+
+    # ONE AUCTION, ONE ROW — the invariant the partial unique index on
+    # (auction_date, isin) enforces, and which this writer has to know about.
+    # The table is keyed (tenor_label, auction_date), so a re-parse that labels
+    # the same auction differently — a re-issue read from BB's remaining-
+    # maturity column one day and its tenor-and-name column the next — looks
+    # like a brand-new row and lands BESIDE the right one, double-counting it.
+    # Since Oct-2026 the index refuses that insert, which turned the silent
+    # duplicate into a crash that killed the whole treasury step. Neither is
+    # acceptable: find the row by ISIN and CORRECT its label.
+    if existing is None and row.get("isin"):
+        by_isin = session.execute(
+            select(PrimaryYieldSnapshot).where(
+                PrimaryYieldSnapshot.isin         == row["isin"],
+                PrimaryYieldSnapshot.auction_date == row["auction_date"],
+            )
+        ).scalar_one_or_none()
+        if by_isin is not None:
+            if by_isin.tenor_label != row["tenor_label"]:
+                log.warning("yield row for %s on %s was stored as %s and BB now reads %s "
+                            "— relabelling in place rather than adding a second row",
+                            row["isin"], row["auction_date"], by_isin.tenor_label,
+                            row["tenor_label"])
+            existing = by_isin
     if existing:
         existing.snapshot_date      = row["snapshot_date"]
         existing.issue_date         = row.get("issue_date") or existing.issue_date
+        # The label can legitimately change when the row was found by ISIN:
+        # that is the relabelling above, and leaving it stale would keep the
+        # old tenor on the curve for ever.
+        existing.tenor_label        = row["tenor_label"]
+        existing.tenor_years        = row.get("tenor_years", existing.tenor_years)
+        existing.security_type      = row.get("security_type") or existing.security_type
         existing.cutoff_yield_pct   = row["cutoff_yield_pct"]
         existing.offered_bdt_crore  = row.get("offered_bdt_crore")
         existing.accepted_bdt_crore = row.get("accepted_bdt_crore")
