@@ -139,14 +139,29 @@ def build() -> tuple:
         # Above "waiting on BB" because somebody has to look at it, and below
         # the defects because nothing is wrong yet.
         if rep.get("notices"):
-            lines.append(f"**BB changed a page: {rep.get('notice_count')}** — the parse is "
-                         f"still clean because columns are read by header text, not position; "
-                         f"confirm the new layout means what we think it means\n")
-            for nt in rep["notices"][:10]:
-                a = ages.get(_fp(nt))
-                age = f" _(since {a['age_days']}d ago)_" if a and a.get("age_days") else ""
-                lines.append(f"- {nt}{age}")
-            lines.append("")
+            # The notice bucket carries two different meanings, and one heading
+            # for both mislabelled them: a gap in what we COVER is not BB
+            # restructuring a page.
+            shape = [n for n in rep["notices"] if n.startswith("source:")]
+            other = [n for n in rep["notices"] if not n.startswith("source:")]
+
+            def _aged(n):
+                a = ages.get(_fp(n))
+                return f" _(since {a['age_days']}d ago)_" if a and a.get("age_days") else ""
+
+            if shape:
+                lines.append(f"**BB changed a page: {len(shape)}** — the parse is still "
+                             f"clean because columns are read by header text, not position; "
+                             f"confirm the new layout means what we think it means\n")
+                for nt in shape[:10]:
+                    lines.append(f"- {nt}{_aged(nt)}")
+                lines.append("")
+            if other:
+                lines.append(f"**Worth knowing: {len(other)}** — not a defect in the data "
+                             f"we hold, and not BB being late\n")
+                for nt in other[:10]:
+                    lines.append(f"- {nt}{_aged(nt)}")
+                lines.append("")
 
         # Days BB itself does not publish, each one established by re-reading a
         # COMPLETE month of BB's own page. The gap check passes over them so one
