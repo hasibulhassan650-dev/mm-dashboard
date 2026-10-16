@@ -32,7 +32,7 @@ from sqlalchemy import text
 import calendar_utils as cal
 import engines.expectations as EX
 from config import GSOM_FRTB_URL, GSOM_TBILL_URL, GSOM_TBOND_URL
-from db import get_session, init_db
+from db import get_session
 from engines.pipeline import _upsert_mtm_snapshot
 from config import REQUEST_TIMEOUT
 from fetchers.http_client import get_session as http_session
@@ -114,7 +114,10 @@ def main():
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO if a.verbose else logging.WARNING,
                         format="%(levelname)s %(message)s")
-    init_db()
+    # No init_db(): this writes to a table that already exists, and running
+    # the full migration list (every ALTER plus every VALIDATE CONSTRAINT over
+    # 36,000 rows) made a three-date recovery sit for twenty minutes before it
+    # had fetched anything.
     s = get_session()
     try:
         want = [datetime.date.fromisoformat(d) for d in a.dates]
