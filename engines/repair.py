@@ -10,6 +10,7 @@ whose correct value is *derivable with certainty* from data we already hold:
   * a yield row dated on a non-working day  → move it to the real trading day
   * a coupon/maturity payment on a closed day → re-roll under the live calendar
   * a PLANNED auction settling on a closed day → re-derive T+1
+  * a DERIVED OMO maturity on a closed day     → re-roll from txn + tenor
 
 Anything ambiguous (a move that would collide with an existing row, a date the
 calendar cannot resolve) is left ALONE and reported, so a human sees it instead
@@ -21,7 +22,8 @@ import datetime
 import logging
 
 import calendar_utils
-from db import PrimaryYieldSnapshot, CouponEvent, MaturityEvent, AuctionEvent
+from db import (PrimaryYieldSnapshot, CouponEvent, MaturityEvent, AuctionEvent,
+                OMOTransaction)
 
 log = logging.getLogger(__name__)
 
@@ -112,6 +114,41 @@ def self_heal(session, limit_log: int = 40) -> dict:
         if a.settlement_date != want:
             _did("auction_settlement", f"{a.tenor_label} {a.auction_date}: {a.settlement_date} -> {want}")
             a.settlement_date = want
+
+    # ── 5. a DERIVED OMO maturity must land on a working day ─────────────────
+    # fetchers/omo.py computes a deal's maturity as transaction + tenor, rolled
+    # forward, AT WRITE TIME — so any row written before the calendar learned
+    # about a holiday still points at it. Three 7-day tranches dealt 13-14 Oct
+    # 2026, 15,464.92 crore in all, were shown returning across the two Durga
+    # Puja days; fixing them by hand lasted a day, because the next CI refresh
+    # re-derived them from a process whose calendar had not been loaded. A
+    # report alone is not a fix when the write path runs where nobody is
+    # watching.
+    #
+    # Deal lines ONLY. A maturity-only line (accepted = 0) carries BB's own
+    # printed statement of what expired that day; it is evidence, not
+    # arithmetic, and the OMO tranche ledger reconciles against exactly those
+    # dates.
+    for t in session.query(OMOTransaction).filter(
+            OMOTransaction.accepted_bdt_crore > 0,
+            OMOTransaction.maturity_date.isnot(None)).all():
+        try:
+            if calendar_utils.is_working_day(t.maturity_date):
+                continue
+            if not t.tenor_days or not t.transaction_date:
+                skipped.append(f"omo {t.instrument} maturing {t.maturity_date} on a closed "
+                               f"day with no tenor to re-derive from")
+                continue
+            want = calendar_utils.get_next_working_day(
+                t.transaction_date + datetime.timedelta(days=int(t.tenor_days)))["result_date"]
+            if want == t.maturity_date:
+                continue
+            _did("omo-maturity-roll",
+                 f"{t.instrument} {t.accepted_bdt_crore:,.2f} cr dealt {t.transaction_date} "
+                 f"{t.maturity_date} → {want}")
+            t.maturity_date = want
+        except Exception as exc:
+            skipped.append(f"omo {t.instrument} {t.maturity_date}: {exc}")
 
     session.flush()
     total = sum(repaired.values())

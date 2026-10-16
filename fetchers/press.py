@@ -149,7 +149,7 @@ def fetch_press_releases() -> dict:
     except Exception as exc:
         return {"rows": [], "skipped": {}, "reason": f"{type(exc).__name__} {exc}",
                 "meta": SW.fingerprint("press_listing", BB_PRESS_URL,
-                                       error=f"could not read the listing: {exc}")}
+                                       transport_error=f"{type(exc).__name__} {exc}")}
     out = parse_listing(BeautifulSoup(html, "lxml"))
     if not out["rows"]:
         out["reason"] = out["meta"].get("error") or "the listing parsed to nothing"

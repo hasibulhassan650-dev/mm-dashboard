@@ -115,6 +115,13 @@ def _soup(html: str):
     return BeautifulSoup(html, "lxml")
 
 
+# Canary fingerprints are namespaced. The canary reads each page's DEFAULT
+# view; the production fetchers POST month forms and read different tables, so
+# sharing a source name would give one source two rival shapes that each report
+# the other as a change, for ever.
+CANARY = "canary:"
+
+
 def look_at_table_page(name: str, url: str, plain: bool = True, session_ck=None) -> dict:
     from bs4 import BeautifulSoup
     from fetchers.bb_session import bb_get, get_f5_cookies
@@ -134,21 +141,28 @@ def look_at_table_page(name: str, url: str, plain: bool = True, session_ck=None)
                 html = html.text
             how = "f5+curl_cffi"
     except Exception as exc:
-        return SW.fingerprint(name, url, error=f"could not read the page: "
-                                               f"{type(exc).__name__} {exc}")
+        # Transport, not structure: a failed handshake says nothing about
+        # BB's page, and recording it as a shape would overwrite the real one.
+        return SW.fingerprint(CANARY + name, url,
+                              transport_error=f"{type(exc).__name__} {exc}")
     soup = _soup(html)
     table = _biggest_table(soup)
     if table is None:
-        return SW.fingerprint(name, url, selector=how,
+        return SW.fingerprint(CANARY + name, url, selector="largest table",
                               error=f"read {len(html):,} bytes with {how} and found no "
-                                    f"table at all — BB is serving something else here")
+                                f"table at all — BB is serving something else here")
     rows = table.find_all("tr")
     headers = _headers_of(table)
     # "Parsed" here means "rows that look like data": the canary never runs the
     # real parsers, so a row with data cells and no header cells is the honest
     # count it can make.
     data_rows = [tr for tr in rows if tr.find_all("td") and not tr.find_all("th")]
-    return SW.fingerprint(name, url, selector=f"largest table via {how}", headers=headers,
+    # The selector names the PAGE's shape, never how we reached it. Putting the
+    # transport in here ("largest table via curl_cffi") made the fallback from
+    # plain reading to the F5 handshake look like BB restructuring the page —
+    # a built-in false alarm, in the one component whose whole job is to cry
+    # only when something real moves. `how` is for the log line.
+    return SW.fingerprint(CANARY + name, url, selector="largest table", headers=headers,
                           rows_seen=len(rows), rows_parsed=len(data_rows))
 
 
@@ -158,10 +172,10 @@ def look_at_press_page() -> dict:
     try:
         info = fetch_omo_links(days_back=21, max_files=10)
     except Exception as exc:
-        return SW.fingerprint("omo_press", BB_PRESS_URL,
-                              error=f"could not read the listing: {type(exc).__name__} {exc}")
+        return SW.fingerprint(CANARY + "omo_press", BB_PRESS_URL,
+                              transport_error=f"{type(exc).__name__} {exc}")
     return SW.fingerprint(
-        "omo_press", BB_PRESS_URL, selector=info.get("selector") or "",
+        CANARY + "omo_press", BB_PRESS_URL, selector=info.get("selector") or "",
         rows_seen=info.get("rows_seen") or 0, rows_parsed=len(info.get("links") or []),
         skips={"not an OMO release": info.get("skipped_not_omo") or 0,
                "older than the window": info.get("skipped_too_old") or 0},

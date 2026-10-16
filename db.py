@@ -602,6 +602,41 @@ class PipelineRun(Base):
     quality      = Column(Text)            # JSON: integrity_check() report
 
 
+class DeskMark(Base):
+    """What the desk saw at the auction, on the day — never what BB published.
+
+    BB's results page prints the ISSUE date and the auction was the previous
+    working day, so a cut-off reaches this system a day or two after the desk
+    already traded off it. The desk is in the auction and knows the number that
+    afternoon; this is where it says so.
+
+    It is a SEPARATE table on purpose. A desk mark must never be written into
+    primary_yield_snapshots: that table is BB's own statement of record, and
+    one unverified figure sitting in it indistinguishable from the rest would
+    undo the thing this project exists for. A mark is provisional, labelled as
+    such everywhere it appears, and BB's published cut-off supersedes it
+    automatically — not by overwriting the mark, which stays as the audit
+    trail of what the desk believed and when, but by being preferred wherever
+    both exist.
+
+    The divergence between the two is itself worth reading: a mark 40bp from
+    BB's print is either a typo or a surprise in the auction, and both are
+    things the desk wants to know it got wrong.
+    """
+    __tablename__ = "desk_marks"
+    __table_args__ = (UniqueConstraint("auction_date", "tenor_label"),)
+    id                = Column(Integer, primary_key=True, autoincrement=True)
+    auction_date      = Column(Date, nullable=False)   # the day bids were taken
+    tenor_label       = Column(String(15), nullable=False)
+    security_type     = Column(String(10))
+    cutoff_yield_pct  = Column(Float, nullable=False)
+    accepted_crore    = Column(Float)     # optional; blank when not yet known
+    entered_by        = Column(String(60))
+    entered_utc       = Column(DateTime)
+    updated_utc       = Column(DateTime)
+    note              = Column(Text)
+
+
 class PressRelease(Base):
     """BB's press-release listing, classified and kept.
 
@@ -797,6 +832,12 @@ def init_db():
         "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS source_serial VARCHAR(40)",
         "ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS quality TEXT",
         "ALTER TABLE daily_net_flow ADD COLUMN IF NOT EXISTS buyback_inflow_bdt_mill REAL DEFAULT 0",
+        # A desk mark is a provisional cut-off, never BB's. A sovereign yield
+        # outside 0-30% is a typo in any century, and the constraint is the
+        # layer below every code path that could write one.
+        "ALTER TABLE desk_marks ADD CONSTRAINT ck_desk_cutoff_band "
+        "CHECK (cutoff_yield_pct > 0 AND cutoff_yield_pct <= 30) NOT VALID",
+        "ALTER TABLE desk_marks VALIDATE CONSTRAINT ck_desk_cutoff_band",
         # ONE AUCTION, ONE ROW. This table is keyed (tenor_label,
         # auction_date), which cannot stop the same auction being stored twice
         # under two different labels: on 10-Oct-2026 a 5-year bond re-issued

@@ -850,6 +850,47 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
             add("drift", f"the distribution check could not run ({exc}) — a unit "
                          f"change at BB would currently be invisible")
 
+        # ── a desk mark against what BB then published ───────────────────────
+        # The mark is provisional by construction and BB's figure supersedes
+        # it, so a divergence is never a defect in stored data. It is still
+        # worth reading: more than 10bp apart is either a typo on auction day
+        # or a surprise in the auction, and the desk wants to know which one
+        # it was. A mark BB has not confirmed after a week means the site is
+        # still showing a provisional number on that tenor.
+        try:
+            for r in q("SELECT d.auction_date, d.tenor_label, d.cutoff_yield_pct, "
+                       "       p.cutoff_yield_pct, d.entered_by "
+                       "FROM desk_marks d LEFT JOIN primary_yield_snapshots p "
+                       "  ON p.auction_date = d.auction_date "
+                       " AND p.tenor_label = d.tenor_label "
+                       "WHERE d.auction_date >= :lo",
+                       lo=today - datetime.timedelta(days=60)):
+                ad, tenor, desk_c, bb_c, who = r[0], r[1], r[2], r[3], r[4]
+                if not hasattr(ad, "year"):
+                    try:
+                        ad = datetime.date.fromisoformat(str(ad)[:10])
+                    except ValueError:
+                        continue
+                if bb_c is None:
+                    age = _EXPECT.working_days_between(ad, today, _holidays_set())
+                    if age >= 5:
+                        add("desk", f"{ad} {tenor}: the desk's {desk_c}% has stood "
+                                    f"unconfirmed for {age} working days — BB has not "
+                                    f"published this auction, so the figure on the site "
+                                    f"is still the desk's own", "waiting")
+                    continue
+                gap = abs(float(desk_c) - float(bb_c)) * 100.0
+                if gap > 10.0:
+                    add("desk", f"{ad} {tenor}: the desk marked {desk_c}% and BB published "
+                                f"{bb_c}% — {gap:.1f}bp apart"
+                                + (f" (entered by {who})" if who else "")
+                                + ". BB's figure is the one in use; this is the desk's "
+                                  "read being checked, not a data defect",
+                        "notice")
+        except Exception as exc:
+            s.rollback()
+            add("desk", f"the desk-mark check could not run ({exc})")
+
         # ── BB announced something and we have no record of acting on it ────
         # The listing is kept so this question can be asked at all. BB
         # announced Bangladesh's first bond buyback on 05-Oct-2026 and its

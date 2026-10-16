@@ -4,6 +4,11 @@
 // env var; change this constant if the API ever moves again.
 const BASE = "https://mm-dashboard-vac3.vercel.app";
 
+/** The same host, for server-side route handlers (the desk write path). One
+ *  constant, for the reason in the comment above: an env var for this is how
+ *  the site went blank once already. */
+export const API_BASE = BASE;
+
 async function get<T>(path: string, params?: Record<string, string | number>): Promise<T> {
   const url = new URL(BASE + path);
   if (params) Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, String(v)));
@@ -172,6 +177,13 @@ export const api = {
     try { return await get<DiagnosticRow[]>("/api/forecast/diagnostics"); }
     catch { return []; }
   },
+  deskMarks:       async (days = 60): Promise<DeskMarks> => {
+    try { return await get<DeskMarks>(`/api/desk/marks?days=${days}`); }
+    catch {
+      return { as_of: "", window_days: days, count: 0, unconfirmed: 0,
+               worst_diff_bps: null, configured: false, tenors: [], marks: [] };
+    }
+  },
   press:           async (days = 90): Promise<PressFeed> => {
     try { return await get<PressFeed>(`/api/press?days=${days}`); }
     catch {
@@ -302,6 +314,40 @@ export interface DataHealth {
   issues?: string[];
   by_table?: Record<string, number>;
 }
+export interface DeskMark {
+  auction_date: string;
+  tenor_label: string;
+  security_type: string | null;
+  /** What the DESK saw. Never BB's figure, never written to BB's table. */
+  cutoff_yield_pct: number;
+  accepted_crore: number | null;
+  entered_by: string | null;
+  entered_utc: string | null;
+  updated_utc: string | null;
+  note: string | null;
+  bb_cutoff_yield_pct: number | null;
+  bb_accepted_crore: number | null;
+  bb_issue_date: string | null;
+  confirmed: boolean;
+  /** Signed basis points: positive means the desk marked ABOVE BB's print. */
+  diff_bps: number | null;
+  shown_cutoff_pct: number;
+  shown_source: string;
+}
+
+export interface DeskMarks {
+  as_of: string;
+  window_days: number;
+  count: number;
+  unconfirmed: number;
+  worst_diff_bps: number | null;
+  /** False when DESK_WRITE_SECRET is unset on the API: the form must say so
+   *  rather than accept a figure and drop it. */
+  configured: boolean;
+  tenors: string[];
+  marks: DeskMark[];
+}
+
 export interface PressRelease {
   serial: string;
   published_date: string;

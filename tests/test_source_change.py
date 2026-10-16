@@ -328,3 +328,81 @@ class TestTwoLevelHeaders:
         cols = SW.header_columns(BeautifulSoup(html, "lxml").find_all("tr"))
         assert cols == ["issue date", "bids accepted face value",
                         "bids accepted sale value"], cols
+
+
+class TestOurOwnFailuresAreNotBBsChanges:
+    """Three false alarms the watcher produced about itself, all caught before
+    they reached the desk — and all the same mistake in different clothes:
+    recording something about US as a fact about BB's page.
+
+    1. Chrome would not launch on the machine running a fetch. That was stored
+       as "the parse failed outright", the source went `degraded`, and the
+       guardian reported BB's page as suspect. The page was never served to
+       us at all.
+    2. The canary labelled its selector "largest table via curl_cffi",
+       putting the TRANSPORT into the shape — so the ordinary fallback to the
+       F5 handshake would have reported BB restructuring the page.
+    3. The canary and the production fetchers registered under one source
+       name while reading different views of the same page, giving one source
+       two rival baselines that each report the other as a change, weekly.
+
+    A watcher whose whole job is to cry only when something real moves cannot
+    afford any of them.
+    """
+
+    def test_a_failed_fetch_is_not_a_degraded_source(self):
+        snap = SW.fingerprint("omo_press", selector="", rows_seen=0, rows_parsed=0,
+                              transport_error="SessionNotCreatedException: chrome not reachable")
+        verdict, reasons = SW.compare(None, snap)
+        assert verdict == "unread", (verdict, reasons)
+        assert "could not be read" in reasons[0]
+
+    def test_a_failed_fetch_never_overwrites_a_known_good_shape(self):
+        s = _mem()
+        good = SW.fingerprint("omo_press", selector="a.pdf-list[onclick]",
+                              rows_seen=160, rows_parsed=94)
+        t0 = datetime.datetime(2026, 10, 1, 6, 0)
+        for d in range(4):
+            SW.record(s, good, now=t0 + datetime.timedelta(days=d))
+        dead = SW.fingerprint("omo_press", selector="", rows_seen=0, rows_parsed=0,
+                              transport_error="chrome not reachable")
+        verdict, _ = SW.record(s, dead, now=t0 + datetime.timedelta(days=5))
+        assert verdict == "unread"
+        from db import SourceSnapshot
+        assert s.query(SourceSnapshot).count() == 1, "a failed fetch registered a shape"
+        assert SW.established(s, "omo_press")["selector"] == "a.pdf-list[onclick]"
+
+    def test_a_structural_failure_is_still_degraded(self):
+        """The distinction has to cut both ways: a page we DID read and cannot
+        map is a real finding, and must not be excused as a transport blip."""
+        snap = SW.fingerprint("treasury", selector="table[0]", rows_seen=12, rows_parsed=0,
+                              error="required column(s) cutoff not found in BB's header")
+        assert SW.compare(None, snap)[0] == "degraded"
+
+    def test_the_canary_keeps_its_own_baseline(self):
+        import canary
+        assert canary.CANARY.endswith(":")
+        # Same page, two readers, two namespaces: the canary reads the default
+        # view, the fetcher POSTs a month form and sees a different table.
+        s = _mem()
+        t0 = datetime.datetime(2026, 10, 1, 6, 0)
+        prod = SW.fingerprint("treasury", selector="table[0]",
+                              headers=["issue date", "cut off yield"],
+                              rows_seen=9, rows_parsed=9)
+        cana = SW.fingerprint(canary.CANARY + "treasury", selector="largest table",
+                              headers=["issue date", "cut off yield"],
+                              rows_seen=12, rows_parsed=10)
+        for d in range(4):
+            SW.record(s, prod, now=t0 + datetime.timedelta(days=d))
+            SW.record(s, cana, now=t0 + datetime.timedelta(days=d))
+        v_prod, _ = SW.record(s, prod, now=t0 + datetime.timedelta(days=5))
+        v_cana, _ = SW.record(s, cana, now=t0 + datetime.timedelta(days=5))
+        assert (v_prod, v_cana) == ("ok", "ok"), "the two readers reported each other"
+
+    def test_the_selector_describes_the_page_not_the_transport(self):
+        """Reading the same page over a different transport is not a change."""
+        import re
+        from pathlib import Path
+        src = Path("canary.py").read_text(encoding="utf-8")
+        assert not re.search(r'selector=f?"largest table via', src), \
+            "the transport is back inside the selector"

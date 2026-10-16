@@ -218,6 +218,8 @@ NOT_WATCHED: Dict[str, str] = {
     "policy_rate_history": "seeded history behind policy_rate_snapshots",
     "mtm_snapshots": "watched as 'secondary' above (listed for completeness)",
     "source_snapshots": "structural fingerprints; watched by the canary itself",
+    "desk_marks": "the desk's own provisional cut-offs, entered by hand on "
+                  "auction day; not a BB feed, so it cannot go stale",
     "data_absences": "days BB itself does not publish, each one evidence from a "
                      "fetch; a ledger of holes, not a feed that can go stale",
 }

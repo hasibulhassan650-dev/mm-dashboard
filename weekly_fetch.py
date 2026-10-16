@@ -99,6 +99,23 @@ def main():
         session.close()
         if healed.get("total"):
             log.warning("Self-heal repaired %d row(s): %s", healed["total"], healed["repaired"])
+            # A repair that MOVES A DATE leaves the ladder stale by
+            # construction: daily_net_flow is a materialised aggregate, so the
+            # moment a coupon comes off Durga Puja every row it feeds is wrong
+            # until this runs. The hourly mode skips the GSOM pipeline, which
+            # is where the rebuild used to live — so a healed date would sit
+            # unreflected until the next full run. This reads events and
+            # writes the aggregate; it touches no network.
+            moved = {"coupon_payment_date", "maturity_payment_date",
+                     "auction_settlement", "omo-maturity-roll", "yield_auction_date"}
+            if moved & set(healed.get("repaired") or {}):
+                from engines.pipeline import rebuild_daily_flows
+                session = get_session()
+                try:
+                    n = rebuild_daily_flows(session)
+                    log.warning("Self-heal moved dates — rebuilt %d ladder row(s)", n)
+                finally:
+                    session.close()
     except Exception as exc:
         log.exception("Self-heal failed: %s", exc)
         errors.append(f"self_heal: {exc}")

@@ -190,7 +190,7 @@ def fetch_holidays() -> dict:
         from fetchers import source_watch as SW
         return {"rows": [], "refused": {}, "reason": f"{type(exc).__name__} {exc}",
                 "meta": SW.fingerprint("holidays", BB_HOLIDAY_URL,
-                                       error=f"could not read the page: {exc}")}
+                                       transport_error=f"{type(exc).__name__} {exc}")}
     out = parse_page(html)
     if not out["rows"]:
         out["reason"] = (out["meta"].get("error")

@@ -31,6 +31,7 @@ export const NAV: NavItem[] = [
   { href: "/portfolio",   label: "Portfolio",       icon: "briefcase" },
   { href: "/explore",     label: "Explore",         icon: "grid" },
   { href: "/research",    label: "Research",        icon: "pulse" },
+  { href: "/desk",        label: "Desk Entry",      icon: "ruler" },
   { href: "/press",       label: "Press Releases",  icon: "doc" },
   { href: "/guardian",    label: "Guardian",        icon: "pulse" },
   { href: "/glossary",    label: "Glossary",        icon: "book" },

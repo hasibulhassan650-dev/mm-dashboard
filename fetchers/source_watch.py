@@ -212,7 +212,7 @@ def fingerprint(source: str, url: str = "", selector: str = "",
                 unmapped: Optional[List[dict]] = None,
                 mapped: Optional[Dict[str, int]] = None,
                 corrections: Optional[Dict[str, int]] = None,
-                error: str = "") -> dict:
+                error: str = "", transport_error: str = "") -> dict:
     """One fetch, described structurally."""
     headers = [norm(h) for h in headers]
     shape = json.dumps({"selector": selector, "n": len(headers), "h": headers},
@@ -236,7 +236,15 @@ def fingerprint(source: str, url: str = "", selector: str = "",
         # folding them in would push the skip rate over its threshold and
         # report a page full of re-issues as "degraded".
         "corrections": dict(corrections or {}),
+        # A STRUCTURAL failure: the page was read and does not have what we
+        # require. That is a fact about BB.
         "error": error,
+        # A TRANSPORT failure: we could not read the page at all — Chrome
+        # would not start, the handshake timed out, the host refused. That is
+        # a fact about US, and recording it as the source degrading is how a
+        # local hiccup becomes "BB changed their page". It is deliberately not
+        # stored as a shape; the caller reports it as the fetch error it is.
+        "transport_error": transport_error,
     }
 
 
@@ -256,6 +264,8 @@ def compare(prev: Optional[dict], cur: dict) -> Tuple[str, List[str]]:
     """
     reasons: List[str] = []
 
+    if cur.get("transport_error"):
+        return "unread", [f"the page could not be read at all: {cur['transport_error']}"]
     if cur.get("error"):
         return "degraded", [f"the parse failed outright: {cur['error']}"]
 
@@ -376,6 +386,14 @@ def record(session, snap: dict, now: datetime.datetime = None) -> Tuple[str, Lis
     now = now or datetime.datetime.utcnow()
     prev = established(session, snap["source"])
     verdict, reasons = compare(prev, snap)
+
+    if verdict == "unread":
+        # Nothing was observed, so there is no shape to register. Storing a
+        # row here would overwrite a known-good fingerprint with the record of
+        # a failed Chrome launch, and the guardian would then report BB as
+        # having changed a page it never even served us.
+        log.warning("source %s: not read — %s", snap["source"], "; ".join(reasons))
+        return verdict, reasons
 
     row = session.query(SourceSnapshot).filter_by(
         source=snap["source"], structure_hash=snap["structure_hash"]).one_or_none()

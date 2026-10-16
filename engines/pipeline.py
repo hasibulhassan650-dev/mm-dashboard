@@ -1037,6 +1037,14 @@ def run_omo_fetch(days_back: int = 28, max_files: int = 20) -> dict:
     init_db()
     session = get_session()
     try:
+        # Load the calendar from the DATABASE before parsing anything. A
+        # tranche's maturity is derived as transaction + tenor rolled to the
+        # next working day AT PARSE TIME, so a process that never loaded the
+        # real holidays writes dates onto closures — which is how 15,464.92
+        # crore came to be shown maturing across Durga Puja twice: once from an
+        # old calendar, and again when CI re-derived it. Lazy auto-load covers
+        # most paths; this one is too consequential to leave to it.
+        _load_holidays(session)
         meta, reason = {}, None
         try:
             res = fetch_omo_no_browser(days_back=days_back, max_files=max_files)
@@ -1060,7 +1068,12 @@ def run_omo_fetch(days_back: int = 28, max_files: int = 20) -> dict:
             rows_seen=meta.get("rows_seen") or 0, rows_parsed=len(txns),
             skips={"not an OMO release": meta.get("skipped_not_omo") or 0,
                    "older than the window": meta.get("skipped_too_old") or 0},
-            error=(reason or "") if not txns else ""))
+            # Anchors are what tell the two apart: links were found and none
+            # parsed (structural), versus the page never arrived (transport).
+            error=((reason or "") if (not txns and meta.get("anchors_found")) else ""),
+            transport_error=("" if meta.get("anchors_found")
+                             else (reason or "the listing was not read"))
+                            if not txns else ""))
 
         # The listing this fetch just downloaded, kept whole. Daily, because
         # that is how often BB announces things — a weekly watcher would have
@@ -1135,6 +1148,114 @@ def run_primary_yield_history(months_back: int = 8) -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+
+def rebuild_daily_flows(session, date_from: datetime.date = None,
+                        date_to: datetime.date = None) -> int:
+    """Rebuild daily_net_flow from the events currently in the database.
+
+    Extracted from run_pipeline because it is needed in three places and was
+    being re-written by hand each time. The ladder is a MATERIALISED aggregate:
+    the moment the self-heal moves a coupon off Durga Puja, or a settlement
+    date rolls, every row it feeds is stale until this runs. It touches no
+    network — it reads events and writes the aggregate — so there is no excuse
+    for the hourly refresh to skip it after a repair.
+
+    Returns the number of daily rows written.
+    """
+    from sqlalchemy import delete
+    date_from = date_from or datetime.date.today() - datetime.timedelta(days=120)
+    date_to = date_to or datetime.date.today() + datetime.timedelta(days=365)
+
+    # Re-query ALL events from the DB for the range.
+    # Use DB as the source of truth, not the in-memory lists.
+    # This ensures any events from previous runs are included too.
+    # Filter by PAYMENT date, matching what build_daily_flows buckets on.
+    # Filtering on scheduled_date while bucketing on payment_date would drop
+    # an event scheduled just before the window but paid inside it, and vice
+    # versa at the far end — a silent off-by-one at both range edges.
+    db_coupons = session.query(CouponEvent).filter(
+        CouponEvent.payment_date >= date_from,
+        CouponEvent.payment_date <= date_to,
+    ).all()
+    db_maturities = session.query(MaturityEvent).filter(
+        MaturityEvent.payment_date >= date_from,
+        MaturityEvent.payment_date <= date_to,
+    ).all()
+    db_auctions = session.query(AuctionEvent).filter(
+        AuctionEvent.settlement_date >= date_from,
+        AuctionEvent.settlement_date <= date_to,
+    ).all()
+
+    # Convert ORM objects to dicts for aggregation engine
+    coupon_dicts = [{
+        "scheduled_date":      c.scheduled_date,
+        "payment_date":        c.payment_date,
+        "amount_bdt_mill":     c.amount_bdt_mill or 0.0,
+        "isin":                c.isin,
+        "data_quality":        c.data_quality,
+    } for c in db_coupons]
+
+    maturity_dicts = [{
+        "scheduled_date":      m.scheduled_date,
+        "payment_date":        m.payment_date,
+        "principal_bdt_mill":  m.principal_bdt_mill or 0.0,
+        "isin":                m.isin,
+        "data_quality":        m.data_quality,
+    } for m in db_maturities]
+
+    auction_dicts = [{
+        "settlement_date":             a.settlement_date,
+        "offered_amount_bdt_mill":     a.offered_amount_bdt_mill or 0.0,
+        "accepted_amount_bdt_mill":    a.accepted_amount_bdt_mill,
+        # The cash paid, which is what drains liquidity on settlement day.
+        "sale_value_bdt_mill":         a.sale_value_bdt_mill,
+        "outflow_status":              a.outflow_status,
+        "security_type":               a.security_type,
+        "data_quality":                a.data_quality,
+    } for a in db_auctions]
+
+    log.info(
+        "DB query for range %s→%s: %d coupons, %d maturities, %d auctions",
+        date_from, date_to,
+        len(coupon_dicts), len(maturity_dicts), len(auction_dicts)
+    )
+
+    # Aggregate.
+    # Buybacks: early principal repayments BB settles outside the maturity
+    # schedule. One row per event, read straight from its own table so a
+    # pipeline re-run can never drop it.
+    buyback_dicts = [{
+        "isin":                 b.isin,
+        "settlement_date":      b.settlement_date,
+        "accepted_face_crore":  b.accepted_face_crore,
+        "cash_paid_crore":      b.cash_paid_crore,
+    } for b in session.query(BuybackEvent).filter(
+        BuybackEvent.settlement_date >= date_from,
+        BuybackEvent.settlement_date <= date_to).all()]
+    if buyback_dicts:
+        log.info("  %d buyback event(s) in range", len(buyback_dicts))
+
+    daily_rows = build_daily_flows(
+        coupon_dicts, maturity_dicts, auction_dicts,
+        date_from, date_to, buyback_events=buyback_dicts,
+    )
+
+    # Persist daily_net_flow, replacing the range.
+    from sqlalchemy import delete
+    session.execute(
+        delete(DailyNetFlow).where(
+            DailyNetFlow.flow_date >= date_from,
+            DailyNetFlow.flow_date <= date_to,
+        )
+    )
+    for dr in daily_rows:
+        session.add(DailyNetFlow(**{
+            k: v for k, v in dr.items()
+            if k in DailyNetFlow.__table__.columns.keys()
+        }))
+    session.commit()
+    return len(daily_rows)
+
 
 def run_pipeline(
     date_from: datetime.date = None,
@@ -1248,95 +1369,8 @@ def run_pipeline(
         if date_to is None:
             date_to   = datetime.date.today() + datetime.timedelta(days=365)
 
-        # ── 8. Re-query ALL events from DB for the range ──────────────────────
-        # Use DB as the source of truth, not the in-memory lists.
-        # This ensures any events from previous runs are included too.
-        # Filter by PAYMENT date, matching what build_daily_flows buckets on.
-        # Filtering on scheduled_date while bucketing on payment_date would drop
-        # an event scheduled just before the window but paid inside it, and vice
-        # versa at the far end — a silent off-by-one at both range edges.
-        db_coupons = session.query(CouponEvent).filter(
-            CouponEvent.payment_date >= date_from,
-            CouponEvent.payment_date <= date_to,
-        ).all()
-        db_maturities = session.query(MaturityEvent).filter(
-            MaturityEvent.payment_date >= date_from,
-            MaturityEvent.payment_date <= date_to,
-        ).all()
-        db_auctions = session.query(AuctionEvent).filter(
-            AuctionEvent.settlement_date >= date_from,
-            AuctionEvent.settlement_date <= date_to,
-        ).all()
-
-        # Convert ORM objects to dicts for aggregation engine
-        coupon_dicts = [{
-            "scheduled_date":      c.scheduled_date,
-            "payment_date":        c.payment_date,
-            "amount_bdt_mill":     c.amount_bdt_mill or 0.0,
-            "isin":                c.isin,
-            "data_quality":        c.data_quality,
-        } for c in db_coupons]
-
-        maturity_dicts = [{
-            "scheduled_date":      m.scheduled_date,
-            "payment_date":        m.payment_date,
-            "principal_bdt_mill":  m.principal_bdt_mill or 0.0,
-            "isin":                m.isin,
-            "data_quality":        m.data_quality,
-        } for m in db_maturities]
-
-        auction_dicts = [{
-            "settlement_date":             a.settlement_date,
-            "offered_amount_bdt_mill":     a.offered_amount_bdt_mill or 0.0,
-            "accepted_amount_bdt_mill":    a.accepted_amount_bdt_mill,
-            # The cash paid, which is what drains liquidity on settlement day.
-            "sale_value_bdt_mill":         a.sale_value_bdt_mill,
-            "outflow_status":              a.outflow_status,
-            "security_type":               a.security_type,
-            "data_quality":                a.data_quality,
-        } for a in db_auctions]
-
-        log.info(
-            "DB query for range %s→%s: %d coupons, %d maturities, %d auctions",
-            date_from, date_to,
-            len(coupon_dicts), len(maturity_dicts), len(auction_dicts)
-        )
-
-        # ── 9. Aggregate ──────────────────────────────────────────────────────
-        # Buybacks: early principal repayments BB settles outside the maturity
-        # schedule. One row per event, read straight from its own table so a
-        # pipeline re-run can never drop it.
-        buyback_dicts = [{
-            "isin":                 b.isin,
-            "settlement_date":      b.settlement_date,
-            "accepted_face_crore":  b.accepted_face_crore,
-            "cash_paid_crore":      b.cash_paid_crore,
-        } for b in session.query(BuybackEvent).filter(
-            BuybackEvent.settlement_date >= date_from,
-            BuybackEvent.settlement_date <= date_to).all()]
-        if buyback_dicts:
-            log.info("  %d buyback event(s) in range", len(buyback_dicts))
-
-        daily_rows = build_daily_flows(
-            coupon_dicts, maturity_dicts, auction_dicts,
-            date_from, date_to, buyback_events=buyback_dicts,
-        )
-
-        # ── 10. Persist daily_net_flow (replace range) ────────────────────────
-        from sqlalchemy import delete
-        session.execute(
-            delete(DailyNetFlow).where(
-                DailyNetFlow.flow_date >= date_from,
-                DailyNetFlow.flow_date <= date_to,
-            )
-        )
-        for dr in daily_rows:
-            session.add(DailyNetFlow(**{
-                k: v for k, v in dr.items()
-                if k in DailyNetFlow.__table__.columns.keys()
-            }))
-        session.commit()
-        summary["daily_rows"] = len(daily_rows)
+        # ── 8-10. Rebuild the ladder from the events now in the DB ───────────
+        summary["daily_rows"] = rebuild_daily_flows(session, date_from, date_to)
 
         log.info(
             "Pipeline complete | fetched=%d | db_securities=%d | "
