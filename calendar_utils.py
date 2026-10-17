@@ -115,8 +115,14 @@ def _warn_if_year_uncovered(d: datetime.date) -> None:
         return
     if not any(h.year == d.year for h in _holiday_set):
         _warned_years.add(d.year)
+        # The advice used to be "seed the YAML". It is not, any more: BB's own
+        # holiday page is read every week (weekly_fetch step 14) and its list
+        # outranks the seed, so the honest instruction is to wait for BB — they
+        # post the next year in late December — and never to invent dates.
         log.warning("Holiday calendar has NO entries for %d — working-day results for that "
-                    "year assume weekends only. Seed data/seeds/holidays_*.yaml.", d.year)
+                    "year assume weekends only, so any date derived into it may be wrong. "
+                    "BB publishes the next year's list in late December and the weekly "
+                    "holiday fetch picks it up; do not seed it by hand.", d.year)
 
 
 def load_holidays(holidays: Set[datetime.date],
