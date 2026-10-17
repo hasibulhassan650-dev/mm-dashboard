@@ -180,6 +180,11 @@ DATASETS: List[Dataset] = [
             note="BB posts something most working days; a long silence here "
                  "means the listing stopped being read, which is how the OMO "
                  "outage hid. Gaps are not checked: BB skips days."),
+    Dataset("bgiib", "bgiib_auctions", "auction_date", WEEKLY,
+            "Islamic window (BGIIB)", "BB press release", step="bgiib",
+            gap_check=False,
+            note="BB auctions BGIIB weekly and publishes the result as a press "
+                 "release; the auction day moves, so gaps are not checked."),
     Dataset("buybacks", "buyback_events", "settlement_date", EVENT,
             "Bond buybacks", "BB press release (LMO)", step="press",
             gap_check=False,

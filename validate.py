@@ -918,17 +918,29 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
                     add("press", f"{serial} ({pub}) announces a BUYBACK and no buyback event "
                                  f"is recorded within three weeks of it — cash moved and the "
                                  f"ladder does not know: \"{(title or '')[:70]}\"")
-            # BGIIB is published weekly and nothing stores it yet. Stated once,
-            # with a count, rather than per release: a true gap in coverage is
-            # not the same as a defect in data we hold, and pretending
-            # otherwise would put thirteen identical lines in every report.
-            bg = q("SELECT COUNT(*), MAX(published_date) FROM press_releases "
-                   "WHERE category IN ('BGIIB', 'SUKUK')")
-            if bg and bg[0][0]:
-                add("press", f"{bg[0][0]} Islamic-window release(s) on record (latest "
-                             f"{bg[0][1]}) and no BGIIB dataset stores their figures — the "
-                             f"releases are captured, the auction results are not",
-                    "notice")
+            # The Islamic window is stored now, so this is no longer a coverage
+            # notice but a real check: a BGIIB RESULT with no auction row means
+            # a weekly auction the ladder and the curve cannot see.
+            for r in q("SELECT serial, published_date, subject_date FROM press_releases "
+                       "WHERE category IN ('BGIIB', 'SUKUK') "
+                       "AND LOWER(title) NOT LIKE '%notice%' "
+                       "AND published_date >= :lo ORDER BY published_date DESC",
+                       lo=today - datetime.timedelta(days=60)):
+                serial, pub, subj = r[0], r[1], r[2]
+                held = subj or pub
+                if not hasattr(held, "year"):
+                    try:
+                        held = datetime.date.fromisoformat(str(held)[:10])
+                    except ValueError:
+                        continue
+                got = q("SELECT COUNT(*) FROM bgiib_auctions WHERE auction_date "
+                        "BETWEEN :lo AND :hi",
+                        lo=held - datetime.timedelta(days=2),
+                        hi=held + datetime.timedelta(days=2))
+                if not got or not got[0][0]:
+                    add("bgiib", f"{serial} published {pub} reports a BGIIB auction held "
+                                 f"{held} and no figures are stored for it — the Islamic "
+                                 f"window is missing a week")
         except Exception as exc:
             s.rollback()
             add("press", f"the announcement-vs-event check could not run ({exc})")

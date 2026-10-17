@@ -468,6 +468,23 @@ def main():
     # consecutive hourly runs failed on "chrome not reachable" after this step
     # was added. One page, one fetch.
 
+    # ── 13b. Islamic window (BGIIB) ──────────────────────────────────────────
+    # Reads the PDFs of BGIIB releases that have no stored auction yet. It
+    # fetches no listing of its own — the OMO step records that — and returns
+    # immediately when nothing is pending, so in a normal week it costs one
+    # PDF download and no browser at all.
+    log.info("--- Step 13b: Islamic window (BGIIB) ---")
+    try:
+        from engines.pipeline import run_bgiib_fetch
+        bg = run_bgiib_fetch()
+        log.info("BGIIB OK | %d release(s), %d row(s) (%d new)", bg.get("releases", 0),
+                 bg.get("rows", 0), bg.get("added", 0))
+        for e in bg.get("errors") or []:
+            errors.append(e)
+    except Exception as exc:
+        log.exception("BGIIB fetch failed: %s", exc)
+        errors.append(f"bgiib: {exc}")
+
     # ── 14. BB's gazetted holiday list ───────────────────────────────────────
     # Weekly, because this is the one feed whose VALUE IS IN THE FUTURE: every
     # settlement date, maturity roll and working-day age is computed from it.

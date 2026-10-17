@@ -602,6 +602,40 @@ class PipelineRun(Base):
     quality      = Column(Text)            # JSON: integrity_check() report
 
 
+class BgiibAuction(Base):
+    """The Islamic window: Bangladesh Government Islami Investment Bond.
+
+    BB auctions BGIIB weekly and publishes the result as a press release.
+    Thirteen of them sat in `press_releases` with their figures stored nowhere,
+    so the Islamic window appeared in no ladder, no curve and no export — a
+    whole instrument missing from a dashboard whose first rule is to never miss
+    a product.
+
+    `war_epr_pct` is the weighted-average Expected Profit Rate, the
+    Islamic-finance counterpart of a yield and the figure the desk compares
+    against a T-Bill cut-off. `psr` is the profit-sharing ratio with the
+    government ("90:10") — a split, not a rate, and stored as text so nobody
+    can average it by accident.
+    """
+    __tablename__ = "bgiib_auctions"
+    __table_args__ = (UniqueConstraint("auction_date", "tenor_label"),)
+    id              = Column(Integer, primary_key=True, autoincrement=True)
+    auction_date    = Column(Date, nullable=False)   # the day it was HELD
+    tenor_label     = Column(String(8), nullable=False)   # 3M | 6M
+    tenor_months    = Column(Integer)
+    bids_offered    = Column(Integer)
+    offered_crore   = Column(Float)
+    bids_accepted   = Column(Integer)
+    accepted_crore  = Column(Float)
+    psr             = Column(String(12))   # "90:10" — a ratio, never a rate
+    war_epr_pct     = Column(Float)        # weighted average Expected Profit Rate
+    base_rate_range = Column(String(30))
+    epr_range       = Column(String(30))
+    source_serial   = Column(String(20))   # BB's own press-release serial
+    source          = Column(Text)
+    ingested_utc    = Column(DateTime)
+
+
 class DeskMark(Base):
     """What the desk saw at the auction, on the day — never what BB published.
 

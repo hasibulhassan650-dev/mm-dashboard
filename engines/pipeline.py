@@ -21,6 +21,7 @@ from config import GSOM_TBOND_URL, GSOM_FRTB_URL, GSOM_TBILL_URL
 from db import (
     init_db, get_session,
     Security, CouponEvent, MaturityEvent, BuybackEvent, PressRelease,
+    BgiibAuction,
     AuctionEvent, HolidayCalendar, DailyNetFlow, MtmSnapshot,
     PrimaryYieldSnapshot, OMOTransaction,
 )
@@ -1046,6 +1047,56 @@ def run_press_fetch() -> dict:
     except Exception as exc:
         session.rollback()
         log.exception("Press fetch failed")
+        return {"rows": 0, "errors": [str(exc)]}
+    finally:
+        session.close()
+
+
+def run_bgiib_fetch(limit: int = 12) -> dict:
+    """Parse BGIIB (Islamic window) results out of the releases already captured.
+
+    Reads the PDFs of press releases that have no stored auction yet — the
+    listing itself is recorded by the OMO step, so this adds no page fetch of
+    its own, only the PDFs it has not read before. Thirteen releases had been
+    sitting there unparsed, which is why the Islamic window appeared nowhere.
+    """
+    from fetchers.islamic import fetch_bgiib
+    init_db()
+    session = get_session()
+    try:
+        out = fetch_bgiib(session, limit=limit)
+        rows = out["rows"]
+        if not rows:
+            msg = out.get("reason")
+            if out["refused"]:
+                msg = f"{msg}; refused: {out['refused']}"
+            if msg:
+                log.warning("BGIIB: %s", msg)
+            return {"rows": 0, "releases": 0, "refused": out["refused"],
+                    "errors": [f"bgiib: {msg}"] if out["refused"] else []}
+
+        now = datetime.datetime.utcnow()
+        added = updated = 0
+        for r in rows:
+            existing = session.query(BgiibAuction).filter_by(
+                auction_date=r["auction_date"], tenor_label=r["tenor_label"]).one_or_none()
+            if existing is None:
+                session.add(BgiibAuction(ingested_utc=now, **r))
+                added += 1
+            else:
+                for k, v in r.items():
+                    setattr(existing, k, v)
+                existing.ingested_utc = now
+                updated += 1
+        session.commit()
+        log.info("BGIIB: %d release(s) read, %d row(s) added, %d updated",
+                 out["releases"], added, updated)
+        return {"rows": len(rows), "releases": out["releases"], "added": added,
+                "updated": updated, "refused": out["refused"],
+                "errors": [f"bgiib: refused {out['refused']}"] if out["refused"] else []}
+    except Exception as exc:
+        session.rollback()
+        log.exception("BGIIB fetch failed")
         return {"rows": 0, "errors": [str(exc)]}
     finally:
         session.close()

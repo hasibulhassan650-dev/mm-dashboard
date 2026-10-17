@@ -303,24 +303,44 @@ def _parse_page(html: str, snapshot_date: datetime.date,
         orig_label, _orig_type = _rem_to_tenor(name_cell)
         orig_years = _tenor_years(orig_label) if orig_label else None
 
-        # BB states the remaining maturity TWICE on a re-issue: in its own
-        # column ("2yr") and inside the ISIN cell ("Re-issuance: 2.60 Yr.").
-        # Two statements of one fact is the strongest check available, so when
-        # they disagree the explicit marker wins and the disagreement is
-        # counted rather than swallowed. This is what makes the 5Y-beside-2Y
-        # duplicate impossible to store silently a second time.
-        # Not for an FRTB: its label is a PRODUCT label (3Y_FRTB is the reset
-        # tenor, which is what the desk trades), not a point on the curve, so
-        # BB's remaining-maturity figure is not what names it.
-        if is_reissue and reissue_rem and stype != "FRTB"                 and not (tenor_label or "").endswith("_FRTB"):
+        # BB states the remaining maturity twice on a re-issue, and the two
+        # are DIFFERENT FACTS rather than one fact told twice. The column is
+        # BB classifying the bond onto its standard tenor grid — 2 / 5 / 10 /
+        # 15 / 20 — and that classification is what every chart, export and
+        # curve keys on. The marker inside the ISIN cell is the exact remaining
+        # life.
+        #
+        # Treating a difference as a misparse and preferring the marker was
+        # wrong, and it showed up in a day: BD0942241201 had a column of 15Y
+        # against a marker of 16.26 Yr, BD0945081208 a column of 20Y against
+        # 18.93 Yr, and the override relabelled them 16Y and 18Y — tenors BB
+        # does not auction, which no chart plots and which the yield-label
+        # check rightly reported as unknown. BB was not disagreeing with
+        # itself; it was saying two true things.
+        #
+        # So the marker is a CHECK. The column wins, the exact life is kept in
+        # reissue_remaining, and only an implausible distance between them — a
+        # bond filed more than three years from its own remaining life, which
+        # BB's grid spacing cannot explain — means one of the two was misread.
+        # That row is skipped rather than guessed at.
+        if (is_reissue and reissue_rem and stype != "FRTB"
+                and not (tenor_label or "").endswith("_FRTB")):
             marker_label, _m_type = _rem_to_tenor(reissue_rem)
-            if marker_label and marker_label != tenor_label:
-                correct(f"the remaining-maturity column ({tenor_label}) "
-                        f"disagreed with BB's own re-issuance marker "
-                        f"({marker_label}); used the marker")
-                tenor_label = marker_label
-                if stype in (None, "T_BOND"):
-                    stype = _m_type or stype
+            marker_years = _tenor_years(marker_label) if marker_label else None
+            label_years = _tenor_years(tenor_label)
+            if marker_years is not None and label_years is not None:
+                drift = abs(marker_years - label_years)
+                if drift > 3.0:
+                    skip(f"remaining-maturity column says {tenor_label} but BB's own "
+                         f"re-issuance marker says {reissue_rem} ({drift:.1f} years "
+                         f"apart) — one of the two is misread, so the row is not stored")
+                    continue
+                if marker_label != tenor_label:
+                    # Normal and expected: BB files a 16.26-year bond under its
+                    # 15Y point. Recorded so the fingerprint shows how often it
+                    # happens, never acted on.
+                    correct(f"filed under {tenor_label} with {reissue_rem} actually "
+                            f"remaining — BB's own grid classification, kept as is")
 
         results.append({
             "snapshot_date":     snapshot_date,

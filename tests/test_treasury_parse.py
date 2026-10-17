@@ -238,24 +238,50 @@ class TestOneAuctionCannotBeStoredUnderTwoLabels:
         assert rows[0]["tenor_label"] == "2Y"
         assert rows[0]["original_tenor_label"] == "5Y"
 
-    def test_bbs_own_marker_overrides_a_disagreeing_column(self):
-        """BB's remaining-maturity column says 5yr; its ISIN cell says 2.60 Yr.
+    def test_bbs_grid_classification_is_what_the_label_keeps(self):
+        """The column and the marker are two different facts, not one twice.
 
-        This is the shape of the bug: whatever made the column read as the
-        original tenor, the marker is explicit and wins.
+        The column is BB filing the bond on its standard tenor grid — 2 / 5 /
+        10 / 15 / 20 — and that is what every chart, export and curve keys on.
+        The marker is the exact remaining life. Preferring the marker produced
+        labels BB does not auction: on 16-Oct-2026 a 20-year bond with 16.26
+        years left became "16Y" and another with 18.93 became "18Y", tenors no
+        chart plots and which the yield-label check reported as unknown within
+        a day. BB was not contradicting itself; it was stating two true things.
         """
-        rows = _parse_page(self._REISSUE.replace("REM", "5yr"), SNAP)
-        assert rows[0]["tenor_label"] == "2Y", \
-            "the explicit re-issuance marker must win over a disagreeing column"
-        assert rows[0]["original_tenor_label"] == "5Y"
+        # The real pair from 22-Sep-2026: a 20-year bond with 16.26 years left,
+        # which BB files under its 15Y point.
+        html = (self._REISSUE.replace("REM", "15yr")
+                .replace("2.60 Yr", "16.26 Yr").replace("5yr T.Bond", "20yr T.Bond"))
+        rows = _parse_page(html, SNAP)
+        assert rows[0]["tenor_label"] == "15Y",             "BB's own grid classification must survive"
+        # The exact life is not lost — it is kept where it belongs.
+        assert rows[0]["reissue_remaining"] == "16.26 Yr"
+        assert rows[0]["original_tenor_label"] == "20Y"
 
-    def test_the_correction_is_counted_but_is_not_a_skip(self):
+    def test_the_difference_is_recorded_without_being_acted_on(self):
+        """A bond filed a year or two from its exact life is BB rounding onto
+        its own grid. It is counted, so the fingerprint shows how often that
+        happens, and nothing is changed. It is NOT a skip: no row was dropped.
+        """
         meta = {}
-        _parse_page(self._REISSUE.replace("REM", "5yr"), SNAP, meta)
+        rows = _parse_page(self._REISSUE.replace("REM", "5yr"), SNAP, meta)
+        assert len(rows) == 1 and rows[0]["tenor_label"] == "5Y"
         assert meta["rows_parsed"] == 1
         assert meta["rows_skipped"] == 0, "nothing was dropped"
         assert sum(meta["corrections"].values()) == 1
-        assert "marker" in " ".join(meta["corrections"])
+        assert "actually remaining" in " ".join(meta["corrections"])
+
+    def test_an_implausible_distance_means_one_reading_is_wrong(self):
+        """Grid spacing explains two or three years, not thirteen. Beyond that
+        one of the two is misread, and the row is skipped rather than guessed.
+        """
+        meta = {}
+        rows = _parse_page(self._REISSUE.replace("REM", "20yr"), SNAP, meta)
+        assert rows == [], "20Y against a 2.60 Yr marker was stored anyway"
+        assert sum(meta["skip_reasons"].values()) == 1
+        assert "misread" in " ".join(meta["skip_reasons"])
+
 
     def test_a_layout_with_no_remaining_maturity_column_refuses(self):
         """Rather than relabelling every row from the tenor-name column."""
