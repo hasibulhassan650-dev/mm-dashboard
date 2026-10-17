@@ -191,3 +191,89 @@ class TestTheGapCheckRespectsOnlyWhatWasProved:
         absences.confirm_absences(s, "fxmarket", fetched, NO_HOLIDAYS)
         s.commit()
         assert absences.summary(s) == {"fxmarket": {"count": 1, "latest": "2026-09-10"}}
+
+
+class TestTheCurrentMonthIsAskedForExplicitly:
+    """The default page is a rolling tail, so the fetch must not rely on it.
+
+    `fetch_interbank_fx` looped from back=1: the current month came only from
+    the default view, which on 17-Oct-2026 showed 10-14 Oct and nothing
+    earlier. Any current-month day a run missed was then lost until the month
+    turned — the same failure that cost interbank_repo 27-30 Sep — and the
+    data could never prove anything about the days BB omits, because a tail
+    says nothing about what precedes it.
+    """
+
+    def test_the_month_form_is_posted_for_the_current_month(self, monkeypatch):
+        import datetime
+
+        import fetchers.interbank_fx as ibfx
+
+        asked = []
+
+        def _fake_get(session, url, data=None):
+            if data:
+                asked.append((data.get("select_year"), data.get("select_month")))
+            return "<table></table>"
+
+        monkeypatch.setattr(ibfx, "_get", _fake_get)
+        monkeypatch.setattr(ibfx, "parse_interbank_fx_html",
+                            lambda *a, **k: [])
+        ibfx.fetch_interbank_fx(months_back=1)
+
+        today = datetime.date.today()
+        this_month = (str(today.year), f"{today.month:02d}")
+        assert this_month in asked, (
+            f"the current month was never requested explicitly — only the default "
+            f"page's rolling tail. Months asked for: {asked}")
+
+    def test_previous_months_are_still_requested(self, monkeypatch):
+        import datetime
+
+        import fetchers.interbank_fx as ibfx
+
+        asked = []
+        monkeypatch.setattr(ibfx, "_get", lambda s, u, data=None: (
+            asked.append((data or {}).get("select_month")) or "<table></table>"))
+        monkeypatch.setattr(ibfx, "parse_interbank_fx_html", lambda *a, **k: [])
+        ibfx.fetch_interbank_fx(months_back=2)
+        # Three distinct months (this one and the two before), each for every
+        # segment, so a missed run self-heals rather than losing days.
+        assert len({m for m in asked if m}) == 3, asked
+
+
+class TestBothToolsAgreeAboutWhatBBOmits:
+    """audit.py counted a confirmed absence as a defect while validate.py
+    passed over it, so the two reported different numbers for the same
+    database. A pair of checks that disagree is a pair nobody can act on."""
+
+    def test_the_sweep_passes_over_a_confirmed_absence(self, monkeypatch):
+        import audit
+        import validate
+        s = _mem()
+        gap = D(2026, 9, 10)
+        fetched = _working_days(D(2026, 9, 1), D(2026, 9, 30), skip=(gap,))
+        _store(s, fetched)
+        absences.confirm_absences(s, "fxmarket", fetched, NO_HOLIDAYS)
+        s.commit()
+
+        bind = s.get_bind()
+        monkeypatch.setattr(audit, "get_session", lambda: sessionmaker(bind=bind)())
+        monkeypatch.setattr(validate, "get_session", lambda: sessionmaker(bind=bind)())
+
+        rep = audit.sweep(session=s, today=D(2026, 10, 17), gap_window_days=120)
+        fx = [f for f in rep["findings"] if f["dataset"] == "fxmarket"
+              and f["kind"] == "gap"]
+        assert fx == [], f"the sweep still calls BB's own omission our gap: {fx}"
+        vrep = validate.integrity_check()
+        assert not [i for i in vrep["issues"] if "fxmarket" in i and "missing INSIDE" in i]
+
+    def test_an_unproved_gap_is_a_defect_in_both(self, monkeypatch):
+        import audit
+        s = _mem()
+        gap = D(2026, 9, 10)
+        _store(s, _working_days(D(2026, 9, 1), D(2026, 9, 30), skip=(gap,)))
+        rep = audit.sweep(session=s, today=D(2026, 10, 17), gap_window_days=120)
+        fx = [f for f in rep["findings"] if f["dataset"] == "fxmarket"
+              and f["kind"] == "gap"]
+        assert fx, "an unproved gap stopped being reported"

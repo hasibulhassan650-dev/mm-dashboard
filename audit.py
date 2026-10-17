@@ -38,17 +38,6 @@ log = logging.getLogger("audit")
 SEV_ORDER = {"defect": 0, "waiting": 1, None: 2}
 
 
-def _holidays(session) -> set:
-    try:
-        rows = session.execute(text(
-            "SELECT calendar_date FROM holiday_calendar WHERE "
-            + _cal.CLOSURE_SQL)).fetchall()
-        return {r[0] for r in rows if hasattr(r[0], "year")}
-    except Exception:
-        session.rollback()
-        return set()
-
-
 def _as_date(v) -> Optional[datetime.date]:
     if v is None or hasattr(v, "year"):
         return v
@@ -59,6 +48,17 @@ def _as_date(v) -> Optional[datetime.date]:
         return datetime.date.fromisoformat(t)
     except ValueError:
         return None
+
+
+def _holidays(session) -> set:
+    try:
+        rows = session.execute(text(
+            "SELECT calendar_date FROM holiday_calendar WHERE "
+            + _cal.CLOSURE_SQL)).fetchall()
+        return {d for d in (_as_date(r[0]) for r in rows) if d is not None}
+    except Exception:
+        session.rollback()
+        return set()
 
 
 def sweep(session=None, today: datetime.date = None, gap_window_days: int = 120) -> dict:
@@ -129,7 +129,12 @@ def sweep(session=None, today: datetime.date = None, gap_window_days: int = 120)
             except Exception:
                 session.rollback()
                 rows = []
-            present = {r[0] for r in rows if hasattr(r[0], "year")}
+            # Raw SQL hands dates back as STRINGS on SQLite and as dates on
+            # Postgres. Filtering on hasattr(..., "year") dropped every row on
+            # SQLite, so this entire gap check was silently dead outside
+            # production — and therefore untestable, which is how it stayed
+            # dead. Coerce instead of discarding.
+            present = {d for d in (_as_date(r[0]) for r in rows) if d is not None}
             if present:
                 start = max(min(present), since)
                 gaps = EX.missing_working_days(present, start, max(present), holidays)
