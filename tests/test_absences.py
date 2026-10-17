@@ -59,7 +59,7 @@ def _store(s, dates):
     s.commit()
 
 
-class TestAWholeMonthIsEvidence:
+class TestAMonthAnchoredWindowIsEvidence:
     def test_a_day_missing_from_a_complete_month_is_recorded(self):
         s = _mem()
         gap = D(2026, 9, 10)
@@ -71,7 +71,7 @@ class TestAWholeMonthIsEvidence:
         assert got == [gap], got
         row = s.query(DataAbsence).one()
         assert row.dataset == "fxmarket"
-        assert "complete month" in (row.reason or "")
+        assert "from the start of" in (row.reason or "")
         assert row.source == "BB interbank FX page"
 
     def test_the_record_says_which_window_proved_it(self):

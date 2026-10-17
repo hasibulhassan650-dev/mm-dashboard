@@ -55,17 +55,28 @@ def absent_dates(session, dataset: str) -> Set[datetime.date]:
     return {d for d in (_as_date(r[0]) for r in rows) if d is not None}
 
 
-def _complete_months(got: List[datetime.date],
-                     holidays: Set[datetime.date]) -> List[tuple]:
-    """The calendar months this fetch returned IN FULL, as (first, last) pairs.
+def _anchored_windows(got: List[datetime.date],
+                      holidays: Set[datetime.date]) -> List[tuple]:
+    """The months this fetch returned FROM THEIR START, as (first, last) pairs.
 
     This is the rule that makes an absence credible, and it was learned the
-    hard way. Asking BB for the CURRENT month returns a rolling tail — on
-    15-Oct-2026 its interbank FX page gave 10-14 Oct and nothing earlier,
-    though it had published 01-08 Oct and we hold those rows. A window like
-    that proves nothing about the days it omits. A PAST month comes back whole,
-    first working day to last, and a working day missing from a whole month is
-    then real evidence.
+    hard way. Asking BB for the CURRENT month through its default page returns
+    a rolling tail — on 15-Oct-2026 the interbank FX page gave 10-14 Oct and
+    nothing earlier, though BB had published 01-08 Oct. A window like that
+    proves nothing whatever about the days it omits, and reading it as evidence
+    recorded five absences that were not absences.
+
+    What matters is the ANCHOR, not completeness. A window that begins at or
+    before the month's first working day has cut nothing off ahead of the date
+    in question, so a working day missing from inside it is missing from BB.
+    Requiring the month to be finished as well was stricter than the purpose
+    needed: BB's explicit month query for October returned 01-Oct onward on
+    17-Oct, which settles 08-Oct beyond doubt while October still has a
+    fortnight to run.
+
+    The upper bound is still the newest date fetched, and candidates must sit
+    STRICTLY inside the window — so BB's publication lag at the newest edge can
+    never be mistaken for an omission.
     """
     import engines.expectations as EX
     out = []
@@ -84,8 +95,11 @@ def _complete_months(got: List[datetime.date],
         if first_wd is None or last_wd is None:
             continue
         in_month = [d for d in got if (d.year, d.month) == (y, m)]
-        if in_month and min(in_month) <= first_wd and max(in_month) >= last_wd:
-            out.append((first_wd, last_wd))
+        if in_month and min(in_month) <= first_wd:
+            # Judge up to the newest date this month actually returned, not to
+            # the month's end: a month still running has days BB has not
+            # reached, and they are not absences.
+            out.append((first_wd, min(max(in_month), last_wd)))
     return out
 
 
@@ -99,7 +113,7 @@ def confirm_absences(session, dataset: str, fetched_dates: Iterable,
     Two conditions, both required:
 
       * the date sits inside a calendar month this fetch returned IN FULL (not
-        the current month's rolling tail — see `_complete_months`);
+        a rolling tail — see `_anchored_windows`);
       * we hold no row for it either. A day we already have is not a gap, and
         a day we have that BB no longer shows is evidence about BB's archive,
         never about what BB published.
@@ -114,7 +128,7 @@ def confirm_absences(session, dataset: str, fetched_dates: Iterable,
         # proof about what BB publishes.
         return []
 
-    windows = _complete_months(got, holidays)
+    windows = _anchored_windows(got, holidays)
     if not windows:
         return []
     have = set(stored_dates) if stored_dates is not None else _stored_dates(session, dataset)
@@ -131,7 +145,7 @@ def confirm_absences(session, dataset: str, fetched_dates: Iterable,
             session.add(DataAbsence(
                 dataset=dataset, absent_date=d, source=source, verified_utc=now,
                 checks=1,
-                reason=reason or (f"BB's page, re-read over the complete month(s) "
+                reason=reason or (f"BB's page, re-read from the start of "
                                   f"{', '.join(f'{a}..{b}' for a, b in windows)}, "
                                   f"carries no row for this working day and nor "
                                   f"do we")))

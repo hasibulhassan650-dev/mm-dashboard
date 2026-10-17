@@ -144,7 +144,14 @@ def fetch_interbank_fx(months_back: int = 2) -> List[Dict]:
         log.info("Interbank FX: %d rows from the current page", len(rows))
 
         today = datetime.date.today()
-        for back in range(1, max(0, months_back) + 1):
+        # From 0, not 1: the default page shows a ROLLING TAIL of the current
+        # month — on 17-Oct-2026 it gave 10-14 Oct and nothing earlier, while
+        # an explicit month query returned 01-Oct onward. Relying on the tail
+        # means any current-month day a run misses is lost until the month
+        # turns, and it also makes the data unable to prove anything about the
+        # days BB omits. Asking for the current month explicitly costs three
+        # requests and makes a missed run self-healing.
+        for back in range(0, max(0, months_back) + 1):
             month = today.month - back
             year = today.year + (month - 1) // 12
             month = (month - 1) % 12 + 1
