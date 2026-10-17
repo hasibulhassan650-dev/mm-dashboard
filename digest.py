@@ -176,9 +176,9 @@ def build() -> tuple:
             parts = ", ".join(f"`{k}` {v['count']} (latest {v['latest']})"
                               for k, v in sorted(_abs.items()))
             lines.append(f"**Known holes at BB: {sum(v['count'] for v in _abs.values())}** — "
-                         f"{parts}. Confirmed absent from a complete month of BB's own "
-                         f"page, so the gap check passes over them; they are holes in the "
-                         f"record, not in our fetching.\n")
+                         f"{parts}. Confirmed absent by re-reading BB's own page from the "
+                         f"start of the month, so the gap check passes over them; they are "
+                         f"holes in the record, not in our fetching.\n")
 
         if rep.get("waiting"):
             lines.append(f"**Waiting on Bangladesh Bank: {rep.get('waiting_count')}** — "
