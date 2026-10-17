@@ -1142,8 +1142,20 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
                 # after this one and the report silently truncates.
                 s.rollback()
                 continue
-            present = {r[0] if hasattr(r[0], "year") else None for r in rows}
-            present.discard(None)
+            # Coerce, never discard: raw SQL returns date STRINGS on SQLite and
+            # dates on Postgres, so dropping the strings made this entire gap
+            # check dead everywhere but production — including in the tests
+            # written to prove it works.
+            present = set()
+            for r in rows:
+                v = r[0]
+                if hasattr(v, "year"):
+                    present.add(v)
+                    continue
+                try:
+                    present.add(datetime.date.fromisoformat(str(v)[:10]))
+                except ValueError:
+                    pass
             if not present:
                 continue
             gaps = _EXPECT.missing_working_days(

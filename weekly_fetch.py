@@ -397,9 +397,19 @@ def main():
         from engines.absences import confirm_absences
         from engines.pipeline import _load_holidays
         _load_holidays(session)
-        hol = {r[0] for r in session.execute(_sa_text(
+        import datetime as _d2
+
+        def _asd(v):
+            if v is None or hasattr(v, "year"):
+                return v
+            try:
+                return _d2.date.fromisoformat(str(v)[:10])
+            except ValueError:
+                return None
+
+        hol = {d for d in (_asd(r[0]) for r in session.execute(_sa_text(
             "SELECT calendar_date FROM holiday_calendar WHERE "
-            + _cal_closure())).fetchall() if hasattr(r[0], "year")}
+            + _cal_closure())).fetchall()) if d is not None}
         gone = confirm_absences(session, "fxmarket",
                                 [r.get("trade_date") for r in rows_fx], hol,
                                 source="BB interbank FX market page")

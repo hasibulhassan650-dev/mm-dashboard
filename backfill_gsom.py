@@ -48,9 +48,9 @@ PAGES = (("T_BOND", GSOM_TBOND_URL, False),
 def missing_dates(session, since: datetime.date = None) -> list:
     """Working days inside the stored range with no GSOM snapshot at all."""
     since = since or (datetime.date.today() - datetime.timedelta(days=180))
-    hol = {r[0] for r in session.execute(text(
-        "SELECT calendar_date FROM holiday_calendar WHERE " + cal.CLOSURE_SQL)).fetchall()
-        if hasattr(r[0], "year")}
+    hol = {d for d in (_as_date(r[0]) for r in session.execute(text(
+        "SELECT calendar_date FROM holiday_calendar WHERE "
+        + cal.CLOSURE_SQL)).fetchall()) if d is not None}
     present = {r[0] for r in session.execute(text(
         "SELECT DISTINCT settlement_date FROM mtm_snapshots WHERE settlement_date >= :s"),
         {"s": str(since)}).fetchall() if hasattr(r[0], "year")}

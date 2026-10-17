@@ -265,15 +265,27 @@ class TestBothToolsAgreeAboutWhatBBOmits:
         fx = [f for f in rep["findings"] if f["dataset"] == "fxmarket"
               and f["kind"] == "gap"]
         assert fx == [], f"the sweep still calls BB's own omission our gap: {fx}"
-        vrep = validate.integrity_check()
-        assert not [i for i in vrep["issues"] if "fxmarket" in i and "missing INSIDE" in i]
+        # limit_per_rule=200, deliberately: the default caps each table at 8
+        # findings, and on a bare database the freshness bucket fills with
+        # staleness before the gap is reached — so this assertion passed
+        # whether or not the skip worked. A test that cannot fail is worse
+        # than no test.
+        vrep = validate.integrity_check(limit_per_rule=200)
+        gap_lines = [i for i in vrep["issues"]
+                     if "fxmarket" in i and "missing INSIDE" in i]
+        assert gap_lines == [], f"validate still reports BB's own omission: {gap_lines}"
 
     def test_an_unproved_gap_is_a_defect_in_both(self, monkeypatch):
         import audit
+        import validate
         s = _mem()
         gap = D(2026, 9, 10)
         _store(s, _working_days(D(2026, 9, 1), D(2026, 9, 30), skip=(gap,)))
         rep = audit.sweep(session=s, today=D(2026, 10, 17), gap_window_days=120)
         fx = [f for f in rep["findings"] if f["dataset"] == "fxmarket"
               and f["kind"] == "gap"]
-        assert fx, "an unproved gap stopped being reported"
+        assert fx, "the sweep stopped reporting an unproved gap"
+        bind = s.get_bind()
+        monkeypatch.setattr(validate, "get_session", lambda: sessionmaker(bind=bind)())
+        vrep = validate.integrity_check(limit_per_rule=200)
+        assert [i for i in vrep["issues"] if "fxmarket" in i and "missing INSIDE" in i],             "validate stopped reporting an unproved gap"
