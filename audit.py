@@ -29,6 +29,7 @@ sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.abspath(_
 from sqlalchemy import inspect, text
 
 import calendar_utils as _cal
+import engines.absences as _absences
 import engines.expectations as EX
 from db import get_session
 
@@ -132,6 +133,16 @@ def sweep(session=None, today: datetime.date = None, gap_window_days: int = 120)
             if present:
                 start = max(min(present), since)
                 gaps = EX.missing_working_days(present, start, max(present), holidays)
+                # Days BB itself does not publish, each established by re-reading
+                # BB's own page from the start of the month. validate.py already
+                # passes over these; this did not, so the two tools reported
+                # different numbers of defects for the same database — the kind
+                # of contradiction that makes both of them unusable.
+                known = _absences.absent_dates(session, ds.key)
+                skipped_known = len([g for g in gaps if g in known])
+                gaps = [g for g in gaps if g not in known]
+                if skipped_known:
+                    row["known_absences"] = skipped_known
                 row["gaps"] = len(gaps)
                 row["gap_dates"] = [str(g) for g in gaps[:20]]
                 if gaps:
@@ -187,6 +198,14 @@ def render(rep: dict) -> str:
                    f"{d['latest'] or '—'} | {d['age_days'] if d['age_days'] is not None else '—'} "
                    f"| {gaps if gaps is not None else '—'} | {state} |")
     out.append("")
+    known = {d["label"]: d["known_absences"] for d in rep["datasets"]
+             if d.get("known_absences")}
+    if known:
+        out.append("Days BB itself does not publish, passed over rather than counted as "
+                   "gaps (each proven by re-reading BB's own page from the start of the "
+                   "month): "
+                   + ", ".join(f"**{k}** {v}" for k, v in sorted(known.items())) + ".")
+        out.append("")
     if rep["findings"]:
         out.append("## Backlog, worst first")
         out.append("")
