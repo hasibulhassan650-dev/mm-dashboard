@@ -76,6 +76,16 @@ EXPORTS: List[Export] = [
            ["days", "date_from", "date_to"],
            "daily_net_flow", "flow_date",
            sheets="Ladder · Cumulative"),
+    Export("islamic", "Islamic Window (BGIIB)",
+           "/api/islamic/export",
+           "Every BGIIB auction BB has published: bids, offered and accepted "
+           "amounts, the profit-sharing ratio, weighted-average Expected Profit "
+           "Rate and both rate ranges — with the comparable T-Bill cut-off and "
+           "ITS own auction date beside each row, because BGIIB is auctioned on "
+           "Tuesdays and T-Bills on Sundays and the two are never the same day.",
+           ["weeks"],
+           "bgiib_auctions", "auction_date",
+           sheets="BGIIB auctions · By tenor"),
     Export("model", "Liquidity Model (live formulas)",
            "/api/flows/model/export",
            "A workbook that recalculates rather than a report. The Assumptions "

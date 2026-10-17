@@ -18,6 +18,7 @@ nothing is interpolated to manufacture a pair.
 import datetime
 
 from fastapi import APIRouter, Query
+from fastapi.responses import Response
 from sqlalchemy import text
 
 from db import get_session
@@ -98,3 +99,69 @@ def get_islamic(weeks: int = Query(26, ge=1, le=260)):
         }
     finally:
         session.close()
+
+
+XLSX_MEDIA = ("application/vnd.openxmlformats-officedocument."
+              "spreadsheetml.sheet")
+
+
+@router.get("/export")
+def export_islamic(weeks: int = Query(104, ge=1, le=520)):
+    """The Islamic window as a workbook.
+
+    Built because the dataset existed and the export hub did not list it — a
+    series the desk can see on screen but cannot take away is half a feature.
+    Carries the T-Bill comparison with ITS OWN date in a separate column, so
+    nobody reading the spreadsheet mistakes it for a same-day print.
+    """
+    from .export_logic import build_workbook, filename
+
+    p = get_islamic(weeks=weeks)
+    rows = [{
+        "Auction Date": a["auction_date"],
+        "Tenor": a["tenor_label"],
+        "Bids Offered": a["bids_offered"],
+        "Offered (Cr)": a["offered_crore"],
+        "Bids Accepted": a["bids_accepted"],
+        "Accepted (Cr)": a["accepted_crore"],
+        "Profit Sharing Ratio": a["psr"],
+        "Wtd Avg EPR %": a["war_epr_pct"],
+        "Base Rate Range": a["base_rate_range"],
+        "EPR Range": a["epr_range"],
+        "Comparable T-Bill": a["comparable_tbill_tenor"],
+        "T-Bill Cut-off %": a["comparable_tbill_cutoff_pct"],
+        "T-Bill Auction Date": a["comparable_tbill_date"],
+        "EPR less T-Bill (bp)": a["epr_minus_tbill_bps"],
+        "BB Release": a["source_serial"],
+        "Source": a["source"],
+    } for a in p["auctions"]]
+    summary = [{
+        "Tenor": t["tenor_label"], "Auctions": t["auctions"],
+        "Accepted (Cr)": t["accepted_crore"],
+        "Latest EPR %": t["latest_epr_pct"], "Latest Auction": t["latest_date"],
+    } for t in p["by_tenor"]]
+
+    body = build_workbook(
+        "Bangladesh Islamic Window — BGIIB",
+        [("BGIIB auctions", rows), ("By tenor", summary)],
+        facts=[("Window", f"last {weeks} weeks to {p['as_of']}"),
+               ("Latest auction", p["latest_auction"] or "none"),
+               ("Unit", "BDT crore; EPR and cut-offs in per cent"),
+               ("Source", "Bangladesh Bank — BGIIB auction result press releases")],
+        caveats=[
+            "EPR is the Expected Profit Rate, the Islamic-finance counterpart of a yield "
+            "and the figure to hold against a T-Bill cut-off of the same tenor.",
+            "PSR (e.g. 90:10) is the profit-sharing ratio with the government. It is a "
+            "SPLIT, not a rate: do not average it or chart it as a yield.",
+            "The T-Bill comparison is the last comparable cut-off ON OR BEFORE each BGIIB "
+            "auction, and its own auction date is in the next column. BGIIB is auctioned "
+            "on Tuesdays and T-Bills on Sundays, so a same-day pair does not exist and "
+            "nothing here is interpolated.",
+            "Every release is checked against BB's own Total line before being stored; a "
+            "release whose rows do not add up is refused whole rather than misstating the "
+            "size of the window.",
+        ],
+    )
+    return Response(content=body, media_type=XLSX_MEDIA, headers={
+        "Content-Disposition":
+            f'attachment; filename="{filename("bd_bgiib_islamic_window", p["as_of"])}"'})
