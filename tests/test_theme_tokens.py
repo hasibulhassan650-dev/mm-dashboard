@@ -53,32 +53,43 @@ def _block(text: str, selector_pattern: str) -> str:
 
 # Every page and component added or reworked for the schedule and liquidity
 # work. Keep this list current: a file dropped from it is a file nobody checks.
-_SCANNED = [
-    "app/schedule/page.tsx",
-    "app/forecast/page.tsx",
-    "app/drilldown/page.tsx",
-    "components/ScheduleChart.tsx",
-    "components/HorizonControl.tsx",
-    "components/LadderTable.tsx",
-    "components/OmoMaturityLadder.tsx",
-]
+# EVERY page and component, found by walking the tree rather than listed. The
+# list this replaces held eight files and admitted its own weakness in a
+# comment — "a file dropped from it is a file nobody checks" — and by Oct-2026
+# four new pages (/desk, /press, /islamic, /export) were outside it, which is
+# the same blind spot as a page missing from the nav. A floor assertion below
+# makes a broken glob fail instead of passing over nothing.
+_MIN_FILES = 25
+
+
+def _scanned() -> list:
+    import glob
+    out = []
+    for pat in ("app/**/page.tsx", "app/**/layout.tsx", "components/**/*.tsx"):
+        for p in glob.glob(os.path.join(FRONTEND, *pat.split("/")), recursive=True):
+            out.append(os.path.relpath(p, FRONTEND).replace(os.sep, "/"))
+    return sorted(set(out))
 
 
 def _sources():
     out = {}
-    for r in _SCANNED:
+    for r in _scanned():
         p = os.path.join(FRONTEND, *r.split("/"))
-        if os.path.exists(p):
-            with open(p, encoding="utf-8") as fh:
-                out[r] = fh.read()
+        with open(p, encoding="utf-8") as fh:
+            out[r] = fh.read()
     return out
 
 
-def test_every_scanned_file_exists():
-    # A scan over nothing passes vacuously; fail loudly if a file was renamed
-    # or removed without updating the list.
-    missing = [r for r in _SCANNED if r not in _sources()]
-    assert not missing, f"listed for scanning but not found: {missing}"
+def test_the_scan_actually_covers_the_frontend():
+    # A scan over nothing passes vacuously, which is how a token check becomes
+    # decoration. Every page and component must be in scope.
+    found = _scanned()
+    assert len(found) >= _MIN_FILES, (
+        f"only {len(found)} frontend file(s) scanned — the glob is broken, so "
+        f"nothing is really being checked")
+    for must in ("app/desk/page.tsx", "app/press/page.tsx", "app/islamic/page.tsx",
+                 "app/export/page.tsx"):
+        assert must in found, f"{must} is outside the token scan"
 
 
 @pytest.mark.parametrize("rel", sorted(_sources()))

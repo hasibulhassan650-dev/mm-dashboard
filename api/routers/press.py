@@ -88,15 +88,22 @@ def get_press(days: int = Query(60, ge=1, le=400), limit: int = Query(300, ge=1,
                 "text": f"{bb} buyback result release(s) announced and {bb_events} buyback "
                         f"event(s) recorded — cash moved on a day the ladder does not know "
                         f"about."})
-        bg = session.execute(text(
-            "SELECT COUNT(*), MAX(published_date) FROM press_releases "
-            "WHERE category IN ('BGIIB', 'SUKUK')")).fetchone()
-        if bg and bg[0]:
+        # The Islamic window is parsed now, so this is a real gap check rather
+        # than a standing notice: it must only speak when a release has no
+        # stored auction. Left as written, it kept announcing a coverage gap
+        # that had been closed — a banner that is wrong is worse than none.
+        bg = session.execute(text("""
+            SELECT COUNT(*) FROM press_releases p
+            WHERE p.category IN ('BGIIB', 'SUKUK')
+              AND LOWER(p.title) NOT LIKE '%notice%'
+              AND NOT EXISTS (SELECT 1 FROM bgiib_auctions b
+                              WHERE b.source_serial = p.serial)
+        """)).scalar() or 0
+        if bg:
             follow_ups.append({
-                "severity": "notice",
-                "text": f"{bg[0]} Islamic-window release(s) on record (latest {bg[1]}). The "
-                        f"releases are captured; their auction figures are not stored "
-                        f"anywhere yet, so BGIIB does not appear in any ladder or curve."})
+                "severity": "defect",
+                "text": f"{bg} Islamic-window release(s) have no stored auction figures, so "
+                        f"those weeks are missing from the BGIIB series."})
 
         return {
             "as_of": str(today),

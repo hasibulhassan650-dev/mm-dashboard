@@ -119,3 +119,42 @@ The cloud dashboard will reflect the new data within seconds.
 | Vercel (optional) | unlimited | if you add Next.js frontend |
 
 **Total: $0/month**
+
+---
+
+## Environment variables on Vercel
+
+Set on **both** Vercel projects (the site and the API) unless noted:
+
+| Variable | Where | Needed for |
+|---|---|---|
+| `DATABASE_URL` | API, and the GitHub Actions secrets | everything |
+| `SITE_PASSWORD` | site | overrides the baked-in password hash. Optional — the gate works without it |
+| `AUTH_SECRET` | site | signs the session cookie. Optional; falls back to the hash |
+| `DESK_WRITE_SECRET` | **site AND API, the same value** | `/desk` — entering an auction cut-off on auction day |
+
+### DESK_WRITE_SECRET — the one step that has to be taken deliberately
+
+`/desk` is where the desk records the cut-off it saw at the auction, hours
+before BB publishes it. That makes it the only **write** path in an API that is
+otherwise read-only and publicly reachable, so it **fails closed**: with the
+variable unset the API refuses every write with a 503, and the form says so and
+stays disabled rather than accepting a figure and silently dropping it.
+
+There is no default and no fallback — a secret committed to a public repo is
+not a secret. The browser never sees this one either: the page posts
+same-origin to the Next app, which holds the value server-side and forwards it
+with the request, so the API's CORS stays GET-only.
+
+Any value will do. Generate one with:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+Set it in **both** projects or neither. Site-only means the forward is rejected
+by the API; API-only means the form never sends anything.
+
+A desk mark is never stored as BB data: it lives in its own table, is labelled
+provisional everywhere it appears, and BB's published cut-off is preferred the
+moment it exists.
