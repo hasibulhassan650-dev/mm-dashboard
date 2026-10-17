@@ -168,3 +168,106 @@ class TestTheAnnouncementWatcher:
         monkeypatch.setattr(validate, "get_session", lambda: sessionmaker(bind=eng)())
         assert [i for i in validate.integrity_check()["issues"]
                 if i.startswith("press")] == []
+
+
+class TestTheIslamicWindowParse:
+    """BGIIB figures, and BB's own Total line as the check on them.
+
+    Thirteen weekly releases sat captured-but-unparsed, so an entire
+    instrument was missing from every ladder, curve and export. The parse is
+    straightforward — the releases are in English and tabular — and the guard
+    is what matters: BB prints a Total, so every release is checked against
+    BB's own arithmetic before it is believed. That guard caught my own
+    incomplete regex on its first run, which is exactly what it is for.
+    """
+
+    _HEAD = ("Bangladesh Government Islami Investment Bond (BGIIB) Auction Result "
+             "held on 13 October 2026\n"
+             "PARTICULARS BIDS OFFERED BIDS ACCEPTED\n")
+
+    def _pdf_text(self, body: str) -> str:
+        return self._HEAD + body
+
+    def _parse(self, body: str):
+        """Parse from text, bypassing pdfplumber."""
+        import datetime as _dt
+
+        from fetchers import islamic
+        text = self._pdf_text(body)
+        # parse_bgiib_pdf takes bytes; exercise the same logic on text by
+        # patching the extraction, which is the only PDF-specific step.
+        import types
+        rows, refused = [], {}
+        held = islamic.auction_date_from_text(text)
+        assert held == _dt.date(2026, 10, 13)
+        # Re-run the row/total logic exactly as parse_bgiib_pdf does.
+        import re
+        for line in (re.sub(r"\s+", " ", l).strip() for l in text.split("\n")):
+            m = islamic._ROW.match(line)
+            if m:
+                rows.append(m.groupdict())
+            elif islamic._TOTAL.match(line):
+                refused["total_seen"] = 1
+        return rows, refused
+
+    def test_the_two_normal_tenors_parse(self):
+        rows, _ = self._parse(
+            "3-Month BGIIB 5 670.00 5 670.00 90:10 7.40 7.00-9.50 6.30-8.55\n"
+            "6-Month BGIIB 5 313.04 5 313.04 90:10 6.90 5.25-12.00 4.73-10.80\n"
+            "Total 10 983.04 10 983.04\n")
+        assert len(rows) == 2
+        assert rows[0]["months"] == "3" and rows[0]["acc"] == "670.00"
+        assert rows[1]["epr"] == "6.90"
+
+    def test_a_single_bid_tenor_has_one_rate_not_a_range(self):
+        """The real line that broke it: with one bid there is no range, so BB
+        prints the rate once. Demanding "a-b" dropped the line, and because BB
+        states a Total the whole release was then refused — correctly."""
+        rows, _ = self._parse(
+            "3-Month BGIIB 4 450.00 4 450.00 90:10 7.50 7.00-9.50 6.30-8.55\n"
+            "6-Month BGIIB 1 100.00 1 100.00 90:10 8.80 9.80 8.82\n"
+            "Total 5 550.00 5 550.00 -\n")
+        assert len(rows) == 2, "the single-bid tenor was dropped again"
+        assert rows[1]["epr_range"] == "8.82"
+
+    def test_the_auction_date_is_when_it_was_held(self):
+        """Not when it was published: the 13-Oct auction went up on the 14th,
+        and filing it under the 14th puts the Islamic window a day away from
+        every series it is compared against."""
+        from fetchers.islamic import auction_date_from_text
+        assert auction_date_from_text(self._HEAD) == datetime.date(2026, 10, 13)
+
+    def test_a_release_whose_rows_do_not_add_up_is_refused_whole(self):
+        """One missing tenor misstates the size of the window, so a partial
+        parse is worse than none."""
+        from fetchers.islamic import parse_bgiib_pdf
+        import io as _io
+
+        # Drive the real function with a stub PDF reader.
+        import fetchers.islamic as mod
+
+        class _FakePage:
+            def extract_text(self):
+                return mod._TEST_TEXT
+
+        class _FakePdf:
+            pages = [_FakePage()]
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        mod._TEST_TEXT = self._pdf_text(
+            "3-Month BGIIB 4 450.00 4 450.00 90:10 7.50 7.00-9.50 6.30-8.55\n"
+            "Total 5 550.00 5 550.00\n")
+        import pdfplumber
+        real_open = pdfplumber.open
+        pdfplumber.open = lambda *a, **k: _FakePdf()
+        try:
+            rep = parse_bgiib_pdf(b"%PDF-fake")
+        finally:
+            pdfplumber.open = real_open
+        assert rep["rows"] == []
+        assert any("do not add up" in k for k in rep["refused"]), rep["refused"]

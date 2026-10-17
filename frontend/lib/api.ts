@@ -177,6 +177,13 @@ export const api = {
     try { return await get<DiagnosticRow[]>("/api/forecast/diagnostics"); }
     catch { return []; }
   },
+  islamic:         async (weeks = 26): Promise<IslamicWindow> => {
+    try { return await get<IslamicWindow>(`/api/islamic?weeks=${weeks}`); }
+    catch {
+      return { as_of: "", weeks, count: 0, latest_auction: null,
+               by_tenor: [], auctions: [] };
+    }
+  },
   deskMarks:       async (days = 60): Promise<DeskMarks> => {
     try { return await get<DeskMarks>(`/api/desk/marks?days=${days}`); }
     catch {
@@ -314,6 +321,42 @@ export interface DataHealth {
   issues?: string[];
   by_table?: Record<string, number>;
 }
+export interface BgiibAuction {
+  auction_date: string;
+  tenor_label: string;          // 3M | 6M
+  tenor_months: number | null;
+  bids_offered: number | null;
+  offered_crore: number | null;
+  bids_accepted: number | null;
+  accepted_crore: number | null;
+  /** The profit-sharing ratio with the government, e.g. "90:10". A SPLIT, not
+   *  a rate — never averaged, never charted as a yield. */
+  psr: string | null;
+  /** Weighted-average Expected Profit Rate: the Islamic counterpart of a
+   *  yield, and what a T-Bill cut-off is compared against. */
+  war_epr_pct: number | null;
+  base_rate_range: string | null;
+  epr_range: string | null;
+  source_serial: string | null;
+  source: string | null;
+  comparable_tbill_tenor: string | null;
+  comparable_tbill_cutoff_pct: number | null;
+  /** Which auction that cut-off came from: BGIIB is Tuesday, T-Bills Sunday,
+   *  so it is never the same day and the date must travel with the figure. */
+  comparable_tbill_date: string | null;
+  epr_minus_tbill_bps: number | null;
+}
+
+export interface IslamicWindow {
+  as_of: string;
+  weeks: number;
+  count: number;
+  latest_auction: string | null;
+  by_tenor: { tenor_label: string; auctions: number; accepted_crore: number;
+    latest_epr_pct: number | null; latest_date: string | null }[];
+  auctions: BgiibAuction[];
+}
+
 export interface DeskMark {
   auction_date: string;
   tenor_label: string;

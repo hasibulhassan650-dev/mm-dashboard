@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from routers import (omo, yields, securities, flows, callmoney, fx, refrate, meta,
-                     policy, macro, forecast, fxmarket, repo, press, desk)
+                     policy, macro, forecast, fxmarket, repo, press, desk, islamic)
 
 app = FastAPI(title="MM Dashboard API", version="1.0.0")
 
@@ -46,6 +46,7 @@ app.include_router(forecast.router,    prefix="/api/forecast",    tags=["Forecas
 app.include_router(fxmarket.router,    prefix="/api/fxmarket",    tags=["FX Market"])
 app.include_router(repo.router,        prefix="/api/repo",        tags=["Interbank Repo"])
 app.include_router(press.router,       prefix="/api/press",       tags=["Press Releases"])
+app.include_router(islamic.router,     prefix="/api/islamic",     tags=["Islamic Window"])
 # The ONLY write route in this API. It fails closed when DESK_WRITE_SECRET is
 # unset, and CORS above stays GET-only: the browser posts same-origin to the
 # Next app, which holds the secret server-side and forwards.
