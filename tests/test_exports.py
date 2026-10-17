@@ -219,3 +219,114 @@ class TestEveryExportIsFindable:
         import export_registry
         src = inspect.getsource(export_registry)
         assert "MIN(" in src and "MAX(" in src, "coverage is no longer read from the data"
+
+
+class TestTheModelRecalculates:
+    """A model is not a report. The desk asked for a workbook it could drive —
+    change the rollover assumption and watch the ladder move — not a picture of
+    one afternoon's numbers with "model" in the filename.
+
+    So the test of this export is not what it says; it is that the forward
+    cells are FORMULAS, that every one of them reads an assumption from a cell
+    the desk can edit, and that nothing BB published is driven by an
+    assumption. A workbook of hardcoded projections would pass every other
+    test here and be worthless.
+    """
+
+    def _wb(self):
+        import datetime
+        import io as _io
+        import sys
+        sys.path.insert(0, os.path.join(_ROOT, "api", "routers"))
+        from model_logic import build_model
+        from openpyxl import load_workbook
+
+        d = [datetime.date(2026, 10, 19), datetime.date(2026, 10, 22)]
+        data = {
+            "dates": d,
+            "omo": [{"date": d[0], "instrument": "CB_REPO", "dealt": 9977.85,
+                     "maturing": None, "rate": 9.5},
+                    {"date": d[1], "instrument": "CB_REPO", "dealt": None,
+                     "maturing": 9977.85, "rate": None}],
+            "auctions": [{"settlement": d[0], "type": "T_BILL", "tenor": "91D",
+                          "offered": 30000.0, "accepted": 30000.0, "sale": 29374.8,
+                          "cutoff": 8.5899, "status": "CONFIRMED"},
+                         {"settlement": d[1], "type": "T_BOND", "tenor": "10Y",
+                          "offered": 15000.0, "accepted": None, "sale": None,
+                          "cutoff": None, "status": "PLANNED"}],
+            "flows": [{"date": d[1], "coupon": 1266.75, "principal": None,
+                       "buyback": None}],
+        }
+        return load_workbook(_io.BytesIO(build_model(data, today=d[0])))
+
+    def test_the_forward_columns_are_formulas_not_numbers(self):
+        ws = self._wb()["Model"]
+        for col in range(2, 9):
+            v = ws.cell(row=5, column=col).value
+            assert isinstance(v, str) and v.startswith("="), \
+                f"Model column {col} is a baked-in number, not a formula: {v!r}"
+
+    def test_every_forward_figure_reads_an_editable_assumption(self):
+        ws = self._wb()["Model"]
+        formulas = " ".join(str(ws.cell(row=5, column=c).value) for c in range(2, 9))
+        assert "Assumptions!" in formulas, \
+            "nothing on the Model sheet refers to an assumption, so nothing can be driven"
+
+    def test_the_assumptions_are_real_cells_with_values(self):
+        ws = self._wb()["Assumptions"]
+        found = {}
+        for r in range(5, 20):
+            label, value = ws.cell(row=r, column=1).value, ws.cell(row=r, column=2).value
+            if label:
+                found[label] = value
+        assert any("rollover" in k.lower() for k in found), found
+        assert all(not isinstance(v, str) or not v.startswith("=")
+                   for v in found.values()), "an assumption is itself a formula"
+
+    def test_every_assumption_is_actually_used(self):
+        """An input that does nothing is a lie on the page — it invites the
+        desk to turn a dial that is not connected."""
+        import re
+        import sys
+        sys.path.insert(0, os.path.join(_ROOT, "api", "routers"))
+        from model_logic import ASSUMPTIONS
+        wb = self._wb()
+        ws, asm = wb["Model"], wb["Assumptions"]
+        used = set()
+        for r in range(5, 8):
+            for c in range(2, 9):
+                for m in re.finditer(r"Assumptions!\$B\$(\d+)", str(ws.cell(row=r, column=c).value)):
+                    used.add(int(m.group(1)))
+        declared = {5 + i for i in range(len(ASSUMPTIONS))}
+        unused = sorted(declared - used)
+        assert not unused, (
+            f"assumption row(s) {unused} are never referenced by any formula: "
+            f"{[ASSUMPTIONS[r - 5][1] for r in unused]}")
+
+    def test_published_figures_are_values_untouched_by_assumptions(self):
+        ws = self._wb()["Auctions"]
+        # BB's own sale value and cut-off, as numbers.
+        row = [ws.cell(row=3, column=c).value for c in range(1, 9)]
+        assert 29374.8 in row and 8.5899 in row
+        for v in row:
+            assert not (isinstance(v, str) and v.startswith("=")), \
+                "a published auction figure is a formula"
+
+    def test_an_unpublished_figure_is_blank_and_not_zero(self):
+        ws = self._wb()["Auctions"]
+        # The PLANNED row has no accepted face, no sale value and no cut-off.
+        assert ws.cell(row=4, column=5).value is None
+        assert ws.cell(row=4, column=6).value is None
+        assert ws.cell(row=4, column=7).value is None
+
+    def test_the_cumulative_column_chains_day_to_day(self):
+        ws = self._wb()["Model"]
+        assert ws.cell(row=5, column=8).value == "=$G5"
+        assert ws.cell(row=6, column=8).value == "=$H5+$G6"
+
+    def test_it_carries_a_read_me_that_says_which_cells_are_opinions(self):
+        ws = self._wb()["Read me"]
+        text = " ".join(str(ws.cell(row=r, column=c).value or "")
+                        for r in range(1, 16) for c in (1, 2)).lower()
+        assert "formula" in text and "opinion" in text
+        assert "never zero" in text

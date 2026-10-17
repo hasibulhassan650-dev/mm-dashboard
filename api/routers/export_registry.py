@@ -76,6 +76,18 @@ EXPORTS: List[Export] = [
            ["days", "date_from", "date_to"],
            "daily_net_flow", "flow_date",
            sheets="Ladder · Cumulative"),
+    Export("model", "Liquidity Model (live formulas)",
+           "/api/flows/model/export",
+           "A workbook that recalculates rather than a report. The Assumptions "
+           "sheet holds the OMO rollover ratio, auction acceptance and the "
+           "prices per 100 face; every forward figure on the Model sheet is an "
+           "Excel formula over those cells, so changing one moves the whole "
+           "ladder offline. Published figures are written as values and no "
+           "assumption touches them — a formula is an opinion, a number is "
+           "something BB printed.",
+           ["days", "date_from", "date_to"],
+           "daily_net_flow", "flow_date",
+           sheets="Read me · Model · Assumptions · OMO · Auctions · Govt flows"),
     Export("omo_ladder", "OMO Maturity Ladder",
            "/api/omo/maturity-ladder/export",
            "Day-by-day OMO maturities with the product breakdown — every "

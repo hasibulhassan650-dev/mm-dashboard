@@ -153,6 +153,48 @@ def get_drilldown(date: str = Query(..., description="YYYY-MM-DD")):
         session.close()
 
 
+@router.get("/model/export")
+def export_model(days: int = Query(90, ge=7, le=400),
+                 date_from: str = Query(None), date_to: str = Query(None)):
+    """The liquidity model: a workbook that RECALCULATES.
+
+    Every other export is a report — the numbers as they stand. This one the
+    desk drives: the Assumptions sheet holds the rollover ratio, acceptance,
+    prices and a rate stress, and every forward figure on the Model sheet is
+    an Excel formula over those cells. Change one offline and the whole ladder
+    moves, with no call back here.
+
+    Published figures are written as VALUES and are not touched by any
+    assumption. If a cell has a formula it is an opinion; if it has a number,
+    BB printed it.
+    """
+    import datetime as _dt
+
+    from .export_logic import filename
+    from .model_logic import build_model, model_data
+
+    try:
+        lo = (_dt.date.fromisoformat(date_from) if date_from
+              else _dt.date.today() - _dt.timedelta(days=30))
+        hi = (_dt.date.fromisoformat(date_to) if date_to
+              else lo + _dt.timedelta(days=days))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"bad date: {e}")
+    if hi < lo:
+        raise HTTPException(status_code=422, detail="date_to is before date_from")
+
+    session = get_session()
+    try:
+        data = model_data(session, lo, hi)
+    finally:
+        session.close()
+
+    body = build_model(data)
+    return Response(content=body, media_type=XLSX_MEDIA, headers={
+        "Content-Disposition":
+            f'attachment; filename="{filename("bd_liquidity_model", lo, hi)}"'})
+
+
 @router.get("/by-product")
 def get_by_product(years: int = Query(2, ge=1, le=20)):
     """Forward monthly schedule of redemptions, coupons and auction settlements,
