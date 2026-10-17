@@ -177,6 +177,10 @@ export const api = {
     try { return await get<DiagnosticRow[]>("/api/forecast/diagnostics"); }
     catch { return []; }
   },
+  exports:         async (): Promise<ExportCatalog> => {
+    try { return await get<ExportCatalog>("/api/exports"); }
+    catch { return { as_of: "", count: 0, exports: [] }; }
+  },
   islamic:         async (weeks = 26): Promise<IslamicWindow> => {
     try { return await get<IslamicWindow>(`/api/islamic?weeks=${weeks}`); }
     catch {
@@ -321,6 +325,31 @@ export interface DataHealth {
   issues?: string[];
   by_table?: Record<string, number>;
 }
+export interface ExportEntry {
+  key: string;
+  label: string;
+  path: string;
+  /** What the file contains, in enough words to choose between workbooks. */
+  what: string;
+  /** The query parameters the route accepts, so the page builds URLs from
+   *  this rather than keeping a second copy of each export's arguments. */
+  args: string[];
+  sheets: string;
+  unit: string;
+  source_table: string | null;
+  date_column: string | null;
+  /** Read from the data as the page loads: what the export can really cover
+   *  today, not a figure written down once and left to go stale. */
+  coverage: { rows?: number; earliest?: string | null; latest?: string | null;
+    error?: string };
+}
+
+export interface ExportCatalog {
+  as_of: string;
+  count: number;
+  exports: ExportEntry[];
+}
+
 export interface BgiibAuction {
   auction_date: string;
   tenor_label: string;          // 3M | 6M

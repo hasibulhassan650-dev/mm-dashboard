@@ -154,3 +154,68 @@ class TestTheDeploymentBoundary:
         # see that file. Omitting it here is a production-only 500.
         with open(os.path.join(_ROOT, "api", "requirements.txt"), encoding="utf-8") as fh:
             assert "openpyxl" in fh.read()
+
+
+class TestEveryExportIsFindable:
+    """An export nobody can find is the same failure as a page missing from
+    the nav, and this project has already had that one: six finished pages
+    were absent from the sidebar and the answer was "I dont usually find it".
+
+    The exports were real but scattered — a Download button per page and no
+    way to answer "what can I get out of this, and for which dates?" without
+    visiting six pages. The registry answers it, and this test is what keeps
+    the registry true: every /export route in the API must be declared.
+    """
+
+    def _routes(self):
+        import re
+        from pathlib import Path
+        found = {}
+        for f in Path("api/routers").glob("*.py"):
+            src = f.read_text(encoding="utf-8")
+            prefix = {
+                "flows": "/api/flows", "omo": "/api/omo", "securities": "/api/securities",
+                "yields": "/api/yields", "macro": "/api/macro", "fx": "/api/fx",
+            }.get(f.stem, f"/api/{f.stem}")
+            for m in re.finditer(r'@router\.get\("([^"]*export[^"]*)"\)', src):
+                found[prefix + m.group(1)] = f.stem
+        return found
+
+    def test_every_export_route_is_in_the_registry(self):
+        import sys
+        sys.path.insert(0, os.path.join(_ROOT, "api", "routers"))
+        from export_registry import EXPORTS
+        declared = {e.path for e in EXPORTS}
+        routes = self._routes()
+        missing = sorted(set(routes) - declared)
+        assert not missing, (
+            f"these export routes are not in the registry, so nothing on /export links "
+            f"to them: {missing}. Add an Export() entry naming what the file contains.")
+
+    def test_the_registry_does_not_promise_routes_that_do_not_exist(self):
+        import sys
+        sys.path.insert(0, os.path.join(_ROOT, "api", "routers"))
+        from export_registry import EXPORTS
+        routes = set(self._routes())
+        phantom = sorted({e.path for e in EXPORTS} - routes)
+        assert not phantom, f"the registry links to routes that do not exist: {phantom}"
+
+    def test_each_entry_says_what_the_file_contains(self):
+        """A label alone is not enough to choose between five workbooks."""
+        import sys
+        sys.path.insert(0, os.path.join(_ROOT, "api", "routers"))
+        from export_registry import EXPORTS
+        for e in EXPORTS:
+            assert len(e.what) > 60, f"{e.key} does not explain what it contains"
+            assert e.args, f"{e.key} declares no date arguments"
+
+    def test_coverage_is_measured_not_written_down(self):
+        """An export's earliest and latest row changes daily. A hardcoded
+        answer would go stale and mislead, which is the whole failure mode
+        this project exists to prevent."""
+        import inspect
+        import sys
+        sys.path.insert(0, os.path.join(_ROOT, "api", "routers"))
+        import export_registry
+        src = inspect.getsource(export_registry)
+        assert "MIN(" in src and "MAX(" in src, "coverage is no longer read from the data"
