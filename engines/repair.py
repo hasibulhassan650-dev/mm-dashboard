@@ -12,6 +12,7 @@ whose correct value is *derivable with certainty* from data we already hold:
   * a PLANNED auction settling on a closed day → re-derive T+1
   * a DERIVED OMO maturity on a closed day     → re-roll from txn + tenor
   * an FX-page row dated off the live calendar → re-date from published_date
+  * a CONFIRMED auction event with no sale value  → copy the cash BB published
 
 Anything ambiguous (a move that would collide with an existing row, a date the
 calendar cannot resolve) is left ALONE and reported, so a human sees it instead
@@ -180,6 +181,35 @@ def self_heal(session, limit_log: int = 40) -> dict:
             r.rate_date = want
         except Exception as exc:
             skipped.append(f"fx {r.currency} {r.rate_date}: {exc}")
+
+    # ── 7. an auction event must carry the cash BB published ─────────────────
+    # The treasury refetch fills primary_yield_snapshots.sale_value; the ladder
+    # reads auction_events. The value is derivable with certainty from a row we
+    # already hold, so there is no reason to leave 116 events booking par until
+    # someone notices. Exactly ONE matching result or nothing: two results for
+    # one event is an ambiguity to report, not a coin to flip.
+    from config import CRORE_TO_MILLION
+    for e in session.query(AuctionEvent).filter(
+            AuctionEvent.outflow_status == "CONFIRMED",
+            AuctionEvent.sale_value_bdt_crore.is_(None)).all():
+        try:
+            hits = session.query(PrimaryYieldSnapshot).filter(
+                PrimaryYieldSnapshot.tenor_label == e.tenor_label,
+                PrimaryYieldSnapshot.issue_date == e.settlement_date,
+                PrimaryYieldSnapshot.sale_value_bdt_crore.isnot(None)).all()
+            if not hits:
+                continue
+            if len(hits) > 1:
+                skipped.append(f"auction {e.settlement_date} {e.tenor_label}: "
+                               f"{len(hits)} results carry a sale value; not guessing which")
+                continue
+            sale = float(hits[0].sale_value_bdt_crore)
+            _did("auction-sale-value", f"{e.settlement_date} {e.tenor_label}: face "
+                                       f"{e.accepted_amount_bdt_crore} → cash {sale:,.2f} cr")
+            e.sale_value_bdt_crore = sale
+            e.sale_value_bdt_mill = round(sale * CRORE_TO_MILLION, 4)
+        except Exception as exc:
+            skipped.append(f"auction {e.settlement_date} {e.tenor_label}: {exc}")
 
     session.flush()
     total = sum(repaired.values())

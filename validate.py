@@ -535,6 +535,32 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
                     add("auctions", f"{ad} {r[2]} still PLANNED {(today - ad).days} days later — BB result "
                                     f"missing or not linked (confirm_auctions_from_results)")
 
+        # ---- the cash figure must reach the table the ladder reads ----
+        # The treasury refetch fills primary_yield_snapshots.sale_value, but the
+        # ladder is built from auction_events. Nothing connected the two: after
+        # the 2024-25 refetch, 116 of 2025's auction events still carried FACE
+        # value while the cash figure sat one table away — roughly half a year
+        # of the ladder booking par instead of what the market paid, found by
+        # eye. A CONFIRMED event with no sale value whose matching result HAS
+        # one is a propagation that never happened, and it is derivable with
+        # certainty, so engines/repair.py fixes it too.
+        try:
+            miss = q("""SELECT e.settlement_date, e.tenor_label, p.sale_value_bdt_crore
+                        FROM auction_events e
+                        JOIN primary_yield_snapshots p
+                          ON p.tenor_label = e.tenor_label AND p.issue_date = e.settlement_date
+                        WHERE e.outflow_status = 'CONFIRMED'
+                          AND e.sale_value_bdt_crore IS NULL
+                          AND p.sale_value_bdt_crore IS NOT NULL
+                          AND e.settlement_date >= :lo""", lo=_clo)
+            for r in miss[:limit_per_rule]:
+                add("auctions", f"{_d(r[0])} {r[1]}: BB published a sale value of {r[2]:,.2f} cr "
+                                f"but the ladder's auction event still books face value — "
+                                f"the cash figure was never propagated")
+        except Exception as exc:
+            s.rollback()
+            add("auctions", f"the sale-value propagation check could not run ({exc})")
+
         # ---- auction results: date semantics ----
         # BB's results page prints the ISSUE date; auction_date is the previous
         # working day. Every row must carry both, in that order, on working days.

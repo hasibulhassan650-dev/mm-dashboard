@@ -493,3 +493,96 @@ class TestAnFxRowIsDatedByTheLiveCalendar:
         assert calendar_utils.previous_working_day(D(2026, 10, 18)) == D(2026, 10, 15)
         self._calendar(with_saturday=True)
         assert calendar_utils.previous_working_day(D(2026, 10, 18)) == D(2026, 10, 17)
+
+
+class TestTheCashFigureReachesTheLadder:
+    """The 2024-25 treasury refetch filled primary_yield_snapshots.sale_value,
+    but the ladder is built from auction_events — and nothing connected them.
+    116 of 2025's auction events kept booking FACE value while the cash figure
+    sat one table away, for as long as it took someone to look. I found it by
+    eye, which is the failure this project keeps removing.
+
+    (Dates sit after 2025-07-01 on purpose: the ladder starts there, and the
+    check deliberately ignores auctions older than the ladder.)
+
+    A bill sells at a discount: 3,000 crore allotted, 2,937.48 crore paid. The
+    62.52 crore difference never left anyone's account, and across a year of
+    auctions it is thousands of crore of overstated drain.
+    """
+
+    def _world(self, with_sale=True):
+        D = datetime.date
+        eng, s = _mem()
+        s.add(PrimaryYieldSnapshot(
+            snapshot_date=D(2025, 9, 1), auction_date=D(2025, 9, 7), issue_date=D(2025, 9, 8),
+            security_type="T_BILL", tenor_label="91D", tenor_years=0.25,
+            cutoff_yield_pct=8.5, accepted_bdt_crore=3000.0,
+            sale_value_bdt_crore=2937.48 if with_sale else None))
+        s.add(AuctionEvent(
+            fiscal_year="2024-25", auction_no="44", auction_date=D(2025, 9, 7),
+            settlement_date=D(2025, 9, 8), security_type="T_BILL", tenor_label="91D",
+            offered_amount_bdt_crore=3000.0, accepted_amount_bdt_crore=3000.0,
+            outflow_status="CONFIRMED"))
+        s.commit()
+        return eng, s
+
+    def test_self_heal_copies_the_cash_figure_across(self):
+        eng, s = self._world()
+        rep = self_heal(s); s.commit()
+        assert rep["repaired"].get("auction-sale-value") == 1, rep
+        e = s.query(AuctionEvent).one()
+        assert e.sale_value_bdt_crore == 2937.48
+        assert e.sale_value_bdt_mill == pytest.approx(29374.8)     # 1 crore = 10 mill
+
+    def test_face_value_is_untouched(self):
+        """Both are kept: face is what BB allotted and what matures."""
+        eng, s = self._world()
+        self_heal(s); s.commit()
+        assert s.query(AuctionEvent).one().accepted_amount_bdt_crore == 3000.0
+
+    def test_nothing_is_invented_when_bb_published_no_sale_value(self):
+        eng, s = self._world(with_sale=False)
+        rep = self_heal(s); s.commit()
+        assert not rep["repaired"].get("auction-sale-value")
+        assert s.query(AuctionEvent).one().sale_value_bdt_crore is None
+
+    def test_two_candidate_results_are_reported_not_guessed(self):
+        D = datetime.date
+        eng, s = self._world()
+        s.add(PrimaryYieldSnapshot(
+            snapshot_date=D(2025, 9, 1), auction_date=D(2025, 9, 6), issue_date=D(2025, 9, 8),
+            security_type="T_BILL", tenor_label="91D", tenor_years=0.25,
+            cutoff_yield_pct=8.6, accepted_bdt_crore=100.0, sale_value_bdt_crore=98.0))
+        s.commit()
+        rep = self_heal(s); s.commit()
+        assert not rep["repaired"].get("auction-sale-value")
+        assert any("not guessing" in x for x in rep["skipped"]), rep["skipped"]
+
+    def test_it_is_idempotent(self):
+        eng, s = self._world()
+        self_heal(s); s.commit()
+        assert not self_heal(s)["repaired"].get("auction-sale-value")
+
+    def test_a_planned_event_is_never_given_a_sale_value(self):
+        """Only a CONFIRMED event has happened; a PLANNED one with a matching
+        result is the confirm pass's job, not this one's."""
+        eng, s = self._world()
+        e = s.query(AuctionEvent).one(); e.outflow_status = "PLANNED"; s.commit()
+        assert not self_heal(s)["repaired"].get("auction-sale-value")
+
+    def test_the_guardian_reports_the_gap_before_it_is_healed(self, monkeypatch):
+        import validate
+        eng, s = self._world()
+        monkeypatch.setattr(validate, "get_session", lambda: sessionmaker(bind=eng)())
+        rep = validate.integrity_check(limit_per_rule=200)
+        hits = [i for i in rep["issues"] if "never propagated" in i]
+        assert hits, "validate does not notice a published cash figure the ladder ignores"
+        assert "2,937.48" in hits[0]
+
+    def test_and_goes_quiet_once_it_is(self, monkeypatch):
+        import validate
+        eng, s = self._world()
+        self_heal(s); s.commit()
+        monkeypatch.setattr(validate, "get_session", lambda: sessionmaker(bind=eng)())
+        rep = validate.integrity_check(limit_per_rule=200)
+        assert not [i for i in rep["issues"] if "never propagated" in i]

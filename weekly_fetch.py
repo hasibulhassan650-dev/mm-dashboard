@@ -107,7 +107,8 @@ def main():
             # unreflected until the next full run. This reads events and
             # writes the aggregate; it touches no network.
             moved = {"coupon_payment_date", "maturity_payment_date",
-                     "auction_settlement", "omo-maturity-roll", "yield_auction_date"}
+                     "auction_settlement", "omo-maturity-roll", "yield_auction_date",
+                     "auction-sale-value"}
             if moved & set(healed.get("repaired") or {}):
                 from engines.pipeline import rebuild_daily_flows
                 session = get_session()
