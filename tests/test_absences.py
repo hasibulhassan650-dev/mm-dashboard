@@ -242,6 +242,27 @@ class TestTheCurrentMonthIsAskedForExplicitly:
         assert len({m for m in asked if m}) == 3, asked
 
 
+def _recent_month_with_a_gap():
+    """(gap, fetched) anchored at a month start and RELATIVE TO TODAY.
+
+    validate.py measures its gap window from the real "today" (45 days back),
+    so a fixture with a hard-coded September gap passed on 17-Oct and failed on
+    25-Oct with nothing changed but the date: the gap had slid outside the
+    window. The same class of date-fragility as the guardian fixtures — and
+    the cure is the same: derive every date from today. The gap sits mid-month
+    in the month containing (today - 20 days), which is always within the
+    window and always has data on both sides.
+    """
+    anchor = D.today() - datetime.timedelta(days=20)
+    first = anchor.replace(day=1)
+    gap = first.replace(day=12)
+    while gap.weekday() in (4, 5):          # Fri/Sat are the BD weekend
+        gap += datetime.timedelta(days=1)
+    last_of_month = (first.replace(day=28) + datetime.timedelta(days=4)).replace(day=1)         - datetime.timedelta(days=1)
+    end = min(last_of_month, D.today() - datetime.timedelta(days=1))
+    return gap, _working_days(first, end, skip=(gap,))
+
+
 class TestBothToolsAgreeAboutWhatBBOmits:
     """audit.py counted a confirmed absence as a defect while validate.py
     passed over it, so the two reported different numbers for the same
@@ -251,8 +272,7 @@ class TestBothToolsAgreeAboutWhatBBOmits:
         import audit
         import validate
         s = _mem()
-        gap = D(2026, 9, 10)
-        fetched = _working_days(D(2026, 9, 1), D(2026, 9, 30), skip=(gap,))
+        gap, fetched = _recent_month_with_a_gap()
         _store(s, fetched)
         absences.confirm_absences(s, "fxmarket", fetched, NO_HOLIDAYS)
         s.commit()
@@ -261,7 +281,7 @@ class TestBothToolsAgreeAboutWhatBBOmits:
         monkeypatch.setattr(audit, "get_session", lambda: sessionmaker(bind=bind)())
         monkeypatch.setattr(validate, "get_session", lambda: sessionmaker(bind=bind)())
 
-        rep = audit.sweep(session=s, today=D(2026, 10, 17), gap_window_days=120)
+        rep = audit.sweep(session=s, today=D.today(), gap_window_days=120)
         fx = [f for f in rep["findings"] if f["dataset"] == "fxmarket"
               and f["kind"] == "gap"]
         assert fx == [], f"the sweep still calls BB's own omission our gap: {fx}"
@@ -279,9 +299,9 @@ class TestBothToolsAgreeAboutWhatBBOmits:
         import audit
         import validate
         s = _mem()
-        gap = D(2026, 9, 10)
-        _store(s, _working_days(D(2026, 9, 1), D(2026, 9, 30), skip=(gap,)))
-        rep = audit.sweep(session=s, today=D(2026, 10, 17), gap_window_days=120)
+        gap, fetched = _recent_month_with_a_gap()
+        _store(s, fetched)
+        rep = audit.sweep(session=s, today=D.today(), gap_window_days=120)
         fx = [f for f in rep["findings"] if f["dataset"] == "fxmarket"
               and f["kind"] == "gap"]
         assert fx, "the sweep stopped reporting an unproved gap"

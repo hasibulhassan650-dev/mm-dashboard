@@ -426,3 +426,70 @@ class TestOneAuctionOneRowInTheWriter:
         upsert_primary_yield(s, self._row("2Y", isin=None))
         s.commit()
         assert s.query(PrimaryYieldSnapshot).count() == 2
+
+
+class TestAnFxRowIsDatedByTheLiveCalendar:
+    """17-Oct-2026 was a declared working Saturday our calendar did not know.
+
+    BB's exchange-rate page describes the PREVIOUS business day, so
+    rate_date = previous_working_day(published_date). With 17-Oct missing, the
+    row published on the 18th walked back over Sat 17 and Fri 16 and was dated
+    Thu 15-Oct: two days out, on top of the real 15-Oct figures. The
+    cross-source USD check then compared two different trading days and
+    reported three disagreements it was right to report. One missing calendar
+    entry, three defects, one wrong rate.
+    """
+
+    def _row(self, rate_date, published, bid):
+        from db import FxRateDaily
+        return FxRateDaily(rate_date=rate_date, published_date=published, currency="USD",
+                           bid_rate=bid, ask_rate=bid + 0.03, war_rate=bid)
+
+    def _calendar(self, with_saturday: bool):
+        D = datetime.date
+        calendar_utils.load_calendar_rows(
+            [(D(2026, 10, 17), "WORKING_DAY")] if with_saturday else [])
+
+    def teardown_method(self, _m):
+        calendar_utils.load_holidays(set(), set())
+
+    def test_the_row_published_on_the_18th_moves_to_the_17th(self):
+        D = datetime.date
+        self._calendar(with_saturday=True)
+        eng, s = _mem()
+        s.add(self._row(D(2026, 10, 15), D(2026, 10, 18), 123.55))   # mis-dated
+        s.commit()
+        rep = self_heal(s); s.commit()
+        assert rep["repaired"].get("fx-rate-date") == 1, rep
+        assert s.query(__import__("db").FxRateDaily).one().rate_date == D(2026, 10, 17)
+
+    def test_it_never_overwrites_a_row_already_on_the_target_date(self):
+        """Two rows contending for one date is a conflict for a human, not a
+        tie the code should break by deleting someone's figures."""
+        D = datetime.date
+        self._calendar(with_saturday=True)
+        eng, s = _mem()
+        s.add(self._row(D(2026, 10, 15), D(2026, 10, 18), 123.55))
+        s.add(self._row(D(2026, 10, 17), D(2026, 10, 18), 123.99))
+        s.commit()
+        rep = self_heal(s); s.commit()
+        assert not rep["repaired"].get("fx-rate-date")
+        assert any("already holds another row" in x for x in rep["skipped"]), rep["skipped"]
+        from db import FxRateDaily
+        assert s.query(FxRateDaily).count() == 2
+
+    def test_a_correctly_dated_row_is_left_alone(self):
+        D = datetime.date
+        self._calendar(with_saturday=True)
+        eng, s = _mem()
+        s.add(self._row(D(2026, 10, 17), D(2026, 10, 18), 123.60))
+        s.commit()
+        assert not self_heal(s)["repaired"].get("fx-rate-date")
+
+    def test_without_the_saturday_the_old_date_is_what_the_calendar_says(self):
+        """Documents the cause: this is the state that produced the bug."""
+        D = datetime.date
+        self._calendar(with_saturday=False)
+        assert calendar_utils.previous_working_day(D(2026, 10, 18)) == D(2026, 10, 15)
+        self._calendar(with_saturday=True)
+        assert calendar_utils.previous_working_day(D(2026, 10, 18)) == D(2026, 10, 17)

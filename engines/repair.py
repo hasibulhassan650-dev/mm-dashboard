@@ -11,6 +11,7 @@ whose correct value is *derivable with certainty* from data we already hold:
   * a coupon/maturity payment on a closed day → re-roll under the live calendar
   * a PLANNED auction settling on a closed day → re-derive T+1
   * a DERIVED OMO maturity on a closed day     → re-roll from txn + tenor
+  * an FX-page row dated off the live calendar → re-date from published_date
 
 Anything ambiguous (a move that would collide with an existing row, a date the
 calendar cannot resolve) is left ALONE and reported, so a human sees it instead
@@ -23,7 +24,7 @@ import logging
 
 import calendar_utils
 from db import (PrimaryYieldSnapshot, CouponEvent, MaturityEvent, AuctionEvent,
-                OMOTransaction)
+                OMOTransaction, FxRateDaily)
 
 log = logging.getLogger(__name__)
 
@@ -149,6 +150,36 @@ def self_heal(session, limit_log: int = 40) -> dict:
             t.maturity_date = want
         except Exception as exc:
             skipped.append(f"omo {t.instrument} {t.maturity_date}: {exc}")
+
+    # ── 6. an FX-page row must be dated by the CURRENT calendar ──────────────
+    # BB's exchange-rate page describes the PREVIOUS business day, so a row's
+    # rate_date is previous_working_day(published_date). That is a function of
+    # the calendar, and the calendar learns things late: 17-Oct-2026 was a
+    # declared working Saturday we did not know about, so the row published on
+    # the 18th was dated 15-Oct — two days out, on top of the real 15-Oct
+    # figures — and the cross-source USD check compared two different trading
+    # days and (correctly) reported three disagreements.
+    #
+    # Moves only; never overwrites. If the target date already holds a row for
+    # that currency the two are in conflict and a human should look, so it is
+    # reported and left alone.
+    for r in session.query(FxRateDaily).filter(FxRateDaily.published_date.isnot(None)).all():
+        try:
+            want = calendar_utils.previous_working_day(r.published_date)
+            if want == r.rate_date:
+                continue
+            clash = session.query(FxRateDaily).filter(
+                FxRateDaily.rate_date == want, FxRateDaily.currency == r.currency,
+                FxRateDaily.id != r.id).first()
+            if clash is not None:
+                skipped.append(f"fx {r.currency} published {r.published_date}: belongs on "
+                               f"{want} but that date already holds another row")
+                continue
+            _did("fx-rate-date", f"{r.currency} published {r.published_date}: "
+                                 f"{r.rate_date} → {want}")
+            r.rate_date = want
+        except Exception as exc:
+            skipped.append(f"fx {r.currency} {r.rate_date}: {exc}")
 
     session.flush()
     total = sum(repaired.values())

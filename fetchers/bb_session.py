@@ -90,6 +90,34 @@ def _cleanup_chrome() -> None:
         pass
 
 
+class F5Unavailable(RuntimeError):
+    """The F5 challenge has stopped clearing for this process.
+
+    Raised instead of launching yet another Chrome. From 23-Oct-2026 every
+    hourly refresh was killed by its 30-minute timeout: Chrome started fine,
+    the challenge never cleared, and each page spent three attempts x ~95s
+    waiting for it — four pages, ~20 minutes of a 30-minute budget, before the
+    job was cancelled and with it the commit, the integrity gate and every
+    step that needed no browser at all. Seven consecutive runs, and the retries
+    were themselves traffic to a host that was already refusing us.
+    """
+
+
+# Per-process breaker. One page that exhausts its attempts means the challenge
+# is not clearing; the remaining pages get ONE short probe (in case the block
+# is path-specific, which BB's cookies sometimes are), and a second exhaustion
+# means it is domain-wide and everything after fails instantly.
+_F5_EXHAUSTED = 0
+_F5_PROBE_WAIT = 35          # seconds, for the single probe after a failure
+_F5_FULL_WAIT = 90
+
+
+def reset_f5_breaker() -> None:
+    """For tests, and for a long-lived process that wants a fresh start."""
+    global _F5_EXHAUSTED
+    _F5_EXHAUSTED = 0
+
+
 def get_f5_cookies(url: str, wait_selector: str = "table",
                    attempts: int = 3) -> tuple[dict, str]:
     """
@@ -108,6 +136,17 @@ def get_f5_cookies(url: str, wait_selector: str = "table",
     from selenium.webdriver.support.ui import WebDriverWait
     from selenium.webdriver.support import expected_conditions as EC
 
+    global _F5_EXHAUSTED
+    if _F5_EXHAUSTED >= 2:
+        raise F5Unavailable(
+            "the F5 challenge did not clear on two separate pages in this run, so no "
+            "further Chrome launches are being attempted — BB is refusing the runner, "
+            "and retrying only adds traffic to a host that is already saying no")
+    probe = _F5_EXHAUSTED >= 1
+    if probe:
+        attempts = 1                       # one look, not three
+    wait_s = _F5_PROBE_WAIT if probe else _F5_FULL_WAIT
+
     last_exc: Optional[Exception] = None
     for i in range(attempts):
         options = uc.ChromeOptions()
@@ -121,7 +160,7 @@ def get_f5_cookies(url: str, wait_selector: str = "table",
         try:
             driver = uc.Chrome(options=options, version_main=get_chrome_version())
             driver.get(url)
-            WebDriverWait(driver, 90).until(
+            WebDriverWait(driver, wait_s).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, wait_selector))
             )
             time.sleep(5)
@@ -142,6 +181,10 @@ def get_f5_cookies(url: str, wait_selector: str = "table",
             _cleanup_chrome()
         time.sleep(3)
 
+    _F5_EXHAUSTED += 1
+    log.error("F5 challenge did not clear for %s after %d attempt(s) — %d page(s) exhausted "
+              "this run%s", url, attempts, _F5_EXHAUSTED,
+              "; further Chrome launches are now disabled" if _F5_EXHAUSTED >= 2 else "")
     raise last_exc if last_exc else RuntimeError("get_f5_cookies: no attempts made")
 
 

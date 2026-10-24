@@ -210,3 +210,39 @@ class TestARegionalHolidayIsNotAClosure:
         assert wanted, "CLOSURE_SQL names no non-closure types"
         for t in wanted:
             assert f"'{t}'" in api, f"api/ copy is missing {t}"
+
+
+class TestABlockedResponseIsNotBBChangingItsPage:
+    """F5 answers a throttled client with HTTP 403 and a 759-byte "Service
+    Temporarily Unavailable" page. fetch_holidays used to hand that body to the
+    parser, which found no table, and the fingerprint recorded "the page
+    carries no table" — a structural verdict, i.e. BB restructuring the page,
+    raised purely by our own request rate. Only a 200 is evidence about BB."""
+
+    def _fetch(self, monkeypatch, status, body):
+        import curl_cffi.requests as cr
+
+        class _R:
+            status_code = status
+            text = body
+
+        monkeypatch.setattr(cr, "get", lambda *a, **k: _R())
+        from fetchers.holidays import fetch_holidays
+        return fetch_holidays()
+
+    def test_a_403_is_transport_not_structure(self, monkeypatch):
+        out = self._fetch(monkeypatch, 403, "<html><title>Service Temporarily Unavailable</title></html>")
+        assert out["rows"] == []
+        assert out["meta"]["transport_error"], "the block was not recorded as transport"
+        assert not out["meta"]["error"], "a block was recorded as a structural failure"
+        assert "403" in out["reason"]
+
+    def test_it_cannot_register_a_shape_or_degrade_the_source(self, monkeypatch):
+        from fetchers import source_watch as SW
+        out = self._fetch(monkeypatch, 403, "x")
+        assert SW.compare(None, out["meta"])[0] == "unread"
+
+    def test_a_200_with_no_table_is_still_a_structural_finding(self, monkeypatch):
+        """The distinction has to cut both ways."""
+        out = self._fetch(monkeypatch, 200, "<html><body>nothing here</body></html>")
+        assert out["meta"]["error"] and not out["meta"]["transport_error"]
