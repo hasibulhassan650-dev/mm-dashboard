@@ -310,3 +310,41 @@ class TestTheSiteAgreesWithTheGuardian:
         m = self._meta()
         assert "36" in inspect.getsource(m._bb_outage)
         assert O.FRESH_HOURS == 36
+
+
+class TestAnEmptyPageNeverWipesHistory:
+    """What an outage must not be able to do: with BB serving a maintenance
+    page every parser returns nothing, and the store then has to leave the
+    existing record alone. replace_daily_rows deletes rows the page no longer
+    has, which is correct for a live table and catastrophic if an empty or
+    truncated response is ever treated as 'BB now has no rows'."""
+
+    def _stored(self, s):
+        for d in (D(2026, 10, 14), D(2026, 10, 15)):
+            s.add(InterbankRepo(trade_date=d, num_deals=30, amount_crore=2979.0, tenor_min_days=1,
+                                tenor_max_days=7, rate_min_pct=8.5, rate_max_pct=8.95,
+                                war_pct=8.8, ingested_utc=NOW()))
+        s.commit()
+
+    def test_an_empty_page_deletes_nothing(self):
+        from engines.pipeline import replace_daily_rows
+        eng, s = _mem()
+        self._stored(s)
+        stats = replace_daily_rows(s, InterbankRepo, [], ())
+        s.commit()
+        assert stats == {"updated": 0, "inserted": 0, "deleted": 0, "unchanged": 0}
+        assert s.query(InterbankRepo).count() == 2
+
+    def test_a_page_covering_other_dates_leaves_these_alone(self):
+        """A truncated response that returns only a newer day must not delete
+        the older ones it does not mention."""
+        from engines.pipeline import replace_daily_rows
+        eng, s = _mem()
+        self._stored(s)
+        replace_daily_rows(s, InterbankRepo, [{
+            "trade_date": D(2026, 10, 18), "num_deals": 5, "amount_crore": 100.0,
+            "tenor_min_days": 1, "tenor_max_days": 7, "rate_min_pct": 8.0,
+            "rate_max_pct": 9.0, "war_pct": 8.5, "ingested_utc": NOW()}], ())
+        s.commit()
+        assert {r.trade_date for r in s.query(InterbankRepo)} == {
+            D(2026, 10, 14), D(2026, 10, 15), D(2026, 10, 18)}
