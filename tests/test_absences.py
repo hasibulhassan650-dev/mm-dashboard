@@ -309,3 +309,78 @@ class TestBothToolsAgreeAboutWhatBBOmits:
         monkeypatch.setattr(validate, "get_session", lambda: sessionmaker(bind=bind)())
         vrep = validate.integrity_check(limit_per_rule=200)
         assert [i for i in vrep["issues"] if "fxmarket" in i and "missing INSIDE" in i],             "validate stopped reporting an unproved gap"
+
+
+class TestAHoleOfOursIsNeverCalledBBs:
+    """15-Oct-2026's exchange-rate row was OVERWRITTEN by a mis-dated one, and
+    BB's page serves only today's snapshot, so it cannot be re-read.
+
+    Left as a defect it is one permanently red line for 45 days — wallpaper.
+    Filed as a BB omission it is a lie: the desk would be told BB did not
+    publish a day that BB published and we destroyed. So it is a third thing —
+    a hole that is OURS — skipped by the gap check, and named as ours in
+    every report that mentions it.
+    """
+
+    def _fx(self, s, days):
+        from db import FxRateDaily
+        for d in days:
+            s.add(FxRateDaily(rate_date=d, published_date=d, currency="USD",
+                              bid_rate=123.0, ask_rate=123.1, war_rate=123.05))
+        s.commit()
+
+    def test_a_loss_is_recorded_as_ours_not_bbs(self):
+        s = _mem()
+        assert absences.record_loss(s, "fxrates", D(2026, 10, 15),
+                                    "overwritten by a mis-dated row") is True
+        s.commit()
+        assert absences.lost_dates(s, "fxrates") == {D(2026, 10, 15)}
+        assert absences.summary(s, kind="bb_omission") == {}, \
+            "our own loss was counted as BB's omission"
+        assert absences.summary(s, kind="lost")["fxrates"]["count"] == 1
+
+    def test_the_gap_check_passes_over_it(self):
+        s = _mem()
+        absences.record_loss(s, "fxrates", D(2026, 10, 15), "overwritten")
+        s.commit()
+        assert D(2026, 10, 15) in absences.absent_dates(s, "fxrates")
+
+    def test_a_bb_omission_and_a_loss_stay_separate(self):
+        s = _mem()
+        gap, fetched = _recent_month_with_a_gap()
+        _store(s, fetched)
+        absences.confirm_absences(s, "fxmarket", fetched, NO_HOLIDAYS)
+        absences.record_loss(s, "fxrates", D(2026, 10, 15), "overwritten")
+        s.commit()
+        assert set(absences.summary(s, kind="bb_omission")) == {"fxmarket"}
+        assert set(absences.summary(s, kind="lost")) == {"fxrates"}
+        assert set(absences.summary(s, kind=None)) == {"fxmarket", "fxrates"}
+
+    def test_recording_it_twice_counts_instead_of_duplicating(self):
+        s = _mem()
+        assert absences.record_loss(s, "fxrates", D(2026, 10, 15), "x") is True
+        s.commit()
+        assert absences.record_loss(s, "fxrates", D(2026, 10, 15), "x") is False
+        s.commit()
+        assert absences.summary(s, kind="lost")["fxrates"]["count"] == 1
+
+    def test_the_sweep_names_it_as_ours(self):
+        import audit
+        s = _mem()
+        # fx_rates_daily is the table behind the 'fxrates' dataset.
+        from db import FxRateDaily
+        days = _working_days(D.today() - datetime.timedelta(days=20),
+                             D.today() - datetime.timedelta(days=1))
+        lost = days[len(days) // 2]
+        for d in days:
+            if d != lost:
+                s.add(FxRateDaily(rate_date=d, published_date=d, currency="USD",
+                                  bid_rate=123.0, ask_rate=123.1, war_rate=123.05))
+        s.commit()
+        absences.record_loss(s, "fxrates", lost, "overwritten")
+        s.commit()
+        rep = audit.sweep(session=s, today=D.today(), gap_window_days=60)
+        row = [d for d in rep["datasets"] if d["key"] == "fxrates"][0]
+        assert row.get("known_losses") == 1
+        assert not row.get("known_absences"), "our loss was reported as BB's"
+        assert "OUR record" in audit.render(rep)

@@ -770,6 +770,11 @@ class DataAbsence(Base):
     source       = Column(Text)        # the page that was re-read
     verified_utc = Column(DateTime)
     checks       = Column(Integer, default=1)   # times re-confirmed
+    # WHOSE hole it is. 'bb_omission': BB's own page, read from the start of the
+    # month, carries no row. 'lost': we HAD it and destroyed it, and BB cannot
+    # give it back — kept apart because the digest must never tell the desk a
+    # hole is BB's when it is ours.
+    kind         = Column(String(16), default="bb_omission")
 
 
 class SourceSnapshot(Base):
@@ -865,6 +870,7 @@ def init_db():
         "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS source_pub_date DATE",
         "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS source_serial VARCHAR(40)",
         "ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS quality TEXT",
+        "ALTER TABLE data_absences ADD COLUMN IF NOT EXISTS kind VARCHAR(16) DEFAULT 'bb_omission'",
         "ALTER TABLE daily_net_flow ADD COLUMN IF NOT EXISTS buyback_inflow_bdt_mill REAL DEFAULT 0",
         # A desk mark is a provisional cut-off, never BB's. A sovereign yield
         # outside 0-30% is a typo in any century, and the constraint is the

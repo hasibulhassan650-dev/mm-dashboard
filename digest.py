@@ -180,6 +180,22 @@ def build() -> tuple:
                          f"start of the month, so the gap check passes over them; they are "
                          f"holes in the record, not in our fetching.\n")
 
+        # Holes that are OURS: a day we had and destroyed, which BB cannot give
+        # back. Printed apart from the BB line above because telling the desk a
+        # hole is BB's when it is ours is the one thing this report must not do.
+        try:
+            from engines.absences import summary as _abs_summary
+            _lost = _abs_summary(s, kind="lost")
+        except Exception:
+            _lost = {}
+        if _lost:
+            parts = ", ".join(f"`{k}` {v['count']} (latest {v['latest']})"
+                              for k, v in sorted(_lost.items()))
+            lines.append(f"**Unrecoverable holes in OUR record: "
+                         f"{sum(v['count'] for v in _lost.values())}** — {parts}. We had "
+                         f"these and lost them; BB cannot re-serve them. Named here so "
+                         f"they stay visible, not hidden as BB's omission.\n")
+
         if rep.get("waiting"):
             lines.append(f"**Waiting on Bangladesh Bank: {rep.get('waiting_count')}** — "
                          f"not our data and not actionable, listed so it is never forgotten\n")

@@ -103,6 +103,19 @@ def _anchored_windows(got: List[datetime.date],
     return out
 
 
+def lost_dates(session, dataset: str) -> Set[datetime.date]:
+    """The subset of known holes that are OURS — days we had and destroyed."""
+    from sqlalchemy import text
+    try:
+        rows = session.execute(text(
+            "SELECT absent_date FROM data_absences WHERE dataset = :d "
+            "AND kind = 'lost'"), {"d": dataset}).fetchall()
+    except Exception:
+        session.rollback()
+        return set()
+    return {d for d in (_as_date(r[0]) for r in rows) if d is not None}
+
+
 def confirm_absences(session, dataset: str, fetched_dates: Iterable,
                      holidays: Set[datetime.date], source: str = "",
                      reason: str = "", now: datetime.datetime = None,
@@ -173,14 +186,46 @@ def _stored_dates(session, dataset: str) -> Set[datetime.date]:
     return {d for d in (_as_date(r[0]) for r in rows) if d is not None}
 
 
-def summary(session) -> dict:
+def record_loss(session, dataset: str, day: datetime.date, reason: str,
+                source: str = "", now: datetime.datetime = None) -> bool:
+    """Record a day we HAD and destroyed, and that BB cannot give back.
+
+    Not the same thing as an absence, and the digest must never blur them: a
+    BB omission is a hole in what was published, a loss is a hole in our own
+    record. 15-Oct-2026's exchange-rate row is the case: a mis-dated row
+    overwrote it, and BB's page serves only today's snapshot, so it cannot be
+    re-read. Leaving it a defect would put one permanently red line in every
+    report for 45 days — wallpaper — and calling it BB's omission would be a
+    lie. So it is kept, named as OURS, and surfaced in its own line.
+
+    Returns True if newly recorded.
+    """
+    from db import DataAbsence
+    now = now or datetime.datetime.utcnow()
+    row = (session.query(DataAbsence)
+           .filter_by(dataset=dataset, absent_date=day).one_or_none())
+    if row is not None:
+        row.checks = (row.checks or 0) + 1
+        row.verified_utc = now
+        return False
+    session.add(DataAbsence(dataset=dataset, absent_date=day, kind="lost", reason=reason,
+                            source=source, verified_utc=now, checks=1))
+    return True
+
+
+def summary(session, kind: Optional[str] = "bb_omission") -> dict:
     """What is on record, for the digest. Never a bare count: the newest one
     matters, because a cluster of fresh absences is a story about BB."""
     from sqlalchemy import text
     try:
+        # COALESCE: rows written before the column existed are BB omissions.
+        # Conditional SQL rather than `:k IS NULL`: an untyped NULL parameter
+        # fails type inference on Postgres, which SQLite never reveals.
+        where = "WHERE COALESCE(kind, 'bb_omission') = :k " if kind else ""
         rows = session.execute(text(
             "SELECT dataset, COUNT(*), MAX(absent_date) FROM data_absences "
-            "GROUP BY dataset ORDER BY dataset")).fetchall()
+            + where + "GROUP BY dataset ORDER BY dataset"),
+            {"k": kind} if kind else {}).fetchall()
     except Exception:
         session.rollback()
         return {}

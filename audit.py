@@ -144,10 +144,14 @@ def sweep(session=None, today: datetime.date = None, gap_window_days: int = 120)
                 # different numbers of defects for the same database — the kind
                 # of contradiction that makes both of them unusable.
                 known = _absences.absent_dates(session, ds.key)
-                skipped_known = len([g for g in gaps if g in known])
+                ours = _absences.lost_dates(session, ds.key)
+                n_ours = len([g for g in gaps if g in ours])
+                n_bb = len([g for g in gaps if g in known and g not in ours])
                 gaps = [g for g in gaps if g not in known]
-                if skipped_known:
-                    row["known_absences"] = skipped_known
+                if n_bb:
+                    row["known_absences"] = n_bb
+                if n_ours:
+                    row["known_losses"] = n_ours
                 row["gaps"] = len(gaps)
                 row["gap_dates"] = [str(g) for g in gaps[:20]]
                 if gaps:
@@ -205,6 +209,14 @@ def render(rep: dict) -> str:
     out.append("")
     known = {d["label"]: d["known_absences"] for d in rep["datasets"]
              if d.get("known_absences")}
+    lost = {d["label"]: d["known_losses"] for d in rep["datasets"]
+            if d.get("known_losses")}
+    if lost:
+        out.append("**Unrecoverable holes in OUR record** — days we had and lost, which BB "
+                   "cannot re-serve; passed over so they are not a permanent defect, but "
+                   "named so they are not hidden as BB's omission: "
+                   + ", ".join(f"**{k}** {v}" for k, v in sorted(lost.items())) + ".")
+        out.append("")
     if known:
         out.append("Days BB itself does not publish, passed over rather than counted as "
                    "gaps (each proven by re-reading BB's own page from the start of the "
