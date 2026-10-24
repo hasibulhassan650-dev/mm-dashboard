@@ -245,6 +245,9 @@ def bb_post(url: str, data: dict, cookies: dict, ua: str) -> str:
 
     resp = session.post(url, data=data, timeout=30)
 
+    from fetchers.bb_health import BBMaintenance, looks_like_maintenance
+    if looks_like_maintenance(resp.text):
+        raise BBMaintenance(f"BB's website is serving its maintenance page at {url}")
     if "human visitor" in resp.text or "support ID" in resp.text:
         raise RuntimeError("F5 CAPTCHA returned — challenge may have rotated")
 
@@ -270,6 +273,9 @@ def bb_get(url: str, cookies: dict, ua: str) -> str:
 
     resp = session.get(url, timeout=30)
 
+    from fetchers.bb_health import BBMaintenance, looks_like_maintenance
+    if looks_like_maintenance(resp.text):
+        raise BBMaintenance(f"BB's website is serving its maintenance page at {url}")
     if "human visitor" in resp.text or "support ID" in resp.text:
         raise RuntimeError("F5 CAPTCHA returned — challenge may have rotated")
 

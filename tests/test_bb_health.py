@@ -120,3 +120,60 @@ class TestProbeCostsAFewSeconds:
         assert [d["kind"] for d in out["detail"]] == ["unreachable", "ok", "ok"]
         assert out["state"] == "up"
         assert len(calls) == len(H.PROBE_URLS)
+
+
+class TestCheckResponseNamesTheOutage:
+    """A bare "403 Client Error" in a step's error is how BB's maintenance page
+    got filed as a fault in our own fetch. check_response keeps every ordinary
+    failure exactly as raise_for_status() had it, and changes only the one
+    case that is BB telling us it is down."""
+
+    class _Resp:
+        def __init__(self, status, text, url="https://www.bb.org.bd/x"):
+            self.status_code, self.text, self.url = status, text, url
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(f"{self.status_code} Client Error")
+
+    def test_the_maintenance_page_raises_bbmaintenance_not_a_bare_403(self, maintenance_page):
+        with pytest.raises(H.BBMaintenance) as exc:
+            H.check_response(self._Resp(403, maintenance_page))
+        assert "maintenance page" in str(exc.value) and "403" in str(exc.value)
+
+    def test_an_ordinary_403_is_still_an_ordinary_error(self):
+        """Not maintenance, so it must not be reported as BB being down."""
+        with pytest.raises(RuntimeError) as exc:
+            H.check_response(self._Resp(403, "<html>Request rejected. Support ID: 99</html>"))
+        assert not isinstance(exc.value, H.BBMaintenance)
+
+    def test_a_good_page_passes_silently(self):
+        assert H.check_response(self._Resp(200, "<table><tr><td>x</td></tr></table>")) is None
+
+    def test_bbmaintenance_is_a_runtimeerror_so_existing_handlers_still_catch_it(self):
+        assert issubclass(H.BBMaintenance, RuntimeError)
+
+    def test_bb_get_and_bb_post_raise_it_too(self, maintenance_page, monkeypatch):
+        import curl_cffi.requests as cf
+
+        class _Sess:
+            def __init__(self, *a, **k):
+                self.headers, self.cookies = self, self
+
+            def update(self, *_):
+                pass
+
+            def set(self, *a, **k):
+                pass
+
+            def get(self, *a, **k):
+                return TestCheckResponseNamesTheOutage._Resp(403, maintenance_page)
+
+            post = get
+
+        monkeypatch.setattr(cf, "Session", _Sess)
+        import fetchers.bb_session as bbs
+        with pytest.raises(H.BBMaintenance):
+            bbs.bb_get("https://www.bb.org.bd/x", {}, "UA")
+        with pytest.raises(H.BBMaintenance):
+            bbs.bb_post("https://www.bb.org.bd/x", {}, {}, "UA")

@@ -29,6 +29,7 @@ are stored — one to analyse on, one to trace back to the page it came from.
 Like fetchers/monetary.py this page passes on TLS impersonation alone; no
 Chrome/F5 hop needed.
 """
+from fetchers.bb_health import check_response
 import datetime
 import logging
 import re
@@ -114,7 +115,7 @@ def fetch_fx_rates() -> List[Dict]:
     from curl_cffi import requests as creq
     try:
         r = creq.get(_URL, impersonate="chrome", timeout=40)
-        r.raise_for_status()
+        check_response(r)
         rows = parse_fx_rates_html(r.text)
         log.info("FX rates: %d currencies for %s",
                  len(rows), rows[0]["rate_date"] if rows else "—")

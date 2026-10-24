@@ -15,6 +15,7 @@ OMITTED, so the chart line is blank rather than fabricated.
 
 Run `python -m fetchers.monetary --write` to regenerate api/seeds/monetary.yaml.
 """
+from fetchers.bb_health import check_response
 import argparse
 import datetime
 import logging
@@ -33,7 +34,7 @@ _MON = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
 
 def _soup(slug: str) -> BeautifulSoup:
     r = creq.get(_BASE + slug, impersonate="chrome", timeout=30)
-    r.raise_for_status()
+    check_response(r)
     return BeautifulSoup(r.text, "lxml")
 
 

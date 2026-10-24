@@ -74,6 +74,27 @@ def looks_like_maintenance(body: Optional[str]) -> bool:
     return any(m in low for m in _MARKERS)
 
 
+def check_response(resp) -> None:
+    """Use in place of resp.raise_for_status() on any BB response.
+
+    Identical for every ordinary failure, but when the body is BB's maintenance
+    page it raises BBMaintenance - so the step's error in the run record says
+    "BB's website is serving its maintenance page" instead of an anonymous
+    "403 Client Error", which is how an outage got filed as a fault in our own
+    fetch. Imported at each call site rather than wrapped around requests,
+    because the fetchers use curl_cffi directly in a dozen places.
+    """
+    try:
+        body = resp.text
+    except Exception:
+        body = None
+    if looks_like_maintenance(body):
+        raise BBMaintenance(f"BB's website is serving its maintenance page "
+                            f"(HTTP {getattr(resp, 'status_code', '?')}) at "
+                            f"{getattr(resp, 'url', 'a BB page')}")
+    resp.raise_for_status()
+
+
 def classify(status: Optional[int], body: Optional[str]) -> str:
     """One response -> 'maintenance' | 'ok' | 'blocked' | 'unreachable'.
 

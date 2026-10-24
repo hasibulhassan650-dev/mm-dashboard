@@ -27,6 +27,7 @@ If either fails, the run writes nothing rather than something plausible.
 Usage:  python fetchers/policy_history.py            print what it found
         python fetchers/policy_history.py --write    write api/seeds/policy_rates.yaml
 """
+from fetchers.bb_health import check_response
 import io
 import logging
 import re
@@ -61,7 +62,7 @@ def fetch_circular_index() -> list[dict]:
     from curl_cffi import requests as cr
     import html as html_mod
     r = cr.get(CIRCULAR_URL, impersonate="chrome", timeout=60)
-    r.raise_for_status()
+    check_response(r)
     out = []
     for row in re.findall(r"<tr[^>]*>(.*?)</tr>", r.text, re.S):
         cells = [html_mod.unescape(re.sub(r"<[^>]+>", " ", c)).strip()
@@ -88,7 +89,7 @@ def read_pdf_numbers(url: str) -> tuple[list, list]:
     from curl_cffi import requests as cr
     import pdfplumber
     r = cr.get(url, impersonate="chrome", timeout=60)
-    r.raise_for_status()
+    check_response(r)
     with pdfplumber.open(io.BytesIO(r.content)) as pdf:
         txt = " ".join((p.extract_text() or "") for p in pdf.pages)
     txt = _norm(txt)

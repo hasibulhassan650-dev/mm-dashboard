@@ -23,6 +23,7 @@ than stored half-parsed.
 
 The default page (≈1 month) passes on TLS impersonation alone — no Chrome hop.
 """
+from fetchers.bb_health import check_response
 import datetime
 import logging
 import re
@@ -132,7 +133,7 @@ def fetch_interbank_repo() -> List[Dict]:
     from curl_cffi import requests as creq
     try:
         r = creq.get(_URL, impersonate="chrome", timeout=40)
-        r.raise_for_status()
+        check_response(r)
         rows = parse_interbank_repo_html(r.text)
         log.info("Interbank repo: parsed %d rows (BB shows only the last 5 trading days)",
                  len(rows))
@@ -152,7 +153,7 @@ def fetch_interbank_repo_month(month: datetime.date) -> List[Dict]:
     label = month.strftime("%B, %Y")
     try:
         r = creq.post(_URL, data={"date_picker": label}, impersonate="chrome", timeout=40)
-        r.raise_for_status()
+        check_response(r)
         rows = parse_interbank_repo_html(r.text)
         log.info("Interbank repo %s: parsed %d rows", label, len(rows))
         return rows

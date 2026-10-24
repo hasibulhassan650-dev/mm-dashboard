@@ -20,6 +20,7 @@ segment and month — that is how history back to 2023 is reached.
 Unlike most BB pages this one passes on TLS impersonation alone (same as
 fetchers/monetary.py), so no Chrome/F5 hop is needed and the fetch stays fast.
 """
+from fetchers.bb_health import check_response
 import datetime
 import logging
 import re
@@ -125,7 +126,7 @@ def parse_interbank_fx_html(html: str, segment_hint: Optional[str] = None) -> Li
 
 def _get(session, url, data=None):
     r = session.post(url, data=data, timeout=40) if data else session.get(url, timeout=40)
-    r.raise_for_status()
+    check_response(r)
     return r.text
 
 
