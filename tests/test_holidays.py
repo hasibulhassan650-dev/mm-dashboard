@@ -213,11 +213,12 @@ class TestARegionalHolidayIsNotAClosure:
 
 
 class TestABlockedResponseIsNotBBChangingItsPage:
-    """F5 answers a throttled client with HTTP 403 and a 759-byte "Service
-    Temporarily Unavailable" page. fetch_holidays used to hand that body to the
-    parser, which found no table, and the fingerprint recorded "the page
-    carries no table" — a structural verdict, i.e. BB restructuring the page,
-    raised purely by our own request rate. Only a 200 is evidence about BB."""
+    """BB's website answers with HTTP 403 and a 759-byte maintenance page ("The
+    Service is under Maintenance") when it is down - for everyone, not for one
+    client. fetch_holidays used to hand that body to the parser, which found no
+    table, and the fingerprint recorded "the page carries no table" - a
+    structural verdict, i.e. BB restructuring the page. Only a 200 is evidence
+    about BB's page."""
 
     def _fetch(self, monkeypatch, status, body):
         import curl_cffi.requests as cr

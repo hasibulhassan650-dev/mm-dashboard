@@ -186,12 +186,14 @@ def fetch_holidays() -> dict:
     try:
         r = cr.get(BB_HOLIDAY_URL, impersonate="chrome", timeout=30)
         html = r.text or ""
-        # A blocked or failing response is a TRANSPORT fact, not evidence about
-        # BB's page. F5 answers a throttled client with HTTP 403 and a
-        # 759-byte "Service Temporarily Unavailable" body; parsing that finds
-        # no table, and "the page carries no table" is then recorded as BB
-        # restructuring it — a false structural alarm raised by our own request
-        # rate. Only a 200 is a page worth parsing.
+        # A non-200 is a TRANSPORT fact, not evidence about BB's page. Parsing
+        # the body of an error response finds no table, and "the page carries
+        # no table" would then be recorded as BB restructuring it - a false
+        # structural alarm. What the body usually IS, since 22-Oct-2026, is BB's
+        # own 759-byte maintenance page ("The Service is under Maintenance"),
+        # served with a 403 to everyone. (This comment once said F5 was
+        # throttling a client; that was a misreading of that page.) Only a 200
+        # is a page worth parsing.
         if r.status_code != 200:
             from fetchers import source_watch as SW
             return {"rows": [], "refused": {},

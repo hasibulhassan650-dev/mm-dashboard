@@ -61,6 +61,42 @@ export function StaleDataBanner() {
 }
 
 /**
+ * Bangladesh Bank's own website is down.
+ *
+ * From 22-Oct-2026 BB served a maintenance page in place of its pages and every
+ * BB-fed series stopped. For days that read, here and in the alerts, as a fault
+ * in OUR fetch - sending the desk to debug the wrong system. It is neither BB
+ * being late nor our code failing: it is a frozen feed with a clear owner and a
+ * clear action (wait, and know the numbers are not current). This banner says
+ * exactly that, and it is the first thing shown because it changes how every
+ * other number on the page should be read.
+ */
+export function BBOutageBanner() {
+  const s = useStatus();
+  const o = s?.bb_outage;
+  if (!o) return null;
+  const half = o.state === "partial";
+  return (
+    <div role="alert" style={{
+      background: "color-mix(in oklab, var(--warn) 14%, var(--panel))",
+      border: "1px solid var(--warn)", borderRadius: "var(--radius)",
+      padding: "10px 14px", marginBottom: "var(--gap)",
+    }}>
+      <div style={{ color: "var(--warn)", fontWeight: 700, fontSize: 13 }}>
+        ⚠ Bangladesh Bank&apos;s website is {half ? "partly " : ""}under maintenance —
+        the figures below are frozen at their last published values
+      </div>
+      <div style={{ color: "var(--fg-dim)", fontSize: 11.5, marginTop: 3, lineHeight: 1.6 }}>
+        Nothing is wrong with this dashboard and nothing will refresh until BB is back;
+        it re-checks every refresh and will catch up on its own.
+        {o.probed_utc && <> Last checked <b className="mono">{o.probed_utc.slice(0, 16).replace("T", " ")} UTC</b>.</>}
+        {" "}Treat OMO, auction results, call money, reference rates and FX as not current.
+      </div>
+    </div>
+  );
+}
+
+/**
  * A feed that has been dead long enough that "Bangladesh Bank is late" no
  * longer explains it.
  *

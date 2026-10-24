@@ -21,3 +21,13 @@ holidays:
   - date: "2026-08-26"
     name: "Bank/money-market closed (inferred; confirm gazette name)"
     type: INFERRED_CLOSURE
+  # Declared working Saturday, data-confirmed: on 2026-10-17 call money (3 rows),
+  # reference rates (6), interbank repo (1) and interbank FX (3, carrying BB's OWN
+  # trade_date of 2026-10-17) all printed, and the exchange-rate page published on
+  # the 18th describes that day. Without this entry previous_working_day() walked
+  # the 18th's FX row back over Sat 17 and Fri 16 and dated it 15-Oct, on top of
+  # the real 15-Oct figures. It lives HERE and not only in the database because a
+  # fiscal-year sweep once deleted a database-only copy within hours.
+  - date: "2026-10-17"
+    name: "Declared working day (Saturday; data-confirmed)"
+    type: WORKING_DAY

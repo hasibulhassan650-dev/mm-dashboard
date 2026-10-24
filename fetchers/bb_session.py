@@ -95,11 +95,18 @@ class F5Unavailable(RuntimeError):
 
     Raised instead of launching yet another Chrome. From 23-Oct-2026 every
     hourly refresh was killed by its 30-minute timeout: Chrome started fine,
-    the challenge never cleared, and each page spent three attempts x ~95s
-    waiting for it — four pages, ~20 minutes of a 30-minute budget, before the
-    job was cancelled and with it the commit, the integrity gate and every
-    step that needed no browser at all. Seven consecutive runs, and the retries
-    were themselves traffic to a host that was already refusing us.
+    the page never produced a table, and each page spent three attempts x ~95s
+    waiting for it — four pages, ~20 minutes of a 30-minute budget. Seven
+    consecutive runs.
+
+    The cause turned out to be BB's own website serving a maintenance page
+    (see fetchers/bb_health.py) — which is now detected directly and fails in
+    seconds, as BBMaintenance. This breaker stays as the backstop for the
+    OTHER way a page can fail to clear: a genuine F5 block, a challenge that
+    changed, Chrome misbehaving. An earlier version of this docstring said BB
+    was "refusing the runner"; that was a misreading of the maintenance page,
+    and the breaker's rationale is only that retrying a page that will not
+    clear is wasted time and wasted traffic, whatever the reason.
     """
 
 
@@ -110,6 +117,26 @@ class F5Unavailable(RuntimeError):
 _F5_EXHAUSTED = 0
 _F5_PROBE_WAIT = 35          # seconds, for the single probe after a failure
 _F5_FULL_WAIT = 90
+
+
+def _precheck(url: str) -> None:
+    """Ask BB, in plain HTTP and in two seconds, whether it is down.
+
+    Run BEFORE Chrome is launched. If BB is serving its maintenance page there
+    is no challenge to clear and no table to wait for, and launching a browser
+    to find that out cost ninety seconds per attempt. Any other outcome — a
+    challenge page, a block, a network error — returns quietly and lets Chrome
+    do its job: only BB's own maintenance words short-circuit anything.
+    """
+    from fetchers.bb_health import BBMaintenance, classify
+    try:
+        from curl_cffi import requests as cf
+        r = cf.get(url, impersonate="chrome", timeout=15)
+        kind = classify(r.status_code, r.text)
+    except Exception:
+        return
+    if kind == "maintenance":
+        raise BBMaintenance(f"BB's website is serving its maintenance page at {url}")
 
 
 def reset_f5_breaker() -> None:
@@ -134,14 +161,15 @@ def get_f5_cookies(url: str, wait_selector: str = "table",
     import undetected_chromedriver as uc
     from selenium.webdriver.common.by import By
     from selenium.webdriver.support.ui import WebDriverWait
-    from selenium.webdriver.support import expected_conditions as EC
 
+    from fetchers.bb_health import BBMaintenance, looks_like_maintenance
     global _F5_EXHAUSTED
+    _precheck(url)                      # BBMaintenance here costs ~2s, not ~5min
     if _F5_EXHAUSTED >= 2:
         raise F5Unavailable(
             "the F5 challenge did not clear on two separate pages in this run, so no "
-            "further Chrome launches are being attempted — BB is refusing the runner, "
-            "and retrying only adds traffic to a host that is already saying no")
+            "further Chrome launches are being attempted — retrying a page that will "
+            "not clear only wastes the run's time and adds traffic to BB")
     probe = _F5_EXHAUSTED >= 1
     if probe:
         attempts = 1                       # one look, not three
@@ -160,14 +188,22 @@ def get_f5_cookies(url: str, wait_selector: str = "table",
         try:
             driver = uc.Chrome(options=options, version_main=get_chrome_version())
             driver.get(url)
+            # Wait for the table OR for BB to say it is down, whichever comes
+            # first. Waiting only for the table meant a maintenance page —
+            # fully loaded in the first second — was waited on for ninety.
             WebDriverWait(driver, wait_s).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, wait_selector))
+                lambda d: d.find_elements(By.CSS_SELECTOR, wait_selector)
+                or looks_like_maintenance(d.page_source)
             )
+            if looks_like_maintenance(getattr(driver, "page_source", "")):
+                raise BBMaintenance(f"BB's website is serving its maintenance page at {url}")
             time.sleep(5)
             cookies = {c["name"]: c["value"] for c in driver.get_cookies()}
             ua = driver.execute_script("return navigator.userAgent")
             log.info("F5 cookies captured for %s (%d cookies)", url, len(cookies))
             return cookies, ua
+        except BBMaintenance:
+            raise                       # BB said it is down: no retry, no breaker count
         except Exception as exc:
             last_exc = exc
             log.warning("F5 cookie capture attempt %d/%d failed for %s: %s",

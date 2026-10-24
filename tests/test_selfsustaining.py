@@ -357,6 +357,37 @@ class TestTheGazetteOutranksTheSeed:
         assert datetime.date(2026, 5, 25) not in kept
         assert datetime.date(2026, 7, 1) in kept
 
+    def test_an_evidence_sourced_working_saturday_survives_a_seed_load(self, tmp_path, monkeypatch):
+        """The failure of 25-Oct-2026. A working Saturday was inserted from
+        market-print evidence; the next refresh's seed sweep deleted it because
+        its source was not BB's page and the YAML did not list it. With it gone,
+        self_heal re-dated the FX rows that depended on it back to the wrong
+        day — one sweep silently undid TWO fixes."""
+        s2 = self._load(
+            monkeypatch, self._seed_file(tmp_path, ["2026-07-01"]),
+            [(datetime.date(2026, 10, 17), "Declared working Saturday", "WORKING_DAY",
+              "Evidence: call money, ref rates, repo and interbank FX all printed")])
+        kept = {h.calendar_date: h.holiday_type for h in s2.query(HolidayCalendar).all()}
+        assert kept.get(datetime.date(2026, 10, 17)) == "WORKING_DAY",             "the sweep deleted a row it did not write"
+
+    def test_the_seed_file_itself_declares_the_17_oct_saturday(self):
+        """Durable in the repo, not only in a database a sweep can empty."""
+        import yaml as _y
+        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                               "data", "seeds", "holidays_2026-27.yaml"), encoding="utf-8") as fh:
+            doc = _y.safe_load(fh)
+        row = {h["date"]: h["type"] for h in doc["holidays"]}
+        assert row.get("2026-10-17") == "WORKING_DAY"
+
+    def test_a_row_whose_source_is_this_file_is_still_swept(self, tmp_path, monkeypatch):
+        """The narrowing must not switch the sweep off: rows the seed wrote
+        and later removed from the YAML still have to go."""
+        s2 = self._load(
+            monkeypatch, self._seed_file(tmp_path, ["2026-07-01"]),
+            [(datetime.date(2026, 5, 25), "Approximate Eid", "GOVT_GAZETTE",
+              "/some/other/checkout/data/seeds/holidays_FY2026-27.yaml")])
+        assert datetime.date(2026, 5, 25) not in {h.calendar_date for h in s2.query(HolidayCalendar).all()},             "a seed-written row survived (basename of the source should identify the file)"
+
     def test_a_row_with_no_recorded_source_is_treated_as_the_seeds(self):
         """Anything predating provenance is the seed's to manage; only an
         explicit BB source is protected."""

@@ -87,6 +87,25 @@ def main():
     today = datetime.date.today()
     errors = []
 
+    # ── 00. Is BB's website up at all? ───────────────────────────────────────
+    # Three plain GETs, a couple of seconds, BEFORE any browser is launched.
+    # From 22-Oct-2026 BB served a maintenance page in place of its pages and
+    # this job spent half an hour a run waiting for tables that were never
+    # coming, then filed every failure as a fault in OUR fetch. The probe is
+    # recorded with the run so the guardian can say "BB is down since X" instead
+    # of blaming the code — and so it flips back to "ours" the moment BB is up
+    # and a fetch still fails. It never skips a step: BB can recover mid-run,
+    # and each Chrome step now fails in seconds on its own pre-check anyway.
+    bb_status = None
+    try:
+        from fetchers.bb_health import probe as _bb_probe
+        bb_status = _bb_probe()
+        if bb_status["state"] in ("maintenance", "partial"):
+            log.warning("BB HEALTH: %s — BB's website is serving its maintenance page; "
+                        "BB-fed data will not refresh this run", bb_status["state"].upper())
+    except Exception as exc:
+        log.warning("BB health probe failed: %s", exc)
+
     # ── 0. Self-heal — repair the deterministic breakage classes BEFORE fetching.
     # Detection alone left 32 flagged rows sitting untouched for two weeks; every
     # run now fixes what is derivable with certainty and reports the rest.
@@ -544,6 +563,8 @@ def main():
     if isinstance(quality, dict) and healed:
         quality["repaired"] = healed.get("repaired") or {}
         quality["repair_review"] = healed.get("skipped") or []
+    if isinstance(quality, dict) and bb_status:
+        quality["bb_status"] = bb_status
 
     # Fold this run's verdict into the guardian ledger, so every issue carries a
     # first-seen date and an age instead of being overwritten each run — and

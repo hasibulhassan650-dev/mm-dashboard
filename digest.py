@@ -91,6 +91,27 @@ def build() -> tuple:
         else:
             lines.append(f"### ✅ Refresh ran {age:.1f}h ago (`{last_run}`)\n")
 
+        # ── Bangladesh Bank's own website ─────────────────────────────────────
+        # First, and in plain words, because it changes how everything below
+        # should be read: if BB is down, "stale" is not our fault and not BB
+        # being late - it is a frozen feed with an owner and an action. From
+        # 22-Oct-2026 this was reported for days as faults in our own fetch.
+        try:
+            import engines.bb_outage as _bbo
+            _outage = _bbo.current(s)
+        except Exception:
+            _outage = None
+        if _outage:
+            kind = ("under maintenance" if _outage["state"] == "maintenance"
+                    else "partly under maintenance")
+            lines.append(f"### 🟠 Bangladesh Bank's website is {kind}\n"
+                         f"Observed since {str(_outage.get('since') or '?')[:16].replace('T', ' ')} UTC "
+                         f"({_outage.get('runs')} refresh(es) in a row). Every BB-fed series is frozen at "
+                         f"its last value until it returns - **the numbers on the site are not current**. "
+                         f"There is nothing to fix on our side; the system re-probes every refresh, "
+                         f"will catch up on its own, and flips back to treating a stale feed as ours "
+                         f"the moment BB is up and a fetch still fails.\n")
+
         # ── live integrity, not the stored verdict ────────────────────────────
         rep = integrity_check()
         if rep.get("ok"):

@@ -120,6 +120,18 @@ def _notice_items(session) -> list:
     return out
 
 
+def _bb_outage(data_health, run_age_hours):
+    """{state, probed_utc} if the last refresh found BB's site down, else None."""
+    if not isinstance(data_health, dict):
+        return None
+    st = data_health.get("bb_status")
+    if not isinstance(st, dict) or st.get("state") not in ("maintenance", "partial"):
+        return None
+    if run_age_hours is None or run_age_hours >= 36:
+        return None
+    return {"state": st["state"], "probed_utc": st.get("probed_utc")}
+
+
 @router.get("/status")
 def get_status():
     """
@@ -212,6 +224,12 @@ def get_status():
                 # past. The site leads with these.
                 "escalations": [i for i in ((data_health or {}).get("issues") or [])
                                 if "ESCALATED" in i],
+                # Is Bangladesh Bank's own website down? Recorded by every refresh
+                # (fetchers/bb_health.py) in the run's quality JSON. Read here
+                # rather than imported: the API deploys rooted at api/ and cannot
+                # import engines/, so this mirrors engines/bb_outage.py's rule -
+                # a probe older than 36h describes a world that may have changed.
+                "bb_outage": _bb_outage(data_health, run_age),
                 "as_of": str(today), "last_working_day": str(lwd)}
     finally:
         session.close()

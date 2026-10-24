@@ -136,6 +136,21 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
     def q(sql, **p):
         return s.execute(text(sql), p).fetchall()
 
+    # Is BB's website itself down? Read ONCE, here, so every check below can use
+    # it. The guardian used to have exactly two explanations for a stale feed —
+    # "BB has not published yet" and "our fetch is broken" — and BB being DOWN is
+    # neither, so a maintenance page was reported for days as a fault in our own
+    # code. See engines/bb_outage.py.
+    try:
+        import engines.bb_outage as _bbo
+        _outage = _bbo.current(s_)
+    except Exception:
+        _outage = None
+    # Sourced from BB's website. GSOM is a separate host, flows_forward is our
+    # own projection, and auctions_forward comes from the calendar CSV fallback
+    # as much as the page; none of them is frozen by BB's site.
+    _BB_WEB = {"fxmarket", "fxrates", "repo", "callmoney", "refrate", "omo", "yields"}
+
     try:
         # ---- treasury yields ----
         for r in q("SELECT auction_date, tenor_label, cutoff_yield_pct FROM primary_yield_snapshots "
@@ -494,6 +509,15 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
             for dd in _dset(f"SELECT DISTINCT {col} FROM {tbl} WHERE {col} >= :lo AND {col} <= :hi{cond}",
                             lo=_clo, hi=today):
                 act[dd] = act.get(dd, 0) + 1
+        # A day can only be called SILENT if something was observed AFTER it.
+        # Days past the newest print are not silence, they are the absence of
+        # observation — and the freshness checks already report that, with the
+        # right owner. Without this, BB's maintenance outage from 22-Oct-2026
+        # would have been reported day by day as "whole money market silent,
+        # not in holiday_calendar: seed it as a closure", inviting exactly the
+        # false closure that rolls real settlements onto the wrong days.
+        if act:
+            _chi = min(_chi, max(act))
         d = _clo
         while d <= _chi:
             weekday = d.weekday() in (0, 1, 2, 3, 6)
@@ -532,8 +556,17 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
                 if sd != exp:
                     add("events-roll", f"auction {ad} {r[2]} settles {sd} but calendar says {exp}")
                 if ad < today - datetime.timedelta(days=5):
-                    add("auctions", f"{ad} {r[2]} still PLANNED {(today - ad).days} days later — BB result "
-                                    f"missing or not linked (confirm_auctions_from_results)")
+                    if _outage:
+                        # The result is published on the very site that is down,
+                        # so "missing or not linked" cannot be told from "cannot
+                        # be fetched". Waiting, with the real reason — and it
+                        # reverts to a defect the moment a probe says BB is up.
+                        add("auctions", f"{ad} {r[2]} still PLANNED {(today - ad).days} days "
+                                        f"later — BB's website is under maintenance, so its "
+                                        f"result cannot be fetched or linked yet", "waiting")
+                    else:
+                        add("auctions", f"{ad} {r[2]} still PLANNED {(today - ad).days} days later — BB result "
+                                        f"missing or not linked (confirm_auctions_from_results)")
 
         # ---- the cash figure must reach the table the ladder reads ----
         # The treasury refetch fills primary_yield_snapshots.sale_value, but the
@@ -809,7 +842,24 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
                 if ds is not None and age is not None:
                     escalated = ds.severity_for_age(age) == "defect"
 
-                if fetched and not escalated:
+                if _outage and name in _BB_WEB:
+                    # BB's website is serving its maintenance page. Whether our
+                    # fetch "succeeded" (a stale page over plain HTTP) or failed
+                    # (the F5 pages) is beside the point: the feed is frozen
+                    # because BB is down, so the old "ours, not BB's" attribution
+                    # would be wrong in BOTH branches. The severity is untouched
+                    # — a feed five working days stale is still something the
+                    # desk must hear about — only the blame and the action change.
+                    unit = "working " if ds is not None and ds.cadence == _EXPECT.WORKING_DAY else ""
+                    msg = (f"{name}: BB's website is under maintenance (observed since "
+                           f"{str(_outage.get('since') or '?')[:10]}) — newest data is {mx}, "
+                           f"{age} {unit}days old, and nothing can refresh until BB is back. "
+                           f"Not a fault in our fetch; the numbers on the site are frozen")
+                    if escalated:
+                        add("freshness", msg.replace(f"{name}: ", f"{name}: ESCALATED — ", 1))
+                    else:
+                        add("freshness", msg, "waiting")
+                elif fetched and not escalated:
                     add("freshness", f"{name}: BB has published nothing newer than {mx} "
                                      f"(our last successful fetch was within 14h) — {desc}", "waiting")
                 elif escalated:
@@ -825,6 +875,19 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
                 else:
                     add("freshness", f"{name}: latest={mx} (need ≥{min_ok}) and OUR fetch is not "
                                      f"current either — {desc}")
+
+        # ── BB's website itself ─────────────────────────────────────────────
+        # One line that says the thing plainly, so the per-dataset lines are not
+        # the only place the desk could learn it. Waiting, not a defect: nothing
+        # of ours is wrong. It stays loud through the datasets it freezes, which
+        # escalate on their own tolerance.
+        if _outage:
+            add("bb-outage",
+                f"Bangladesh Bank's website is {('under maintenance' if _outage['state'] == 'maintenance' else 'partly under maintenance')} "
+                f"(observed since {str(_outage.get('since') or '?')[:16].replace('T', ' ')} UTC, "
+                f"{_outage.get('runs')} refresh(es) in a row) — every BB-fed series is frozen at "
+                f"its last value until it returns. Nothing to fix on our side; the system will "
+                f"catch up on its own", "waiting")
 
         # ── the guardian watches itself ─────────────────────────────────────
         # The issue ledger stopped being written and nothing noticed: two rows,

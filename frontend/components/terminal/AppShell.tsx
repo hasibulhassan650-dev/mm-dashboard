@@ -135,7 +135,7 @@ function TweaksPanel() {
 }
 
 // ---------------- App shell ----------------
-import { EscalationBanner, SourceChangeNotice, StaleDataBanner, WaitingNotice }
+import { BBOutageBanner, EscalationBanner, SourceChangeNotice, StaleDataBanner, WaitingNotice }
   from "@/components/DataWarning";
 
 export function AppShell({ children, ticker, sub }: { children: React.ReactNode; ticker: TickItem[]; sub?: string }) {
@@ -165,6 +165,7 @@ export function AppShell({ children, ticker, sub }: { children: React.ReactNode;
           {/* Order is the message: the refresh being dead outranks everything,
               then a feed past its tolerance, then BB moving a page, then BB
               simply being late. Each is a different instruction to the desk. */}
+          <BBOutageBanner />
           <EscalationBanner />
           <SourceChangeNotice />
           <WaitingNotice />

@@ -6,6 +6,7 @@ Usage:  python seeds_loader.py --file data/seeds/holidays_2025-26.yaml
 """
 import argparse
 import datetime
+import os
 import logging
 import yaml
 from db import init_db, get_session, HolidayCalendar
@@ -52,10 +53,25 @@ def load_holiday_file(path: str) -> int:
     # BB's published gazette outranks a hand-maintained seed, so rows sourced
     # from BB are never touched here. They have their own writer, which
     # reports what BB has dropped instead of deleting it.
+    #
+    # "Rows it wrote" is decided by the row's `source`, and it has to be exact:
+    # the first version exempted only BB's gazette (source contains bb.org.bd)
+    # and deleted everything else in the fiscal year — including a working
+    # Saturday inserted from market-print evidence, within hours of it being
+    # added. With that row gone, self_heal (correctly) re-dated the FX rows that
+    # depended on it back to the wrong day, so one sweep silently undid two
+    # separate fixes. A row is the seed's only if it carries no source at all
+    # (written before provenance existed) or names THIS file; anything else was
+    # put there by another writer on evidence the YAML does not know about.
     file_dates = {datetime.date.fromisoformat(i["date"]) for i in items}
+    mine = os.path.basename(path)
+
+    def _is_mine(r) -> bool:
+        src = (r.source or "").strip()
+        return (not src) or os.path.basename(src) == mine
+
     stale = [r for r in session.query(HolidayCalendar).filter_by(fiscal_year=fy).all()
-             if r.calendar_date not in file_dates
-             and "bb.org.bd" not in (r.source or "")]
+             if r.calendar_date not in file_dates and _is_mine(r)]
     for r in stale:
         log.warning("Removing %s (%s) — no longer in %s", r.calendar_date, r.holiday_name, path)
         session.delete(r)

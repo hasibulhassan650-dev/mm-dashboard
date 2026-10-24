@@ -68,6 +68,8 @@ def browser(monkeypatch):
                       ("selenium.webdriver.support.ui", ui),
                       ("selenium.webdriver.support.expected_conditions", ec)):
         monkeypatch.setitem(sys.modules, name, mod)
+    # The plain-HTTP pre-check is the network; tests must never touch it.
+    monkeypatch.setattr(bbs, "_precheck", lambda url: None)
     monkeypatch.setattr(bbs, "get_chrome_version", lambda: 155)
     monkeypatch.setattr(bbs, "_cleanup_chrome", lambda: None)
     monkeypatch.setattr("time.sleep", lambda *_: None)
@@ -122,7 +124,10 @@ def test_the_message_says_why_nothing_was_tried(browser):
     _try("https://www.bb.org.bd/a")
     _try("https://www.bb.org.bd/b")
     exc = _try("https://www.bb.org.bd/c")
-    assert "did not clear" in str(exc) and "refusing" in str(exc)
+    assert "did not clear" in str(exc)
+    # It must NOT claim BB is refusing us: that was the misreading of BB's
+    # maintenance page that sent a day of diagnosis the wrong way.
+    assert "refusing" not in str(exc), "the breaker is blaming BB without evidence"
 
 
 def test_a_success_never_trips_it(monkeypatch, browser):
@@ -160,3 +165,81 @@ def test_a_success_never_trips_it(monkeypatch, browser):
         cookies, ua = bbs.get_f5_cookies(f"https://www.bb.org.bd/{page}")
         assert cookies == {"TS": "x"} and ua == "UA"
     assert browser["launches"] == 6
+
+
+
+# ── BB's own maintenance page: detected, not waited on ───────────────────────
+
+class TestBBsMaintenancePageFailsFast:
+    """The cause of the whole stall turned out not to be the F5 challenge at
+    all: BB's website was serving a maintenance page. Chrome loaded it in the
+    first second and then waited ninety for a table that was never coming, three
+    times per page. Detecting BB's own words turns ~5 minutes per page into a
+    couple of seconds and — more to the point — says WHOSE problem it is."""
+
+    def test_the_precheck_stops_before_any_browser_is_launched(self, browser, monkeypatch):
+        from fetchers.bb_health import BBMaintenance
+
+        def _down(url):
+            raise BBMaintenance(f"maintenance at {url}")
+
+        monkeypatch.setattr(bbs, "_precheck", _down)
+        with pytest.raises(BBMaintenance):
+            bbs.get_f5_cookies("https://www.bb.org.bd/a")
+        assert browser["launches"] == 0, "Chrome was launched for a site that is down"
+
+    def test_a_maintenance_page_inside_chrome_is_not_retried(self, browser):
+        """Loaded in the first second, so there is nothing to retry: one launch,
+        not three, and no ninety-second wait."""
+        from fetchers.bb_health import BBMaintenance
+
+        page = ("<html><h1>The Service is under Maintenance</h1><p>Our service is "
+                "currently undergoing scheduled maintenance.</p></html>")
+        sys.modules["selenium.webdriver.support.ui"].WebDriverWait = type(
+            "W", (), {"__init__": lambda self, *a, **k: None,
+                      "until": lambda self, *_: True})
+
+        class _MaintChrome:
+            page_source = page
+
+            def __init__(self, *a, **k):
+                browser["launches"] += 1
+
+            def get(self, *_):
+                pass
+
+            def quit(self):
+                pass
+
+        sys.modules["undetected_chromedriver"].Chrome = _MaintChrome
+        with pytest.raises(BBMaintenance):
+            bbs.get_f5_cookies("https://www.bb.org.bd/a")
+        assert browser["launches"] == 1, browser["launches"]
+
+    def test_maintenance_does_not_count_against_the_breaker(self, browser):
+        """BB being down is not "the challenge failed to clear". If it counted,
+        two maintenance pages would lock out Chrome for the rest of the run
+        even after BB came back mid-run."""
+        from fetchers.bb_health import BBMaintenance
+
+        sys.modules["selenium.webdriver.support.ui"].WebDriverWait = type(
+            "W", (), {"__init__": lambda self, *a, **k: None,
+                      "until": lambda self, *_: True})
+
+        class _MaintChrome:
+            page_source = "<h1>under Maintenance</h1> scheduled maintenance"
+
+            def __init__(self, *a, **k):
+                browser["launches"] += 1
+
+            def get(self, *_):
+                pass
+
+            def quit(self):
+                pass
+
+        sys.modules["undetected_chromedriver"].Chrome = _MaintChrome
+        for page in "abc":
+            with pytest.raises(BBMaintenance):
+                bbs.get_f5_cookies(f"https://www.bb.org.bd/{page}")
+        assert bbs._F5_EXHAUSTED == 0, "maintenance tripped the circuit breaker"

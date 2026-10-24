@@ -467,6 +467,10 @@ export interface MetaStatus {
   /** Findings past their dataset's tolerance: a feed that has been dead long
    *  enough that "BB is late" no longer explains it. These lead the page. */
   escalations?: string[];
+  /** Bangladesh Bank's own website is serving its maintenance page, as probed
+   *  by the last refresh. Every BB-fed series is then frozen at its last value:
+   *  not our fetch failing and not BB being late, and the page must say so. */
+  bb_outage?: { state: "maintenance" | "partial"; probed_utc: string | null } | null;
   as_of?: string;
   last_working_day?: string;
 }
