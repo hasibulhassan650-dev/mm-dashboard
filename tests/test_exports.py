@@ -409,3 +409,22 @@ class TestTheSummarySheet:
         ws = self._wb()["Model"]
         assert "COUNTIF(OMO!" in ws["I5"].value
         assert ws["I4"].value == "OMO published?"
+
+
+def test_the_model_counts_sukuk_cash_like_the_ladder_does():
+    """The workbook and the ladder must give the same Govt cash in, or the desk's
+    two views of one day disagree by exactly the product one of them dropped."""
+    import io as _io
+    import sys
+    sys.path.insert(0, os.path.join(_ROOT, "api", "routers"))
+    from model_logic import build_model
+    from openpyxl import load_workbook
+    import datetime
+    d = datetime.date(2026, 12, 30)
+    data = {"dates": [d], "omo": [], "auctions": [],
+            "flows": [{"date": d, "coupon": None, "principal": None, "buyback": None,
+                       "sukuk": 50000.0}]}
+    wb = load_workbook(_io.BytesIO(build_model(data, today=d)))
+    heads = [c.value for c in wb["Govt flows"][2]]
+    assert "Sukuk in (mn)" in heads
+    assert "'Govt flows'!$E:$E" in wb["Model"]["F5"].value

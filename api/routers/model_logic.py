@@ -257,11 +257,13 @@ def build_model(data: dict, today: datetime.date = None) -> bytes:
 
     _actuals_sheet(
         wb, "Govt flows", ("Date", "Coupon in (mn)", "Principal in (mn)",
-                           "Buyback in (mn)"),
-        [(r["date"], r["coupon"], r["principal"], r["buyback"]) for r in data["flows"]],
-        "Government payments INTO the market: coupons, redemptions and buyback "
-        "cash. In BDT million, as the ladder stores them.",
-        formats={1: DATE, 2: MONEY, 3: MONEY, 4: MONEY})
+                           "Buyback in (mn)", "Sukuk in (mn)"),
+        [(r["date"], r["coupon"], r["principal"], r["buyback"], r.get("sukuk"))
+         for r in data["flows"]],
+        "Government payments INTO the market: coupons, redemptions, buyback "
+        "cash and BGIS sukuk principal / half-yearly profit. In BDT million, as "
+        "the ladder stores them.",
+        formats={1: DATE, 2: MONEY, 3: MONEY, 4: MONEY, 5: MONEY})
 
     # ── the model: formulas only ─────────────────────────────────────────────
     ws = wb.create_sheet("Model", 0)
@@ -308,7 +310,8 @@ def build_model(data: dict, today: datetime.date = None) -> bytes:
         ws.cell(row=r, column=6, value=(
             f"=(SUMIFS('Govt flows'!$B:$B,'Govt flows'!$A:$A,{A})"
             f"+SUMIFS('Govt flows'!$C:$C,'Govt flows'!$A:$A,{A})"
-            f"+SUMIFS('Govt flows'!$D:$D,'Govt flows'!$A:$A,{A}))/10"))
+            f"+SUMIFS('Govt flows'!$D:$D,'Govt flows'!$A:$A,{A})"
+            f"+SUMIFS('Govt flows'!$E:$E,'Govt flows'!$A:$A,{A}))/10"))
         ws.cell(row=r, column=7, value=f"=$D{r}-$E{r}+$F{r}")
         ws.cell(row=r, column=8,
                 value=f"=$G{r}" if n == 0 else f"=$H{r - 1}+$G{r}")
@@ -407,10 +410,11 @@ def model_data(session, date_from: datetime.date, date_to: datetime.date) -> dic
                 """), {"lo": str(date_from), "hi": str(date_to)}).fetchall()]
 
     flows = [{"date": r[0], "coupon": float(r[1] or 0) or None,
-              "principal": float(r[2] or 0) or None, "buyback": float(r[3] or 0) or None}
+              "principal": float(r[2] or 0) or None, "buyback": float(r[3] or 0) or None,
+              "sukuk": float(r[4] or 0) or None}
              for r in session.execute(text("""
                  SELECT flow_date, coupon_inflow_bdt_mill, principal_inflow_bdt_mill,
-                        COALESCE(buyback_inflow_bdt_mill, 0)
+                        COALESCE(buyback_inflow_bdt_mill, 0), COALESCE(sukuk_inflow_bdt_mill, 0)
                  FROM daily_net_flow
                  WHERE flow_date BETWEEN :lo AND :hi
                  ORDER BY flow_date

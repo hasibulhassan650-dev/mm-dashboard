@@ -378,7 +378,23 @@ export interface BgiibAuction {
   epr_minus_tbill_bps: number | null;
 }
 
+export interface SukukIssue {
+  isin: string; project: string; tenor_label: string | null; contract: string | null;
+  issue_date: string; maturity_date: string; profit_rate_pct: number | null;
+  profit_frequency: string | null; tradability: string | null; outstanding_crore: number;
+  profit_derivable: boolean;
+}
+export interface SukukBlock {
+  as_of?: string; count?: number; total_outstanding_crore?: number; note?: string;
+  outstanding?: SukukIssue[];
+  upcoming?: { isin: string; project: string; date: string; kind: "PRINCIPAL" | "PROFIT"; amount_crore: number }[];
+  documents?: { doc_key: string; kind: "NOTICE" | "PROSPECTUS"; doc_date: string; ref: string | null; title: string; url: string }[];
+  /** Present instead of the above when the sukuk query failed; the BGIIB half still renders. */
+  error?: string;
+}
+
 export interface IslamicWindow {
+  sukuk?: SukukBlock;
   as_of: string;
   weeks: number;
   count: number;

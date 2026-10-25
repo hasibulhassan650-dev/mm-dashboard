@@ -3,6 +3,7 @@ import type { IslamicWindow, OmoInjection, OmoTxnRow } from "@/lib/api";
 import { Panel } from "@/components/terminal/ui";
 import RelatedLinks from "@/components/RelatedLinks";
 import IslamicFacilities from "@/components/IslamicFacilities";
+import SukukPanel from "@/components/SukukPanel";
 
 export const revalidate = 300;
 
@@ -140,6 +141,10 @@ export default async function IslamicPage() {
 
       <div className="grid12">
         <IslamicFacilities inj={inj} txns={txns} />
+      </div>
+
+      <div className="grid12">
+        <SukukPanel data={data.sukuk} />
       </div>
 
       <RelatedLinks items={[

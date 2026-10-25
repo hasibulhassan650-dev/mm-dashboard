@@ -89,9 +89,19 @@ def get_islamic(weeks: int = Query(26, ge=1, le=260)):
                 t["latest_date"] = str(a["auction_date"])[:10]
                 t["latest_epr_pct"] = a["war_epr_pct"]
 
+        # BGIS Sukuk, from BB's outstanding table. Never allowed to take the BGIIB
+        # half down with it: a failed sukuk query is reported, not raised.
+        try:
+            from .sukuk_logic import sukuk_block
+            sukuk = sukuk_block(session, today)
+        except Exception as exc:
+            session.rollback()
+            sukuk = {"error": f"{type(exc).__name__}: {exc}"[:200]}
+
         return {
             "as_of": str(today),
             "weeks": weeks,
+            "sukuk": sukuk,
             "count": len(auctions),
             "latest_auction": str(auctions[0]["auction_date"])[:10] if auctions else None,
             "by_tenor": [by_tenor[k] for k in sorted(by_tenor)],
@@ -141,9 +151,22 @@ def export_islamic(weeks: int = Query(104, ge=1, le=520)):
         "Latest EPR %": t["latest_epr_pct"], "Latest Auction": t["latest_date"],
     } for t in p["by_tenor"]]
 
+    sk = p.get("sukuk") or {}
+    sukuk_rows = [{
+        "ISIN": i["isin"], "Project": i["project"], "Tenor": i["tenor_label"],
+        "Contract": i["contract"], "Issue Date": i["issue_date"], "Maturity Date": i["maturity_date"],
+        "Profit/Rental Rate %": i["profit_rate_pct"], "Frequency": i["profit_frequency"],
+        "Tradability": i["tradability"], "Outstanding (Cr)": i["outstanding_crore"],
+    } for i in sk.get("outstanding", [])]
+    upcoming_rows = [{
+        "Scheduled Date": u["date"], "ISIN": u["isin"], "Project": u["project"], "Kind": u["kind"],
+        "Amount (Cr)": u["amount_crore"],
+    } for u in sk.get("upcoming", [])]
+
     body = build_workbook(
-        "Bangladesh Islamic Window — BGIIB",
-        [("BGIIB auctions", rows), ("By tenor", summary)],
+        "Bangladesh Islamic Window — BGIIB and BGIS Sukuk",
+        [("BGIIB auctions", rows), ("By tenor", summary),
+         ("BGIS Sukuk", sukuk_rows), ("Sukuk next 12m", upcoming_rows)],
         facts=[("Window", f"last {weeks} weeks to {p['as_of']}"),
                ("Latest auction", p["latest_auction"] or "none"),
                ("Unit", "BDT crore; EPR and cut-offs in per cent"),
@@ -157,6 +180,10 @@ def export_islamic(weeks: int = Query(104, ge=1, le=520)):
             "auction, and its own auction date is in the next column. BGIIB is auctioned "
             "on Tuesdays and T-Bills on Sundays, so a same-day pair does not exist and "
             "nothing here is interpolated.",
+            "BGIS Sukuk: outstanding as BB's own table states it. 'Sukuk next 12m' dates are "
+            "SCHEDULED dates (cash settles on the next working day). Profit is derived only for "
+            "issues BB lists as half-yearly (outstanding x rate / 2); issues paying profit on "
+            "maturity show principal only, because that lump sum is not derivable.",
             "Every release is checked against BB's own Total line before being stored; a "
             "release whose rows do not add up is refused whole rather than misstating the "
             "size of the window.",

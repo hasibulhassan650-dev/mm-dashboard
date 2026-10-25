@@ -147,3 +147,51 @@ def test_the_rebuild_reads_the_sukuk_table():
     """A flow computed but never wired into the rebuild would be a test of nothing."""
     src = open(os.path.join(_ROOT, "engines", "pipeline.py"), encoding="utf-8").read()
     assert "sukuk_cash_flows" in src and "sukuk_flows=sukuk_flows" in src
+
+
+class TestTheIslamicPageBlock:
+    """api/ cannot import engines/, so the schedule is copied; these keep the copy honest."""
+
+    def test_the_api_copy_and_the_engine_agree_on_every_amount(self):
+        import sukuk_logic as K
+        issues = [_issue(), _issue(isin="BDS2", issue_date=D(2026, 6, 29), maturity_date=D(2027, 3, 29),
+                                   outstanding_crore=5500.0, profit_rate_pct=9.36,
+                                   profit_frequency="on Maturity"),
+                  _issue(isin="BDS3", issue_date=D(2025, 8, 31), maturity_date=D(2030, 8, 31),
+                         outstanding_crore=1000.0, profit_rate_pct=10.0)]
+        lo, hi = D(2026, 1, 1), D(2031, 12, 31)
+        eng = sorted((f["kind"], round(f["amount_bdt_mill"] / 10.0, 4)) for f in sukuk_cash_flows(issues, lo, hi))
+        api = sorted((p["kind"], p["amount_crore"]) for i in issues for p in K.scheduled_payments(i, lo, hi))
+        assert eng == api
+
+    def test_month_end_clamps_like_the_engine(self):
+        import sukuk_logic as K
+        assert K.add_months(D(2025, 8, 31), 6) == D(2026, 2, 28)
+        assert K.add_months(D(2025, 12, 29), 6) == D(2026, 6, 29)
+
+    def test_the_block_serves_outstanding_upcoming_and_documents(self):
+        import sukuk_logic as K
+        s = _mem()
+        s.add(dbmod.SukukOutstanding(isin="BDS1", project="p", issue_date=D(2026, 6, 29),
+                                     maturity_date=D(2027, 3, 29), profit_rate_pct=9.36,
+                                     profit_frequency="on Maturity", outstanding_crore=5500.0))
+        s.add(dbmod.SukukDocument(doc_key="sukuk-a", url="https://x/a.pdf", kind="NOTICE",
+                                  doc_date=D(2026, 6, 23), title="Notice"))
+        s.commit()
+        b = K.sukuk_block(s, today=D(2026, 10, 25))
+        assert b["total_outstanding_crore"] == 5500.0 and b["count"] == 1
+        assert [(u["kind"], u["amount_crore"]) for u in b["upcoming"]] == [("PRINCIPAL", 5500.0)]
+        assert b["outstanding"][0]["profit_derivable"] is False
+        assert b["documents"][0]["doc_key"] == "sukuk-a"
+
+    def test_it_respects_the_api_deploy_boundary(self):
+        import ast
+        src = open(os.path.join(_ROOT, "api", "routers", "sukuk_logic.py"), encoding="utf-8").read()
+        mods = {(n.module or "").split(".")[0] if isinstance(n, ast.ImportFrom) else a.name.split(".")[0]
+                for n in ast.walk(ast.parse(src)) if isinstance(n, (ast.Import, ast.ImportFrom))
+                for a in (n.names if hasattr(n, "names") else [])}
+        assert not mods & {"db", "engines", "fetchers", "config", "calendar_utils", "dateutil"}
+
+    def test_a_failed_sukuk_query_does_not_take_the_bgiib_page_down(self):
+        src = open(os.path.join(_ROOT, "api", "routers", "islamic.py"), encoding="utf-8").read()
+        assert "sukuk_block" in src and '"error"' in src
