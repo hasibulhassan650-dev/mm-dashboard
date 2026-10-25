@@ -111,7 +111,22 @@ export default async function PressPage() {
                     <td className="mono" style={{ color: "var(--fg-mute)" }}>
                       {r.subject_date ? String(r.subject_date).slice(0, 10) : "—"}
                     </td>
-                    <td style={{ maxWidth: 520 }}>{r.title}</td>
+                    <td style={{ maxWidth: 520 }}>
+                      {r.title}
+                      {r.headline && (
+                        <div style={{
+                          marginTop: 3, fontSize: 11.5, lineHeight: 1.5,
+                          color: r.headline_basis === "table" || r.headline_basis === "title"
+                            ? "var(--fg-dim)" : "var(--fg-mute)",
+                        }}>
+                          {r.headline}
+                          <span style={{ marginLeft: 6, fontSize: 10, color: "var(--fg-mute)" }}>
+                            {r.headline_basis === "table" ? "from our stored figures"
+                              : r.headline_basis === "title" ? "from BB's title" : ""}
+                          </span>
+                        </div>
+                      )}
+                    </td>
                     <td className="mono">{r.isin ?? ""}</td>
                     <td>
                       <a href={r.url} target="_blank" rel="noreferrer"

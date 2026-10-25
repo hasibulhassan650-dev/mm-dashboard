@@ -53,6 +53,19 @@ def get_press(days: int = Query(60, ge=1, le=400), limit: int = Query(300, ge=1,
         """), {"since": str(since), "limit": limit}).fetchall()
         releases = [dict(r._mapping) for r in rows]
 
+        # One line per release from figures we hold. Updates the dicts in
+        # place, so latest_by_category (same objects) carries it too.
+        from .press_logic import build_headlines
+        try:
+            heads = build_headlines(session, releases)
+        except Exception:
+            session.rollback()       # a failed query must not take the listing down
+            heads = {}
+        for r in releases:
+            h = heads.get(r["serial"]) or {}
+            r["headline"] = h.get("headline")
+            r["headline_basis"] = h.get("headline_basis")
+
         week = today - datetime.timedelta(days=7)
         by_cat, latest = {}, {}
         for r in releases:

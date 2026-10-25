@@ -429,6 +429,10 @@ export interface PressRelease {
   url: string;
   category: string | null;
   isin: string | null;
+  /** Built from figures we hold for this release, never a paraphrase of BB's PDF. */
+  headline?: string | null;
+  /** table = our stored figures · title = BB's own title only · not_parsed · ambiguous */
+  headline_basis?: "table" | "title" | "not_parsed" | "ambiguous" | null;
 }
 
 export interface PressFeed {
