@@ -78,7 +78,8 @@ export const api = {
     try { return await get<NextAuctionResult>("/api/securities/next-auction"); }
     catch { return { as_of: "", calendar_through: null, published: false, next: null, following: [] }; }
   },
-  drilldown:       (date: string) => get<DrilldownResult>(`/api/flows/drilldown`, { date }),
+  drilldown:       (date: string, cumFrom?: string) =>
+    get<DrilldownResult>(`/api/flows/drilldown`, cumFrom ? { date, cum_from: cumFrom } : { date }),
   // Forward schedule split by product. New endpoints — degrade to an empty
   // payload until the API project redeploys, same as flowsForecast below.
   // `schedule` must NOT be made to look empty-but-fine on failure in the UI:
@@ -999,4 +1000,18 @@ export interface DrilldownResult {
   };
   omo_data_from?: string | null;
   auction_horizon?: string | null;
+  /** Optional: an older deployed API omits it. */
+  cumulative?: { mtd: CumulativeBlock; window?: CumulativeBlock };
+}
+
+/** Net liquidity summed over a window. `net_crore` is null — never 0 — when any
+ *  day's OMO is not yet known; the known part is `net_complete_through_crore`. */
+export interface CumulativeBlock {
+  from: string; to: string; days: number; unit: string;
+  net_crore: number | null;
+  net_excl_omo_crore: number;
+  omo_complete: boolean;
+  omo_incomplete_days: string[];
+  complete_through: string | null;
+  net_complete_through_crore: number | null;
 }

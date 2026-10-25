@@ -61,10 +61,26 @@ def get_forecast(
 
 
 @router.get("/drilldown")
-def get_drilldown(date: str = Query(..., description="YYYY-MM-DD")):
-    """All events (maturities, coupons, auctions) for a specific date."""
+def get_drilldown(date: str = Query(..., description="YYYY-MM-DD"),
+                  cum_from: str = Query(None, description="YYYY-MM-DD, optional window start")):
+    """All events (maturities, coupons, auctions) for a specific date, plus the
+    cumulative net liquidity month-to-date (and from `cum_from` when given)."""
     session = get_session()
     try:
+        from .liquidity_logic import _d, cumulative_window
+        try:
+            day = _d(date)
+            frm = _d(cum_from) if cum_from else None
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=f"bad date: {e}")
+        if frm is not None and frm > day:
+            raise HTTPException(status_code=422, detail="cum_from is after the date")
+        if frm is not None and (day - frm).days > 366:
+            raise HTTPException(status_code=422, detail="cumulative window exceeds 366 days")
+        cumulative = {"mtd": cumulative_window(session, day.replace(day=1), day)}
+        if frm is not None:
+            cumulative["window"] = cumulative_window(session, frm, day)
+
         maturities = session.execute(text("""
             SELECT m.isin, s.security_name_norm, s.security_type,
                    m.scheduled_date, m.payment_date, m.principal_bdt_mill, m.roll_days
@@ -134,6 +150,7 @@ def get_drilldown(date: str = Query(..., description="YYYY-MM-DD")):
 
         return {
             **extra,
+            "cumulative": cumulative,
             "date": date,
             "summary": {
                 "maturity_inflow_mill":  round(mat_total, 2),
@@ -364,7 +381,7 @@ def export_forecast(days: int = Query(None, ge=1, le=400),
         "Maturing Out (banks repay)": d["omo_repay_crore"] if d["omo_known"] else None,
         "OMO Net Roll-off": d["omo_roll_net_crore"] if d["omo_known"] else None,
         "OMO Net Flow": d["omo_net_crore"] if d["omo_known"] else None,
-        "Govt Inflow (coupon + maturity)": d["govt_inflow_crore"],
+        "Govt Inflow (coupon + maturity + buyback)": d["govt_inflow_crore"],
         "Auction Outflow": d["auction_out_crore"],
         "Net": d["net_crore"], "Cumulative Net": d["cum_net_crore"],
         "OMO Coverage": COVER.get(d["omo_coverage"], d["omo_coverage"]),

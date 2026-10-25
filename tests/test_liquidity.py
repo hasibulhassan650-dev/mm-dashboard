@@ -28,7 +28,7 @@ from db import AuctionEvent, DailyNetFlow, OMOTransaction
 
 sys.path.append(os.path.join(_ROOT, "api", "routers"))
 from liquidity_logic import (  # noqa: E402
-    day_detail, deal_effect, liquidity_ladder, liquidity_effect, net_outstanding,
+    cumulative_window, day_detail, deal_effect, liquidity_ladder, liquidity_effect, net_outstanding,
     omo_maturity_ladder, resolve_window,
 )
 
@@ -508,3 +508,98 @@ class TestTheDeploymentBoundary:
                 if node.module.split(".")[0] in forbidden:
                     bad.append(node.module)
         assert not bad, f"liquidity_logic cannot import from the repo root: {bad}"
+
+
+class TestTheBuybackIsInTheLadder:
+    """Bangladesh's first buyback paid 1,716.14 crore into the market on
+    12-Oct-2026. The ladder summed coupon + principal only, so the Cash Flows
+    net and every cumulative built on it were short by that amount - a number
+    that looked complete and was not."""
+
+    def test_buyback_cash_reaches_the_days_govt_inflow_and_net(self):
+        eng, s = _mem()
+        s.add(DailyNetFlow(flow_date=D(2026, 10, 12), coupon_inflow_bdt_mill=100.0,
+                           principal_inflow_bdt_mill=0.0, buyback_inflow_bdt_mill=17161.4,
+                           total_inflow_bdt_mill=17261.4, auction_outflow_confirmed_mill=0.0,
+                           auction_outflow_best_mill=0.0, data_complete=True))
+        s.commit()
+        p = liquidity_ladder(s, date_from="2026-10-12", date_to="2026-10-12", today=TODAY)
+        d = _day(p, "2026-10-12")
+        assert d["buyback_inflow_crore"] == 1716.14
+        assert d["govt_inflow_crore"] == pytest.approx(1716.14 + 10.0)
+        assert d["net_crore"] == pytest.approx(1726.14)
+
+    def test_the_day_detail_agrees_with_the_ladder(self):
+        """Two views of one day must not differ by a buyback."""
+        eng, s = _mem()
+        s.add(DailyNetFlow(flow_date=D(2026, 10, 12), coupon_inflow_bdt_mill=0.0,
+                           principal_inflow_bdt_mill=0.0, buyback_inflow_bdt_mill=17161.4,
+                           total_inflow_bdt_mill=17161.4, auction_outflow_confirmed_mill=0.0,
+                           auction_outflow_best_mill=0.0, data_complete=True))
+        s.commit()
+        det = day_detail(s, "2026-10-12")["liquidity"]
+        lad = _day(liquidity_ladder(s, date_from="2026-10-12", date_to="2026-10-12",
+                                    today=TODAY), "2026-10-12")
+        assert det["govt_inflow_crore"] == lad["govt_inflow_crore"] == 1716.14
+        assert det["total_net_crore"] == lad["net_crore"]
+
+
+class TestTheDrilldownCumulative:
+    """Month-to-date on the day page, from the same ladder the Cash Flows page uses.
+
+    The trap is a total that looks authoritative over days it cannot know. A day
+    whose OMO BB has not published is roll-off only; summing it as a liquidity net
+    and calling the result "month to date" is a confident wrong number.
+    """
+
+    def _world(self):
+        eng, s = _mem()
+        # OMO published 1-Oct..3-Oct (today = 5-Oct, so 4th and 5th await publication)
+        _omo(s, D(2026, 10, 1), D(2026, 10, 8), "SDF", "ABSORPTION", 100.0)
+        _omo(s, D(2026, 10, 3), D(2026, 10, 10), "SLF", "INJECTION", 40.0)
+        for day, mill in ((1, 50.0), (2, 0.0), (3, 20.0), (4, 30.0)):
+            _flow(s, D(2026, 10, day), coupon_mill=mill * 10)
+        s.commit()
+        return s
+
+    def test_month_to_date_reconciles_with_the_ladder(self):
+        s = self._world()
+        c = cumulative_window(s, D(2026, 10, 1), D(2026, 10, 3), today=D(2026, 10, 5))
+        lad = liquidity_ladder(s, date_from="2026-10-01", date_to="2026-10-03",
+                               today=D(2026, 10, 5))
+        assert c["omo_complete"] and c["net_crore"] == lad["days"][-1]["cum_net_crore"]
+
+    def test_an_unpublished_day_blanks_the_total_instead_of_adding_it_as_nothing(self):
+        s = self._world()
+        c = cumulative_window(s, D(2026, 10, 1), D(2026, 10, 5), today=D(2026, 10, 5))
+        assert c["net_crore"] is None and not c["omo_complete"]
+        assert c["omo_incomplete_days"] == ["2026-10-04", "2026-10-05"]
+
+    def test_the_known_part_is_still_given_up_to_the_last_complete_day(self):
+        s = self._world()
+        c = cumulative_window(s, D(2026, 10, 1), D(2026, 10, 5), today=D(2026, 10, 5))
+        full = cumulative_window(s, D(2026, 10, 1), D(2026, 10, 3), today=D(2026, 10, 5))
+        assert c["complete_through"] == "2026-10-03"
+        assert c["net_complete_through_crore"] == full["net_crore"]
+
+    def test_net_excluding_omo_is_always_available(self):
+        s = self._world()
+        c = cumulative_window(s, D(2026, 10, 1), D(2026, 10, 5), today=D(2026, 10, 5))
+        assert c["net_excl_omo_crore"] == pytest.approx(50.0 + 0 + 20.0 + 30.0)
+
+    def test_a_window_ending_before_it_starts_is_refused(self):
+        s = self._world()
+        with pytest.raises(ValueError):
+            cumulative_window(s, D(2026, 10, 5), D(2026, 10, 1))
+
+    def test_a_day_before_omo_records_begin_is_incomplete_not_zero(self):
+        s = self._world()
+        c = cumulative_window(s, D(2026, 9, 28), D(2026, 10, 3), today=D(2026, 10, 5))
+        assert c["net_crore"] is None
+        assert c["complete_through"] is None and c["net_complete_through_crore"] is None
+
+    def test_the_drilldown_endpoint_serves_it_and_refuses_a_backwards_window(self):
+        import flows
+        src = open(os.path.join(_ROOT, "api", "routers", "flows.py"), encoding="utf-8").read()
+        assert "cumulative_window" in src and '"cumulative": cumulative' in src
+        assert "cum_from is after the date" in src and hasattr(flows, "get_drilldown")

@@ -1,4 +1,5 @@
 import { api } from "@/lib/api";
+import type { CumulativeBlock } from "@/lib/api";
 import StatCard from "@/components/StatCard";
 import DownloadButton from "@/components/DownloadButton";
 import Link from "next/link";
@@ -19,11 +20,14 @@ function nextWorkday(date: string): string {
 export default async function DrilldownPage({
   searchParams,
 }: {
-  searchParams: Promise<{ date?: string }>;
+  searchParams: Promise<{ date?: string; cum_from?: string }>;
 }) {
   const params = await searchParams;
   const date = params.date ?? new Date().toISOString().slice(0, 10);
-  const data = await api.drilldown(date);
+  const cumFrom = params.cum_from && /^\d{4}-\d{2}-\d{2}$/.test(params.cum_from)
+    && params.cum_from <= date ? params.cum_from : undefined;
+  const data = await api.drilldown(date, cumFrom);
+  const cum = data.cumulative;
   const s = data.summary;
   // Optional: an older deployed API has no liquidity block, and the page should
   // degrade rather than crash while the API catches up.
@@ -69,7 +73,7 @@ export default async function DrilldownPage({
             <Line label="OMO maturing — repaid" hint="injection maturing — banks repay BB"
                   value={-liq.omo_outflow_crore} tone="neg" known={liq.omo_known} />
             <Line label="OMO NET" value={liq.omo_net_crore} tone="auto" known={liq.omo_known} strong />
-            <Line label="Govt inflow" hint="coupons + principal redemptions"
+            <Line label="Govt inflow" hint="coupons + principal + buyback cash"
                   value={liq.govt_inflow_crore} tone="pos" known />
             <Line label="Auction outflow" hint="banks pay for new issuance"
                   value={-liq.auction_outflow_crore} tone="neg" known={liq.auction_known} />
@@ -83,6 +87,32 @@ export default async function DrilldownPage({
                 : "BB has not published this date's operations yet, so only the maturity legs are known — this is a roll-off figure, not a liquidity net. It will fill in."}
             </p>
           )}
+        </div>
+      )}
+
+
+      {/* Cumulative from the same ladder as Cash Flows. A total over days whose
+          OMO BB has not published is NOT shown as a number: the known part is
+          shown instead, with the day it is known through. */}
+      {cum && (
+        <div className="rounded-xl border bd b-panel p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-medium t-dim">Cumulative net liquidity (BDT crore)</h2>
+            <Link href="/cashflows" className="text-xs t-info hover:underline">Same ladder as Cash Flows →</Link>
+          </div>
+          <div className="flex flex-wrap items-stretch gap-3 text-xs">
+            <CumLine label={`Month to date · ${cum.mtd.from} → ${cum.mtd.to}`} b={cum.mtd} />
+            {cum.window && (
+              <CumLine label={`From ${cum.window.from} → ${cum.window.to}`} b={cum.window} />
+            )}
+          </div>
+          <form method="get" className="flex flex-wrap items-center gap-2 mt-3 text-xs t-dim">
+            <input type="hidden" name="date" value={date} />
+            <label htmlFor="cum_from">Accumulate from</label>
+            <input id="cum_from" name="cum_from" type="date" defaultValue={cumFrom ?? ""} max={date}
+                   className="px-2 py-1 rounded b-panel2 t-fg" />
+            <button type="submit" className="px-3 py-1 rounded b-panel2 hover-b-panel2">Apply</button>
+          </form>
         </div>
       )}
 
@@ -294,6 +324,35 @@ export default async function DrilldownPage({
 /** One line of the net-liquidity strip. `known=false` prints an em dash, never
  *  a zero: a day outside a source's coverage has no figure, and 0 would be a
  *  claim that nothing happened. */
+function CumLine({ label, b }: { label: string; b: CumulativeBlock }) {
+  const fmt = (v: number) => v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  const cls = (v: number) => (v < 0 ? "t-warn" : "t-pos");
+  return (
+    <div className="rounded-lg px-3 py-2 b-panel2" style={{ minWidth: 260 }}>
+      <div className="t-dim" style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".08em" }}>
+        {label}
+      </div>
+      {b.net_crore != null ? (
+        <div className={`font-mono ${cls(b.net_crore)}`} style={{ fontSize: 20, fontWeight: 700, marginTop: 2 }}>
+          {fmt(b.net_crore)}
+        </div>
+      ) : (
+        <>
+          <div className="font-mono t-mute" style={{ fontSize: 20, fontWeight: 700, marginTop: 2 }}
+               title="Some days' OMO is not known yet — the total is withheld, not zero">—</div>
+          <div className="t-warn" style={{ fontSize: 11, marginTop: 4, lineHeight: 1.5 }}>
+            OMO unknown for {b.omo_incomplete_days.length} day(s) (first: {b.omo_incomplete_days[0]}).
+            {b.complete_through && b.net_complete_through_crore != null && (
+              <> Complete through {b.complete_through}: <b className="font-mono">{fmt(b.net_complete_through_crore)}</b>.</>
+            )}
+            {" "}Excluding OMO: <b className="font-mono">{fmt(b.net_excl_omo_crore)}</b> (govt in less auctions).
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function Line({ label, hint, value, tone, known, strong, big }: {
   label: string; hint?: string; value: number;
   tone: "pos" | "neg" | "auto"; known: boolean;

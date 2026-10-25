@@ -133,7 +133,7 @@ _OMO_DEALT = """
 
 _FLOWS_IN_WINDOW = """
     SELECT flow_date AS d, coupon_inflow_bdt_mill, principal_inflow_bdt_mill,
-           auction_outflow_confirmed_mill, auction_outflow_planned_mill, data_complete
+           buyback_inflow_bdt_mill, auction_outflow_confirmed_mill, auction_outflow_planned_mill, data_complete
     FROM daily_net_flow
     WHERE flow_date BETWEEN :f AND :t"""
 
@@ -243,8 +243,14 @@ def liquidity_ladder(session, days: Optional[int] = None,
         omo_net = roll_net + new_in - new_out
 
         row = flows.get(key)
-        govt_inflow = (((row.coupon_inflow_bdt_mill or 0) +
-                        (row.principal_inflow_bdt_mill or 0)) / MILL_TO_CRORE) if row else 0.0
+        # A buyback is an early principal repayment: cash BB pays INTO the market
+        # on its settlement day. It is stored apart from principal_inflow (which
+        # reconciles to maturity_events), so it must be added here or the ladder
+        # silently drops 1,716 crore on 12-Oct-2026.
+        buyback = ((row.buyback_inflow_bdt_mill or 0) / MILL_TO_CRORE) if row else 0.0
+        govt_inflow = ((((row.coupon_inflow_bdt_mill or 0) +
+                         (row.principal_inflow_bdt_mill or 0)) / MILL_TO_CRORE)
+                       if row else 0.0) + buyback
         auction_out = (((row.auction_outflow_confirmed_mill or
                          row.auction_outflow_planned_mill or 0)) / MILL_TO_CRORE) if row else 0.0
         net = omo_net + govt_inflow - auction_out
@@ -262,6 +268,7 @@ def liquidity_ladder(session, days: Optional[int] = None,
             "omo_net_crore": round(omo_net, 2),
             "omo_coverage": coverage,
             "govt_inflow_crore": round(govt_inflow, 2),
+            "buyback_inflow_crore": round(buyback, 2),
             "auction_out_crore": round(auction_out, 2),
             "net_crore": round(net, 2),
             "cum_net_crore": round(cum, 2),
@@ -332,11 +339,12 @@ def day_detail(session, date: str) -> dict:
     omo_net = round(roll_net + new_in - new_out, 2)
 
     flow = session.execute(text("""
-        SELECT coupon_inflow_bdt_mill, principal_inflow_bdt_mill,
+        SELECT coupon_inflow_bdt_mill, principal_inflow_bdt_mill, buyback_inflow_bdt_mill,
                auction_outflow_confirmed_mill, auction_outflow_planned_mill
         FROM daily_net_flow WHERE flow_date = :d"""), {"d": str(day)}).fetchone()
     coupon = (flow.coupon_inflow_bdt_mill or 0) / MILL_TO_CRORE if flow else 0.0
     principal = (flow.principal_inflow_bdt_mill or 0) / MILL_TO_CRORE if flow else 0.0
+    buyback = (flow.buyback_inflow_bdt_mill or 0) / MILL_TO_CRORE if flow else 0.0
     auction_out = (((flow.auction_outflow_confirmed_mill or
                      flow.auction_outflow_planned_mill or 0)) / MILL_TO_CRORE) if flow else 0.0
 
@@ -345,7 +353,7 @@ def day_detail(session, date: str) -> dict:
     auction_to = _d(h["auction_horizon"])
     coverage = _coverage(day, omo_from, dealt_to, datetime.date.today())
 
-    govt_inflow = round(coupon + principal, 2)
+    govt_inflow = round(coupon + principal + buyback, 2)
     total = round(omo_net + govt_inflow - auction_out, 2)
     omo.sort(key=lambda x: (x["leg"], x["liquidity_effect"], -x["crore"]))
 
@@ -363,6 +371,7 @@ def day_detail(session, date: str) -> dict:
             "omo_net_crore": omo_net,
             "coupon_inflow_crore": round(coupon, 2),
             "principal_inflow_crore": round(principal, 2),
+            "buyback_inflow_crore": round(buyback, 2),
             "govt_inflow_crore": govt_inflow,
             "auction_outflow_crore": round(auction_out, 2),
             "auction_net_crore": round(-auction_out, 2),
@@ -373,6 +382,48 @@ def day_detail(session, date: str) -> dict:
             "auction_known": bool(auction_to and day <= auction_to),
         },
         **h,
+    }
+
+
+def cumulative_window(session, start: datetime.date, end: datetime.date,
+                      today: datetime.date = None) -> dict:
+    """Net liquidity summed over [start, end], honest about days it cannot know.
+
+    Built from the SAME ladder the Cash Flows page uses, so the two reconcile.
+    A day whose OMO is not complete (`omo_complete` False: before OMO records
+    begin, or a past day BB has not yet published, or a future day) has a net
+    that is roll-off only. Adding it to a cumulative as if it were a liquidity
+    net is how a total looks authoritative and is wrong, so:
+
+      net_crore             the sum, or None if ANY day is incomplete
+      net_excl_omo_crore    government cash in less auction cash out - always known
+      complete_through      the last day before the first incomplete one
+      net_complete_through  the full net up to that day (None if none)
+    """
+    if end < start:
+        raise ValueError(f"cumulative window ends {end} before it starts {start}")
+    ladder = liquidity_ladder(session, date_from=str(start), date_to=str(end), today=today)
+    days = ladder["days"]
+    incomplete = [d["date"] for d in days if not d["omo_complete"]]
+    ex_omo = round(sum(d["govt_inflow_crore"] - d["auction_out_crore"] for d in days), 2)
+    through, net_through = None, None
+    run, running = [], 0.0
+    for d in days:
+        if not d["omo_complete"]:
+            break
+        run.append(d["date"])
+        running += d["net_crore"]
+    if run:
+        through, net_through = run[-1], round(running, 2)
+    return {
+        "from": str(start), "to": str(end), "days": len(days),
+        "unit": "BDT crore",
+        "net_crore": None if incomplete else round(sum(d["net_crore"] for d in days), 2),
+        "net_excl_omo_crore": ex_omo,
+        "omo_complete": not incomplete,
+        "omo_incomplete_days": incomplete,
+        "complete_through": through,
+        "net_complete_through_crore": net_through,
     }
 
 
