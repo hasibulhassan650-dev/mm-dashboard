@@ -230,6 +230,11 @@ NOT_WATCHED: Dict[str, str] = {
     "source_snapshots": "structural fingerprints; watched by the canary itself",
     "desk_marks": "the desk's own provisional cut-offs, entered by hand on "
                   "auction day; not a BB feed, so it cannot go stale",
+    "news_articles": "every article the Liquidity Watch read, stored with its filter "
+                     "score; freshness is checked by a dedicated heartbeat, not a cadence",
+    "liquidity_events": "events reported in the news that BB's data does not hold; "
+                        "an event feed, so silence is normal",
+    "liquidity_event_history": "append-only record of how a news event changed",
     "desk_buyback_marks": "the desk's own provisional buyback figures, entered by "
                           "hand; not a BB feed, so it cannot go stale",
     "sukuk_documents": "BB's sukuk notices and prospectuses; an event feed (a "

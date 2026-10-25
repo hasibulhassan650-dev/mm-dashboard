@@ -638,6 +638,75 @@ class BgiibAuction(Base):
     ingested_utc    = Column(DateTime)
 
 
+class NewsArticle(Base):
+    """A news article the Liquidity Watch looked at.
+
+    Every article seen is stored, including the ones filtered out, with the score
+    that filtered them: recall is only auditable if the misses are on record.
+    `triage_status`: untriaged (waiting for Claude) | skipped (the keyword filter
+    said no) | screened_out (Claude said no) | extracted (events found or none) |
+    error (the call or the parse failed - retried, never silently dropped).
+    """
+    __tablename__ = "news_articles"
+    id             = Column(Integer, primary_key=True, autoincrement=True)
+    url            = Column(Text, nullable=False, unique=True)     # canonical: no query/fragment
+    source         = Column(String(40), nullable=False)
+    published_utc  = Column(DateTime)
+    title          = Column(Text)
+    summary        = Column(Text)                                  # the feed's own blurb
+    body_text      = Column(Text)                                  # capped; only for candidates
+    fetched_utc    = Column(DateTime, nullable=False)
+    keyword_score  = Column(Integer)
+    triage_status  = Column(String(16), nullable=False, default="untriaged")
+    triage_utc     = Column(DateTime)
+    triage_model   = Column(String(40))
+    triage_json    = Column(Text)                                  # what the model returned, verbatim
+
+
+class LiquidityEvent(Base):
+    """A liquidity event reported in the news that BB's own data does not hold.
+
+    Never summed into a ladder: shown, linked and labelled "from news". `matters`
+    is the threshold (>= 500 crore, or a regulatory / BB-credit event of any size);
+    `redundant_with` names the table that already holds the event, and such rows
+    are hidden by default - the desk does not want the same fact twice.
+    """
+    __tablename__ = "liquidity_events"
+    id              = Column(Integer, primary_key=True, autoincrement=True)
+    dedupe_key      = Column(String(200), nullable=False, unique=True)
+    kind            = Column(String(32), nullable=False)
+    direction       = Column(String(8), nullable=False)             # INJECT | ABSORB | NEUTRAL
+    amount_crore    = Column(Float)                                 # NULL when not stated or unverified
+    amount_unverified = Column(Boolean, default=False)
+    event_date      = Column(Date)
+    announced_date  = Column(Date)
+    status          = Column(String(12))                            # ANNOUNCED | APPROVED | DISBURSED | COMPLETED
+    channel         = Column(String(12))                            # CASH | BONDS | BB_CREDIT | REGULATORY
+    counterparty    = Column(String(120))
+    summary         = Column(Text)
+    evidence_quote  = Column(Text, nullable=False)
+    sources_json    = Column(Text)                                  # [{url, source, title, published}]
+    confidence      = Column(Float)
+    matters         = Column(Boolean, default=False)
+    redundant_with  = Column(String(60))
+    first_seen_utc  = Column(DateTime)
+    updated_utc     = Column(DateTime)
+    notified_utc    = Column(DateTime)
+    verified_by     = Column(String(12), default="llm")             # llm | research | human
+
+
+class LiquidityEventHistory(Base):
+    """How an event changed: ANNOUNCED -> DISBURSED, or a corrected amount."""
+    __tablename__ = "liquidity_event_history"
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    event_id    = Column(Integer, nullable=False)
+    changed_utc = Column(DateTime, nullable=False)
+    field       = Column(String(24), nullable=False)
+    old_value   = Column(Text)
+    new_value   = Column(Text)
+    source_url  = Column(Text)
+
+
 class DeskBuybackMark(Base):
     """A buyback BB has announced but not yet published results for, as the desk knows it.
 
