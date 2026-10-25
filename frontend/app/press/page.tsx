@@ -111,7 +111,7 @@ export default async function PressPage() {
                     <td className="mono" style={{ color: "var(--fg-mute)" }}>
                       {r.subject_date ? String(r.subject_date).slice(0, 10) : "—"}
                     </td>
-                    <td style={{ maxWidth: 520 }}>
+                    <td style={{ maxWidth: 520, whiteSpace: "normal", padding: "6px var(--pad)" }}>
                       {r.title}
                       {r.headline && (
                         <div style={{
