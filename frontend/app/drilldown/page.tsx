@@ -37,6 +37,8 @@ export default async function DrilldownPage({
   const buybacks = data.buybacks ?? [];
   // A buyback the desk entered that BB has not yet resulted: listed, never summed.
   const deskBuybacks = data.desk_buybacks ?? [];
+  // Events the PRESS reported for this day. Context only - never in a total.
+  const newsEvents = data.news_events ?? [];
 
   return (
     <div className="space-y-6">
@@ -137,6 +139,23 @@ export default async function DrilldownPage({
           sub={s.net_borrowing_mill > 0 ? "net borrower" : "net repayer"}
           color={s.net_borrowing_mill > 0 ? "amber" : "green"} />
       </div>
+
+      {newsEvents.length > 0 && (
+        <div className="rounded-xl border bd b-panel p-4" style={{ borderColor: "var(--info)" }}>
+          <h2 className="text-sm font-medium t-info mb-2">
+            From the news — not Bangladesh Bank data, NOT in any total above ({newsEvents.length})
+          </h2>
+          {newsEvents.map((e) => (
+            <div key={e.id} className="text-xs t-dim" style={{ lineHeight: 1.8 }}>
+              <b className="t-fg">{e.kind.replace(/_/g, " ").toLowerCase()}</b> · {e.direction.toLowerCase()} ·{" "}
+              {e.amount_crore == null ? "amount not stated" : <b className="mono">{e.amount_crore.toLocaleString()} cr</b>}
+              {e.status ? ` · ${e.status.toLowerCase()}` : ""} · {e.counterparty ?? "counterparty not stated"} — {e.summary}{" "}
+              {e.sources[0] && <a href={e.sources[0].url} target="_blank" rel="noreferrer" className="t-info">source</a>}
+            </div>
+          ))}
+          <Link href="/liquidity-watch" className="text-xs t-info hover:underline">All liquidity news →</Link>
+        </div>
+      )}
 
       {deskBuybacks.length > 0 && (
         <div className="rounded-xl border bd b-panel p-4" style={{ borderColor: "var(--warn)" }}>

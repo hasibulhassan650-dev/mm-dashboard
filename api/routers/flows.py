@@ -136,6 +136,15 @@ def get_drilldown(date: str = Query(..., description="YYYY-MM-DD"),
               AND NOT EXISTS (SELECT 1 FROM buyback_events b
                               WHERE b.isin = d.isin AND b.settlement_date = d.settlement_date)
         """), {"date": date}).fetchall()]
+        # Liquidity events the press reported for this day that BB's data does not hold.
+        # Listed for context and NEVER added to any total below. A failure here must
+        # not take the day page down, so it degrades to an empty list.
+        try:
+            from .news_logic import events_on
+            news_events = events_on(session, date)
+        except Exception:
+            session.rollback()
+            news_events = []
         # BGIS sukuk cash for the day (principal + half-yearly profit), as stored
         # by the daily aggregation; it has no per-security rows of its own here.
         sk = session.execute(text(
@@ -181,6 +190,7 @@ def get_drilldown(date: str = Query(..., description="YYYY-MM-DD"),
             "auctions":   [dict(r._mapping) for r in auctions],
             "buybacks":   [dict(r._mapping) for r in buybacks],
             "desk_buybacks": desk_bb,
+            "news_events": news_events,
         }
     finally:
         session.close()

@@ -67,18 +67,29 @@ def _sources():
     marks = ",".join(f"'{c}'" for c in HIGH_SIGNAL)          # constants, not user input
     return (
         {"table": "press_releases", "key": "serial",
-         "select": "serial, published_date, subject_date, title, url, category",
+         "select": "serial, published_date, subject_date, title, url, category, 'BB announced' AS prefix",
          "where": f"category IN ({marks}) AND notified_utc IS NULL AND first_seen_utc >= :since",
          "order": "published_date, serial"},
         {"table": "sukuk_documents", "key": "doc_key",
          "select": "doc_key AS serial, doc_date AS published_date, NULL AS subject_date, "
-                   "title, url, 'SUKUK' AS category",
+                   "title, url, 'SUKUK' AS category, 'BB announced' AS prefix",
          "where": "notified_utc IS NULL AND first_seen_utc >= :since",
          "order": "doc_date, doc_key"},
+        # Events read from the news (engines/liquidity_news.py): only those that MATTER
+        # and that BB's own tables do not already hold. The key is built, so the
+        # issue title carries "[ev-12]" and a rerun finds its own issue.
+        {"table": "liquidity_events", "key": "('ev-' || CAST(id AS TEXT))",
+         "select": "('ev-' || CAST(id AS TEXT)) AS serial, COALESCE(event_date, announced_date) AS "
+                   "published_date, NULL AS subject_date, "
+                   "(kind || ': ' || COALESCE(summary, '')) AS title, '' AS url, kind AS category, "
+                   "'Liquidity news' AS prefix",
+         "where": "matters IS TRUE AND redundant_with IS NULL AND notified_utc IS NULL "
+                  "AND first_seen_utc >= :since",
+         "order": "first_seen_utc, id"},
     )
 
 
-_FIELDS = ("serial", "published_date", "subject_date", "title", "url", "category")
+_FIELDS = ("serial", "published_date", "subject_date", "title", "url", "category", "prefix")
 
 
 def pending(session, now: datetime.datetime = None,
@@ -181,9 +192,75 @@ def digest_lines(session, now: datetime.datetime = None, hours: int = 24):
     return lines, problems
 
 
+def news_digest_lines(session, now: datetime.datetime = None, hours: int = 24):
+    """(lines, problems): liquidity news for the digest, and the two ways the watch can
+    silently stop - it has not read anything for 6h, or articles pile up waiting for Claude."""
+    from sqlalchemy import text
+    now = now or datetime.datetime.utcnow()
+    problems: List[str] = []
+    out = [f"**Liquidity news not in BB's data (last {hours}h):**"]
+    rows = session.execute(text(
+        "SELECT kind, direction, amount_crore, status, counterparty, summary FROM liquidity_events "
+        "WHERE first_seen_utc >= :s AND matters IS TRUE AND redundant_with IS NULL "
+        "ORDER BY first_seen_utc DESC"), {"s": now - datetime.timedelta(hours=hours)}).fetchall()
+    for kind, direction, amt, status, cp, summ in rows:
+        amount = "amount not stated" if amt is None else f"{float(amt):,.0f} cr"
+        out.append(f"- {kind.replace('_', ' ').title()} ({direction.lower()}) · {amount}"
+                   f"{' · ' + status.lower() if status else ''} · {cp or 'counterparty not stated'} · {str(summ)[:110]}")
+    if not rows:
+        out.append("- nothing new")
+    last = session.execute(text("SELECT MAX(fetched_utc) FROM news_articles")).scalar()
+    if last is None or (now - _as_dt(last)).total_seconds() > 6 * 3600:
+        problems.append("the liquidity news watch has not run for 6h+")
+        out.append("**The news watch has not read anything for 6h or more.**")
+    waiting = session.execute(text(
+        "SELECT COUNT(*) FROM news_articles WHERE triage_status IN ('untriaged', 'error') "
+        "AND fetched_utc < :b"), {"b": now - datetime.timedelta(hours=2)}).scalar() or 0
+    if waiting > 20:
+        problems.append(f"{waiting} news articles are waiting for Claude (key missing or failing)")
+        out.append(f"**{waiting} articles are waiting for Claude triage** - ANTHROPIC_API_KEY missing, "
+                   f"or the model calls are failing.")
+    out.append("")
+    return out, problems
+
+
+def _as_dt(v) -> datetime.datetime:
+    if isinstance(v, datetime.datetime):
+        return v
+    return datetime.datetime.fromisoformat(str(v)[:19])
+
+
 def issue_title(rel: Dict) -> str:
     # The serial is what a rerun searches for; it must be in the title verbatim.
-    return f"BB announced: {rel['title'][:100]} [{rel['serial']}]"
+    return f"{rel.get('prefix') or 'BB announced'}: {rel['title'][:100]} [{rel['serial']}]"
+
+
+def news_issue_body(session, rel: Dict) -> str:
+    """The body for a news-derived event: amount, direction, status, the quote, every
+    source, and an explicit statement that it is not BB data and not in the ladder."""
+    from sqlalchemy import text
+    ev_id = int(str(rel["serial"]).split("-", 1)[1])
+    r = session.execute(text(
+        "SELECT kind, direction, amount_crore, status, channel, counterparty, summary, "
+        "evidence_quote, sources_json, event_date, confidence FROM liquidity_events WHERE id = :i"),
+        {"i": ev_id}).fetchone()
+    if r is None:
+        return f"Liquidity news event {rel['serial']}"
+    kind, direction, amt, status, channel, cp, summ, quote, srcs, ev_date, conf = r
+    try:
+        links = "\n".join(f"- [{s.get('source')}]({s.get('url')}) - {s.get('title')}"
+                           for s in json.loads(srcs or "[]"))
+    except ValueError:
+        links = ""
+    amount = "amount not stated" if amt is None else f"**{float(amt):,.0f} crore**"
+    return (f"**{kind.replace('_', ' ').title()}** - {direction.lower()} - {amount}"
+            f"{' - ' + status.lower() if status else ''}{' - ' + channel.lower() if channel else ''}\n\n"
+            f"{summ}\n\n> {quote}\n\n"
+            f"Counterparty: {cp or 'not stated'} - event date: {ev_date or 'not stated'} - "
+            f"model confidence {float(conf or 0):.0%}\n\n**Sources**\n{links}\n\n"
+            f"_Read from the news, not from Bangladesh Bank's data, and **not included in any ladder "
+            f"total**. The quote above is verbatim from the first source and the amount was re-read "
+            f"from it by code. Opened automatically; close it when you have read it._")
 
 
 def issue_body(rel: Dict) -> str:
@@ -236,7 +313,8 @@ def publish(session, runner: Callable = subprocess.run,
                 done.append(sr)
                 continue
             made = _gh(["issue", "create", "--title", issue_title(rel),
-                        "--body", issue_body(rel), "--label", LABEL], runner)
+                        "--body", (news_issue_body(session, rel) if str(rel["serial"]).startswith("ev-")
+                                   else issue_body(rel)), "--label", LABEL], runner)
             if made.returncode == 0:
                 out["opened"].append(sr)
                 done.append(sr)

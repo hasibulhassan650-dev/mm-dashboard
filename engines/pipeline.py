@@ -1117,7 +1117,7 @@ def run_sukuk_fetch() -> dict:
         out = fetch_sukuk()
         watch = _register_source(session, out["meta"]) if out.get("meta") else {}
         now = datetime.datetime.utcnow()
-        added = updated = 0
+        added = updated = changed = 0
         for r in out["outstanding"]:
             row = session.query(SukukOutstanding).filter_by(isin=r["isin"]).one_or_none()
             if row is None:
@@ -1125,6 +1125,11 @@ def run_sukuk_fetch() -> dict:
                                              source="BB sukukoutstanding", **r))
                 added += 1
             else:
+                # What moves cash: if any of it changed the ladder is stale until rebuilt.
+                if any(getattr(row, k) != r[k] for k in
+                       ("outstanding_crore", "maturity_date", "issue_date", "profit_rate_pct",
+                        "profit_frequency")):
+                    changed += 1
                 for k, v in r.items():
                     setattr(row, k, v)
                 row.last_seen_utc = now
@@ -1148,7 +1153,7 @@ def run_sukuk_fetch() -> dict:
         if out["refused"]:
             errs.append(f"sukuk: refused {out['refused']}")
         return {"rows": len(out["outstanding"]), "added": added, "updated": updated,
-                "documents_added": docs_added, "refused": out["refused"],
+                "changed": changed, "documents_added": docs_added, "refused": out["refused"],
                 "errors": errs, **watch}
     except Exception as exc:
         session.rollback()

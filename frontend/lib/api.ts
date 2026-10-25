@@ -40,6 +40,11 @@ export const api = {
   omoSummary:      () => get<OmoSummaryRow[]>("/api/omo/summary"),
   omoOutstanding:  (days = 90) => get<OmoOutstandingRow[]>("/api/omo/outstanding", { days }),
   omoTransactions: (days = 60) => get<OmoTxnRow[]>("/api/omo/transactions", { days }),
+  news: async (days = 120, redundant = false, minor = false): Promise<NewsFeed | null> => {
+    try {
+      return await get<NewsFeed>("/api/news", { days, redundant: String(redundant), minor: String(minor) });
+    } catch { return null; }
+  },
   omoInjection: (window_days = 30) => get<OmoInjection>("/api/omo/injection", { window_days }),
   yieldCurve:      () => get<YieldRow[]>("/api/yields/curve"),
   yieldSecondary:  () => get<SecondaryYieldRow[]>("/api/yields/secondary"),
@@ -438,6 +443,28 @@ export interface DeskMarks {
   marks: DeskMark[];
   /** Optional: an older deployed API omits it. Provisional; never in a total. */
   buybacks?: DeskBuyback[];
+}
+
+export interface NewsEvent {
+  id: number; kind: string; direction: "INJECT" | "ABSORB" | "NEUTRAL";
+  amount_crore: number | null; amount_unverified: boolean;
+  event_date: string | null; announced_date: string | null; when: string | null;
+  status: string | null; channel: string | null; counterparty: string | null;
+  summary: string; evidence_quote: string; confidence: number; matters: boolean;
+  redundant_with: string | null; verified_by: string;
+  sources: { url: string; source: string; title: string; published?: string }[];
+}
+export interface NewsFeed {
+  as_of: string; window_days: number; fiscal_year_start: string; count: number; note: string;
+  totals: {
+    month_inject_crore: number; month_absorb_crore: number; fy_inject_crore: number;
+    fy_absorb_crore: number; events_counted: number; events_without_amount: number;
+  };
+  monthly: { month: string; inject_crore: number; absorb_crore: number; events: number }[];
+  hidden: { redundant: number; minor: number };
+  health: { last_fetch_utc: string | null; articles_waiting_for_claude: number;
+            articles_by_status: Record<string, number> };
+  events: NewsEvent[];
 }
 
 export interface DeskBuyback {
@@ -1023,6 +1050,8 @@ export interface DrilldownResult {
   /** Government buybacks of its own bonds settling on this date — an early
    *  principal repayment. `cash_paid_crore` is null when BB published no
    *  price, in which case the face value is what the ladder used. */
+  /** From the press, not BB data. Listed, never summed. */
+  news_events?: NewsEvent[];
   desk_buybacks?: { isin: string; accepted_face_crore: number; cash_paid_crore: number | null;
     price_per_100: number | null; entered_by: string | null }[];
   buybacks?: { isin: string; security_name_norm: string | null;

@@ -35,6 +35,7 @@ export const NAV: NavItem[] = [
   { href: "/export",      label: "Export",          icon: "doc" },
   { href: "/desk",        label: "Desk Entry",      icon: "ruler" },
   { href: "/press",       label: "Press Releases",  icon: "doc" },
+  { href: "/liquidity-watch", label: "Liquidity Watch", icon: "pulse" },
   { href: "/guardian",    label: "Guardian",        icon: "pulse" },
   { href: "/glossary",    label: "Glossary",        icon: "book" },
 ];

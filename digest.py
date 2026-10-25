@@ -261,6 +261,16 @@ def build() -> tuple:
             s.rollback()      # a failed statement aborts a Postgres transaction
             lines.append(f"_(announcements unavailable: {exc})_\n")
 
+        # ── liquidity news (not in BB's data) ────────────────────────────────
+        try:
+            from engines.announce import news_digest_lines
+            l, p = news_digest_lines(s)
+            lines += l
+            problems += p
+        except Exception as exc:
+            s.rollback()
+            lines.append(f"_(liquidity news unavailable: {exc})_\n")
+
         # ── freshness table ──────────────────────────────────────────────────
         lines.append("| Series | Rows | Latest data | Last write |")
         lines.append("|---|---:|---|---|")

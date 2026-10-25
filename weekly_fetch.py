@@ -530,6 +530,15 @@ def main():
                  sk.get("added", 0), sk.get("documents_added", 0))
         for e in sk.get("errors") or []:
             errors.append(e)
+        # A new issue, a changed amount or a moved maturity changes cash on specific days:
+        # the ladder is a materialised aggregate and is stale until rebuilt.
+        if sk.get("added") or sk.get("changed"):
+            from engines.pipeline import rebuild_daily_flows
+            _s = get_session()
+            try:
+                log.warning("Sukuk table changed - rebuilt %d ladder row(s)", rebuild_daily_flows(_s))
+            finally:
+                _s.close()
     except Exception as exc:
         log.exception("Sukuk fetch failed: %s", exc)
         errors.append(f"sukuk: {exc}")

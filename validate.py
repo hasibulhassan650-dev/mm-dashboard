@@ -1096,6 +1096,64 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
         except Exception:
             s.rollback()
 
+        # ── the ladder's sukuk line must match BB's outstanding table ───────
+        # Sukuk cash is derived from the outstanding table, so a table that changed
+        # (a new issue, a bigger tap) without a rebuild leaves the ladder wrong on
+        # exactly the days that matter - the 30-Dec redemption of 5,000 crore.
+        try:
+            from engines.aggregation import sukuk_cash_flows
+            iss = [{"isin": r[0], "issue_date": r[1], "maturity_date": r[2], "outstanding_crore": r[3],
+                    "profit_rate_pct": r[4], "profit_frequency": r[5]}
+                   for r in q("SELECT isin, issue_date, maturity_date, outstanding_crore, "
+                              "profit_rate_pct, profit_frequency FROM sukuk_outstanding")]
+            for i in iss:
+                for k in ("issue_date", "maturity_date"):
+                    if not hasattr(i[k], "year"):
+                        i[k] = datetime.date.fromisoformat(str(i[k])[:10])
+            span = q("SELECT MIN(flow_date), MAX(flow_date) FROM daily_net_flow")
+            if iss and span and span[0][0]:
+                lo, hi = (x if hasattr(x, "year") else datetime.date.fromisoformat(str(x)[:10])
+                          for x in span[0])
+                want: dict = {}
+                for f in sukuk_cash_flows(iss, lo, hi):
+                    k = str(f["payment_date"])
+                    want[k] = want.get(k, 0.0) + f["amount_bdt_mill"]
+                have = {str(r[0])[:10]: float(r[1] or 0) for r in q(
+                    "SELECT flow_date, sukuk_inflow_bdt_mill FROM daily_net_flow "
+                    "WHERE sukuk_inflow_bdt_mill > 0")}
+                for d in sorted(set(want) | set(have)):
+                    a, e = have.get(d, 0.0), want.get(d, 0.0)
+                    if abs(a - e) > max(1.0, e * 0.001):
+                        add("ladder-recon", f"{d} sukuk: ladder {a:,.1f} != table-derived {e:,.1f} "
+                                            f"mill - rebuild the flow pipeline")
+        except Exception:
+            s.rollback()
+
+        # ── the liquidity news watch must itself be alive ───────────────────
+        # An alarm that depends on what it watches goes quiet exactly when it matters:
+        # if the watch stops, no event arrives and the page looks calm. So the page
+        # of events is judged by the watch's own heartbeat, not by what it found.
+        try:
+            last = q("SELECT MAX(fetched_utc) FROM news_articles")
+            last = last[0][0] if last else None
+            if last is not None:
+                if not hasattr(last, "year"):
+                    last = datetime.datetime.fromisoformat(str(last)[:19])
+                age_h = (datetime.datetime.utcnow() - last).total_seconds() / 3600.0
+                if age_h > 6:
+                    add("news-watch", f"the liquidity news watch has not read an article for "
+                                      f"{age_h:.0f}h - events in the press are not being caught")
+            else:
+                add("news-watch", "the liquidity news watch has never run", "notice")
+            backlog = q("SELECT COUNT(*) FROM news_articles WHERE triage_status IN "
+                        "('untriaged', 'error') AND fetched_utc < :b",
+                        b=datetime.datetime.utcnow() - datetime.timedelta(hours=2))
+            if backlog and backlog[0][0] and backlog[0][0] > 20:
+                add("news-watch", f"{backlog[0][0]} news articles have waited over 2h for Claude to "
+                                  f"read them - ANTHROPIC_API_KEY is missing or the calls are failing")
+        except Exception:
+            s.rollback()
+
         # ── a DERIVED OMO maturity must not land on a closure ───────────────
         # fetchers/omo.py computes a deal's maturity as txn + tenor, rolled to
         # the next working day, AT WRITE TIME — so every row written before the

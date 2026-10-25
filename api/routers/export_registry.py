@@ -97,7 +97,17 @@ EXPORTS: List[Export] = [
            "something BB printed.",
            ["days", "date_from", "date_to"],
            "daily_net_flow", "flow_date",
-           sheets="Read me · Model · Assumptions · OMO · Auctions · Govt flows"),
+           sheets="Read me · Summary · Model · Assumptions · OMO · Auctions · Govt flows"),
+    Export("liquidity_news", "Liquidity Watch (events read from the news)",
+           "/api/news/export",
+           "Government and Bangladesh Bank liquidity events reported in the Bangladeshi "
+           "press that BB's own tables do not hold - subsidy releases, arrears, support to "
+           "banks, reserve-requirement changes - each with the verbatim sentence it was "
+           "read from, every source link and a flag for events BB's data already holds. "
+           "Read by a language model and verified by code; never part of any ladder total.",
+           ["days"],
+           "liquidity_events", "event_date",
+           sheets="Events · Monthly"),
     Export("omo_ladder", "OMO Maturity Ladder",
            "/api/omo/maturity-ladder/export",
            "Day-by-day OMO maturities with the product breakdown — every "
