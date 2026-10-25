@@ -73,7 +73,7 @@ export default async function DrilldownPage({
             <Line label="OMO maturing — repaid" hint="injection maturing — banks repay BB"
                   value={-liq.omo_outflow_crore} tone="neg" known={liq.omo_known} />
             <Line label="OMO NET" value={liq.omo_net_crore} tone="auto" known={liq.omo_known} strong />
-            <Line label="Govt inflow" hint="coupons + principal + buyback cash"
+            <Line label="Govt inflow" hint="coupons + principal + buyback + sukuk"
                   value={liq.govt_inflow_crore} tone="pos" known />
             <Line label="Auction outflow" hint="banks pay for new issuance"
                   value={-liq.auction_outflow_crore} tone="neg" known={liq.auction_known} />
@@ -116,13 +116,18 @@ export default async function DrilldownPage({
         </div>
       )}
 
-      <div className={`grid grid-cols-2 gap-4 ${buybacks.length ? "md:grid-cols-6" : "md:grid-cols-5"}`}>
+      <div className={`grid grid-cols-2 gap-4 ${(buybacks.length > 0) !== ((s.sukuk_inflow_mill ?? 0) > 0) ? "md:grid-cols-6" : (buybacks.length > 0 && (s.sukuk_inflow_mill ?? 0) > 0) ? "md:grid-cols-7" : "md:grid-cols-5"}`}>
         <StatCard label="Maturity Inflow" value={`${s.maturity_inflow_mill.toLocaleString()}`} sub="BDT million" color="green" />
         <StatCard label="Coupon Inflow"   value={`${s.coupon_inflow_mill.toLocaleString()}`}   sub="BDT million" color="green" />
         {buybacks.length > 0 && (
           <StatCard label="Buyback Inflow"
             value={`${(s.buyback_inflow_mill ?? 0).toLocaleString()}`}
             sub="early principal · BDT million" color="green" />
+        )}
+        {(s.sukuk_inflow_mill ?? 0) > 0 && (
+          <StatCard label="Sukuk Inflow"
+            value={`${(s.sukuk_inflow_mill ?? 0).toLocaleString()}`}
+            sub="BGIS principal + profit · BDT million" color="green" />
         )}
         <StatCard label="Total Inflow"    value={`${s.total_inflow_mill.toLocaleString()}`}    sub="BDT million" color="blue" />
         <StatCard label="Auction Outflow" value={`${s.auction_outflow_mill.toLocaleString()}`} sub="BDT million" color="red" />

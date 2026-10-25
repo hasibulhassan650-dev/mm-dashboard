@@ -1372,9 +1372,19 @@ def rebuild_daily_flows(session, date_from: datetime.date = None,
     if buyback_dicts:
         log.info("  %d buyback event(s) in range", len(buyback_dicts))
 
+    # BGIS sukuk: principal and half-yearly profit from BB's outstanding table.
+    from engines.aggregation import sukuk_cash_flows
+    sukuk_flows = sukuk_cash_flows([{
+        "isin": s.isin, "issue_date": s.issue_date, "maturity_date": s.maturity_date,
+        "outstanding_crore": s.outstanding_crore, "profit_rate_pct": s.profit_rate_pct,
+        "profit_frequency": s.profit_frequency,
+    } for s in session.query(SukukOutstanding).all()], date_from, date_to)
+    if sukuk_flows:
+        log.info("  %d sukuk cash flow(s) in range", len(sukuk_flows))
+
     daily_rows = build_daily_flows(
         coupon_dicts, maturity_dicts, auction_dicts,
-        date_from, date_to, buyback_events=buyback_dicts,
+        date_from, date_to, buyback_events=buyback_dicts, sukuk_flows=sukuk_flows,
     )
 
     # Persist daily_net_flow, replacing the range.

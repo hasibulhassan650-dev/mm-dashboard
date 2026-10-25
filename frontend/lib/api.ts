@@ -984,6 +984,8 @@ export interface DrilldownResult {
     /** Early principal repaid through a buyback. Optional: an older deployed
      *  API build omits it, and the page must degrade, not crash. */
     buyback_inflow_mill?: number;
+    /** BGIS sukuk principal and half-yearly profit paid that day. Optional for the same reason. */
+    sukuk_inflow_mill?: number;
   };
   maturities: { isin: string; security_name_norm: string; security_type: string;
     payment_date: string; principal_bdt_mill: number; roll_days: number }[];

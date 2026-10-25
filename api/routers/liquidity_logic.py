@@ -133,7 +133,8 @@ _OMO_DEALT = """
 
 _FLOWS_IN_WINDOW = """
     SELECT flow_date AS d, coupon_inflow_bdt_mill, principal_inflow_bdt_mill,
-           buyback_inflow_bdt_mill, auction_outflow_confirmed_mill, auction_outflow_planned_mill, data_complete
+           buyback_inflow_bdt_mill, sukuk_inflow_bdt_mill, auction_outflow_confirmed_mill,
+           auction_outflow_planned_mill, data_complete
     FROM daily_net_flow
     WHERE flow_date BETWEEN :f AND :t"""
 
@@ -248,9 +249,12 @@ def liquidity_ladder(session, days: Optional[int] = None,
         # reconciles to maturity_events), so it must be added here or the ladder
         # silently drops 1,716 crore on 12-Oct-2026.
         buyback = ((row.buyback_inflow_bdt_mill or 0) / MILL_TO_CRORE) if row else 0.0
+        # BGIS sukuk redemptions and half-yearly profit: government cash in, derived
+        # from BB's outstanding table (engines/aggregation.sukuk_cash_flows).
+        sukuk = ((row.sukuk_inflow_bdt_mill or 0) / MILL_TO_CRORE) if row else 0.0
         govt_inflow = ((((row.coupon_inflow_bdt_mill or 0) +
                          (row.principal_inflow_bdt_mill or 0)) / MILL_TO_CRORE)
-                       if row else 0.0) + buyback
+                       if row else 0.0) + buyback + sukuk
         auction_out = (((row.auction_outflow_confirmed_mill or
                          row.auction_outflow_planned_mill or 0)) / MILL_TO_CRORE) if row else 0.0
         net = omo_net + govt_inflow - auction_out
@@ -269,6 +273,7 @@ def liquidity_ladder(session, days: Optional[int] = None,
             "omo_coverage": coverage,
             "govt_inflow_crore": round(govt_inflow, 2),
             "buyback_inflow_crore": round(buyback, 2),
+            "sukuk_inflow_crore": round(sukuk, 2),
             "auction_out_crore": round(auction_out, 2),
             "net_crore": round(net, 2),
             "cum_net_crore": round(cum, 2),
@@ -340,11 +345,12 @@ def day_detail(session, date: str) -> dict:
 
     flow = session.execute(text("""
         SELECT coupon_inflow_bdt_mill, principal_inflow_bdt_mill, buyback_inflow_bdt_mill,
-               auction_outflow_confirmed_mill, auction_outflow_planned_mill
+               sukuk_inflow_bdt_mill, auction_outflow_confirmed_mill, auction_outflow_planned_mill
         FROM daily_net_flow WHERE flow_date = :d"""), {"d": str(day)}).fetchone()
     coupon = (flow.coupon_inflow_bdt_mill or 0) / MILL_TO_CRORE if flow else 0.0
     principal = (flow.principal_inflow_bdt_mill or 0) / MILL_TO_CRORE if flow else 0.0
     buyback = (flow.buyback_inflow_bdt_mill or 0) / MILL_TO_CRORE if flow else 0.0
+    sukuk = (flow.sukuk_inflow_bdt_mill or 0) / MILL_TO_CRORE if flow else 0.0
     auction_out = (((flow.auction_outflow_confirmed_mill or
                      flow.auction_outflow_planned_mill or 0)) / MILL_TO_CRORE) if flow else 0.0
 
@@ -353,7 +359,7 @@ def day_detail(session, date: str) -> dict:
     auction_to = _d(h["auction_horizon"])
     coverage = _coverage(day, omo_from, dealt_to, datetime.date.today())
 
-    govt_inflow = round(coupon + principal + buyback, 2)
+    govt_inflow = round(coupon + principal + buyback + sukuk, 2)
     total = round(omo_net + govt_inflow - auction_out, 2)
     omo.sort(key=lambda x: (x["leg"], x["liquidity_effect"], -x["crore"]))
 
@@ -372,6 +378,7 @@ def day_detail(session, date: str) -> dict:
             "coupon_inflow_crore": round(coupon, 2),
             "principal_inflow_crore": round(principal, 2),
             "buyback_inflow_crore": round(buyback, 2),
+            "sukuk_inflow_crore": round(sukuk, 2),
             "govt_inflow_crore": govt_inflow,
             "auction_outflow_crore": round(auction_out, 2),
             "auction_net_crore": round(-auction_out, 2),

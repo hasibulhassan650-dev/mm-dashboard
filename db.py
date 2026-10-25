@@ -582,6 +582,8 @@ class DailyNetFlow(Base):
     # principal_inflow: that figure reconciles against maturity_events and a
     # buyback is not a maturity.
     buyback_inflow_bdt_mill        = Column(Float, default=0.0)
+    # BGIS sukuk principal and half-yearly profit (BB's outstanding table).
+    sukuk_inflow_bdt_mill          = Column(Float, default=0.0)
     net_borrowing_bdt_mill         = Column(Float, default=0.0)
     inflow_security_count          = Column(Integer, default=0)
     coupon_payment_count           = Column(Integer, default=0)
@@ -926,6 +928,9 @@ def init_db():
         "ALTER TABLE press_releases ADD COLUMN notified_utc TIMESTAMP",
         "ALTER TABLE data_absences ADD COLUMN IF NOT EXISTS kind VARCHAR(16) DEFAULT 'bb_omission'",
         "ALTER TABLE daily_net_flow ADD COLUMN IF NOT EXISTS buyback_inflow_bdt_mill REAL DEFAULT 0",
+        "ALTER TABLE daily_net_flow ADD COLUMN IF NOT EXISTS sukuk_inflow_bdt_mill REAL DEFAULT 0",
+        # SQLite has no IF NOT EXISTS for columns; errors harmlessly on Postgres.
+        "ALTER TABLE daily_net_flow ADD COLUMN sukuk_inflow_bdt_mill REAL DEFAULT 0",
         # A desk mark is a provisional cut-off, never BB's. A sovereign yield
         # outside 0-30% is a typo in any century, and the constraint is the
         # layer below every code path that could write one.

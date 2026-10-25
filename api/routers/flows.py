@@ -127,6 +127,11 @@ def get_drilldown(date: str = Query(..., description="YYYY-MM-DD"),
             ORDER BY b.accepted_face_crore DESC
         """), {"date": date}).fetchall()
 
+        # BGIS sukuk cash for the day (principal + half-yearly profit), as stored
+        # by the daily aggregation; it has no per-security rows of its own here.
+        sk = session.execute(text(
+            "SELECT sukuk_inflow_bdt_mill FROM daily_net_flow WHERE flow_date = :date"),
+            {"date": date}).scalar() or 0.0
         mat_total  = sum(r.principal_bdt_mill or 0 for r in maturities)
         coup_total = sum(r.amount_bdt_mill    or 0 for r in coupons)
         # Sale value first: the cash paid, not the face value allotted. Same
@@ -156,10 +161,11 @@ def get_drilldown(date: str = Query(..., description="YYYY-MM-DD"),
                 "maturity_inflow_mill":  round(mat_total, 2),
                 "coupon_inflow_mill":    round(coup_total, 2),
                 "buyback_inflow_mill":   round(bb_total, 2),
-                "total_inflow_mill":     round(mat_total + coup_total + bb_total, 2),
+                "sukuk_inflow_mill":     round(float(sk), 2),
+                "total_inflow_mill":     round(mat_total + coup_total + bb_total + float(sk), 2),
                 "auction_outflow_mill":  round(auc_total, 2),
                 "net_borrowing_mill":    round(auc_total - mat_total - coup_total
-                                               - bb_total, 2),
+                                               - bb_total - float(sk), 2),
             },
             "maturities": [dict(r._mapping) for r in maturities],
             "coupons":    [dict(r._mapping) for r in coupons],

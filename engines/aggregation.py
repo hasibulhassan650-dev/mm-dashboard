@@ -35,6 +35,58 @@ def buyback_amount(event: Dict) -> float:
     return round(float(crore) * CRORE_TO_MILLION, 4)
 
 
+def _is_half_yearly(freq) -> bool:
+    f = (freq or "").lower().replace("-", " ").replace("_", " ")
+    return "half" in f and "year" in f or "semi" in f
+
+
+def sukuk_cash_flows(issues: List[Dict], date_from: datetime.date,
+                     date_to: datetime.date) -> List[Dict]:
+    """Government cash INTO the market from BGIS sukuk, in BDT million.
+
+    A sukuk redeeming is the same cash event as a bond redeeming, and BB's
+    outstanding table gives everything needed: amount, maturity, profit rate and
+    how often profit is paid. Two rules keep this honest:
+
+      * principal is always derivable - the outstanding amount, on the maturity
+        date, rolled to the next working day like every other settlement;
+      * profit is derived ONLY where BB states the frequency as half-yearly
+        (amount x rate / 2 on each 6-month anniversary of the issue date, the last
+        one coinciding with maturity). For "on Maturity" issues no profit is
+        computed at all - the lump sum depends on the day count and the
+        contract, and an invented figure is the one error this project will not
+        make. Those issues contribute principal only, and say so (`kind`).
+    """
+    from dateutil.relativedelta import relativedelta
+
+    from calendar_utils import roll_date
+    from config import CRORE_TO_MILLION
+    out: List[Dict] = []
+
+    def add(raw: datetime.date, mill: float, kind: str, isin: str):
+        pay = roll_date(raw)[0]
+        if date_from <= pay <= date_to and mill:
+            out.append({"payment_date": pay, "amount_bdt_mill": round(mill, 4),
+                        "kind": kind, "isin": isin})
+
+    for s in issues:
+        crore = float(s.get("outstanding_crore") or 0.0)
+        mat, iss = s.get("maturity_date"), s.get("issue_date")
+        if not crore or not mat or not iss:
+            continue
+        add(mat, crore * CRORE_TO_MILLION, "PRINCIPAL", s["isin"])
+        rate = s.get("profit_rate_pct")
+        if rate is not None and _is_half_yearly(s.get("profit_frequency")):
+            k = 1
+            while True:
+                d = iss + relativedelta(months=6 * k)
+                if d > mat:
+                    break
+                add(d, crore * float(rate) / 100.0 / 2.0 * CRORE_TO_MILLION, "PROFIT", s["isin"])
+                k += 1
+    return out
+
+
 def build_daily_flows(
     coupon_events:   List[Dict],
     maturity_events: List[Dict],
@@ -42,6 +94,7 @@ def build_daily_flows(
     date_from: datetime.date = None,
     date_to:   datetime.date = None,
     buyback_events:  List[Dict] = None,
+    sukuk_flows:     List[Dict] = None,
 ) -> List[Dict]:
     """
     Aggregate all events into one record per working day.
@@ -51,6 +104,7 @@ def build_daily_flows(
     date range is passed (then zero rows are generated for empty days).
     """
     buyback_events = buyback_events or []
+    sukuk_flows = sukuk_flows or []
     # Collect all unique event dates. Coupons/maturities are bucketed on their
     # PAYMENT date — the working day the cash actually reaches the holder — not
     # the scheduled due date.
@@ -84,6 +138,8 @@ def build_daily_flows(
     for e in buyback_events:
         if e.get("settlement_date"):
             dates.add(e["settlement_date"])
+    for e in sukuk_flows:
+        dates.add(e["payment_date"])
 
     # Apply range filter
     if date_from:
@@ -108,7 +164,11 @@ def build_daily_flows(
         coupon_inflow    = sum(e["amount_bdt_mill"]     for e in coupons_today)
         principal_inflow = sum(e["principal_bdt_mill"]  for e in mats_today)
         buyback_inflow   = sum(buyback_amount(e)        for e in buybacks_today)
-        total_inflow     = coupon_inflow + principal_inflow + buyback_inflow
+        # Government sukuk: principal and (half-yearly) profit, derived from BB's
+        # outstanding table. Its own line for the same reason as the buyback.
+        sukuk_inflow     = sum(e["amount_bdt_mill"] for e in sukuk_flows
+                               if e["payment_date"] == flow_date)
+        total_inflow     = coupon_inflow + principal_inflow + buyback_inflow + sukuk_inflow
 
         # ── Outflow ───────────────────────────────────────────────────────────
         auctions_today = [e for e in auction_events if e["settlement_date"] == flow_date]
@@ -150,6 +210,7 @@ def build_daily_flows(
             "coupon_inflow_bdt_mill":         round(coupon_inflow, 4),
             "principal_inflow_bdt_mill":      round(principal_inflow, 4),
             "buyback_inflow_bdt_mill":        round(buyback_inflow, 4),
+            "sukuk_inflow_bdt_mill":          round(sukuk_inflow, 4),
             "total_inflow_bdt_mill":          round(total_inflow, 4),
             "auction_outflow_planned_mill":   round(planned_outflow, 4),
             "auction_outflow_confirmed_mill": round(confirmed_outflow, 4),
