@@ -57,3 +57,15 @@ jobs:
       - name: Announce events that matter
         if: ${{ !cancelled() }}
         run: python -m engines.announce publish
+      - name: Data integrity gate
+        # The gate files or updates the same alert issue the hourly refresh does. It is
+        # allowed to fail without turning THIS job red: defects that BB's outage causes are
+        # already reported there every hour, and a news job that flaps red on someone
+        # else's defect teaches you to ignore a red news job. A news-watch defect (stale,
+        # or a backlog waiting for Claude) still reaches the issue and the digest.
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: ./.github/actions/integrity-gate
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          context: "news watch"
