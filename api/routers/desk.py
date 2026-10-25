@@ -71,6 +71,34 @@ class MarkIn(BaseModel):
         return v
 
 
+class BuybackIn(BaseModel):
+    isin: str
+    settlement_date: datetime.date
+    accepted_face_crore: float = Field(gt=0, le=100000)
+    cash_paid_crore: Optional[float] = Field(default=None, ge=0, le=200000)
+    price_per_100: Optional[float] = Field(default=None, gt=0, le=200)
+    entered_by: Optional[str] = Field(default=None, max_length=60)
+    note: Optional[str] = Field(default=None, max_length=500)
+
+    @field_validator("isin")
+    @classmethod
+    def isin_shape(cls, v: str) -> str:
+        v = (v or "").strip().upper()
+        if not (10 <= len(v) <= 12 and v.isalnum()):
+            raise ValueError(f"'{v}' is not an ISIN")
+        return v
+
+    @field_validator("settlement_date")
+    @classmethod
+    def near_today(cls, v: datetime.date) -> datetime.date:
+        # A buyback settles days after its auction. A date far from today is a
+        # typo, and the window keeps the desk from rewriting a year-old event.
+        today = datetime.date.today()
+        if not (today - datetime.timedelta(days=30) <= v <= today + datetime.timedelta(days=30)):
+            raise ValueError("settlement_date must be within 30 days of today")
+        return v
+
+
 def _authorise(given: Optional[str]) -> None:
     """Fail closed. No secret configured means no writes, ever."""
     want = os.environ.get("DESK_WRITE_SECRET") or ""
@@ -139,6 +167,76 @@ def put_mark(mark: MarkIn, x_desk_secret: Optional[str] = Header(default=None)):
         session.close()
 
 
+@router.post("/buyback")
+def put_buyback(b: BuybackIn, x_desk_secret: Optional[str] = Header(default=None)):
+    """Record (or correct) the desk's figure for an announced buyback.
+
+    Same gate as the cut-off mark, and the same principle: provisional, never
+    BB data, never in a ladder total. The ISIN must be a security we hold -
+    a typo here would otherwise look like a real bond.
+    """
+    _authorise(x_desk_secret)
+    session = get_session()
+    try:
+        if not session.execute(text("SELECT 1 FROM securities WHERE isin = :i"),
+                               {"i": b.isin}).fetchone():
+            raise HTTPException(status_code=422,
+                                detail=f"{b.isin} is not a security in the master list")
+        now = datetime.datetime.utcnow()
+        params = {"i": b.isin, "d": str(b.settlement_date), "f": b.accepted_face_crore,
+                  "c": b.cash_paid_crore, "p": b.price_per_100, "by": b.entered_by,
+                  "note": b.note, "now": now}
+        existing = session.execute(text(
+            "SELECT id FROM desk_buyback_marks WHERE isin = :i AND settlement_date = :d"),
+            params).fetchone()
+        if existing:
+            session.execute(text(
+                "UPDATE desk_buyback_marks SET accepted_face_crore = :f, cash_paid_crore = :c, "
+                "price_per_100 = :p, entered_by = :by, note = :note, updated_utc = :now "
+                "WHERE id = :id"), {**params, "id": existing[0]})
+            action = "updated"
+        else:
+            session.execute(text(
+                "INSERT INTO desk_buyback_marks (isin, settlement_date, accepted_face_crore, "
+                "cash_paid_crore, price_per_100, entered_by, note, entered_utc, updated_utc) "
+                "VALUES (:i, :d, :f, :c, :p, :by, :note, :now, :now)"), params)
+            action = "recorded"
+        session.commit()
+        return {"ok": True, "action": action, "isin": b.isin,
+                "settlement_date": str(b.settlement_date)}
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as exc:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"could not store the buyback: {exc}")
+    finally:
+        session.close()
+
+
+def desk_buybacks(session, since: datetime.date):
+    """Desk buyback marks with BB's event beside them, once it exists."""
+    rows = session.execute(text("""
+        SELECT d.isin, d.settlement_date, d.accepted_face_crore, d.cash_paid_crore,
+               d.price_per_100, d.entered_by, d.note, d.updated_utc,
+               b.accepted_face_crore AS bb_accepted_face_crore,
+               b.cash_paid_crore AS bb_cash_paid_crore
+        FROM desk_buyback_marks d
+        LEFT JOIN buyback_events b
+               ON b.isin = d.isin AND b.settlement_date = d.settlement_date
+        WHERE d.settlement_date >= :since
+        ORDER BY d.settlement_date DESC, d.isin"""), {"since": str(since)}).fetchall()
+    out = []
+    for r in rows:
+        m = dict(r._mapping)
+        m["confirmed"] = m["bb_accepted_face_crore"] is not None
+        m["diff_face_crore"] = (round(float(m["accepted_face_crore"]) - float(m["bb_accepted_face_crore"]), 2)
+                                if m["confirmed"] else None)
+        m["shown_source"] = "BB" if m["confirmed"] else "DESK (provisional)"
+        out.append(m)
+    return out
+
+
 @router.get("/marks")
 def get_marks(days: int = Query(45, ge=1, le=400)):
     """Every recent desk mark, with BB's published cut-off beside it.
@@ -188,6 +286,7 @@ def get_marks(days: int = Query(45, ge=1, le=400)):
             "configured": bool(os.environ.get("DESK_WRITE_SECRET")),
             "tenors": sorted(_TENORS),
             "marks": out,
+            "buybacks": desk_buybacks(session, today - datetime.timedelta(days=days)),
         }
     finally:
         session.close()

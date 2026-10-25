@@ -35,6 +35,8 @@ export default async function DrilldownPage({
   const omo = data.omo ?? [];
   // Optional on purpose: an older deployed API build omits it entirely.
   const buybacks = data.buybacks ?? [];
+  // A buyback the desk entered that BB has not yet resulted: listed, never summed.
+  const deskBuybacks = data.desk_buybacks ?? [];
 
   return (
     <div className="space-y-6">
@@ -135,6 +137,23 @@ export default async function DrilldownPage({
           sub={s.net_borrowing_mill > 0 ? "net borrower" : "net repayer"}
           color={s.net_borrowing_mill > 0 ? "amber" : "green"} />
       </div>
+
+      {deskBuybacks.length > 0 && (
+        <div className="rounded-xl border bd b-panel p-4" style={{ borderColor: "var(--warn)" }}>
+          <h2 className="text-sm font-medium t-warn mb-2">
+            Desk buyback figure — provisional, NOT in any total above ({deskBuybacks.length})
+          </h2>
+          {deskBuybacks.map((b) => (
+            <div key={b.isin} className="text-xs t-dim" style={{ lineHeight: 1.8 }}>
+              <span className="mono t-fg">{b.isin}</span> · accepted face{" "}
+              <b className="mono">{b.accepted_face_crore.toLocaleString(undefined, { minimumFractionDigits: 2 })}</b> cr
+              {b.cash_paid_crore != null && <> · cash <b className="mono">{b.cash_paid_crore.toLocaleString()}</b> cr</>}
+              {b.entered_by ? ` · entered by ${b.entered_by}` : ""}. BB has not published this buyback yet, so the
+              ladder does not include it.
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Buybacks settling today — shown only when there are any, because
           Bangladesh's first was 12-Oct-2026 and they remain occasional. */}

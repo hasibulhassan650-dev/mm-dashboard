@@ -230,6 +230,8 @@ NOT_WATCHED: Dict[str, str] = {
     "source_snapshots": "structural fingerprints; watched by the canary itself",
     "desk_marks": "the desk's own provisional cut-offs, entered by hand on "
                   "auction day; not a BB feed, so it cannot go stale",
+    "desk_buyback_marks": "the desk's own provisional buyback figures, entered by "
+                          "hand; not a BB feed, so it cannot go stale",
     "sukuk_documents": "BB's sukuk notices and prospectuses; an event feed (a "
                        "quiet month is normal), announced when a new one appears",
     "data_absences": "days BB itself does not publish, each one evidence from a "

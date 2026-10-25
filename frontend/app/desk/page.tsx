@@ -3,6 +3,7 @@ import type { DeskMarks } from "@/lib/api";
 import { Panel } from "@/components/terminal/ui";
 import DeskMarkForm from "@/components/DeskMarkForm";
 import DeskSetup from "@/components/DeskSetup";
+import DeskBuybackForm from "@/components/DeskBuybackForm";
 import RelatedLinks from "@/components/RelatedLinks";
 
 export const revalidate = 0;   // a mark entered a second ago must show
@@ -125,6 +126,45 @@ export default async function DeskPage() {
               the previous working day, which is why a published cut-off lands here a day or two
               after the desk has already traded off it.
             </p>
+          </div>
+        </Panel>
+      </div>
+
+      <div className="grid12">
+        <Panel title="Announced buyback — before BB publishes"
+               sub="the desk's figure, provisional · never added to a cash total" span={5}>
+          <DeskBuybackForm configured={siteSet && apiSet} />
+        </Panel>
+        <Panel title="Desk buyback figures against BB" span={7} pad={false}
+               sub={`${(data?.buybacks ?? []).length} entered`}>
+          <div className="table-wrap">
+            <table className="dt">
+              <thead><tr>
+                <th>Settles</th><th>ISIN</th><th className="r">Desk face (cr)</th>
+                <th className="r">BB face (cr)</th><th className="r">Gap</th><th>Status</th>
+              </tr></thead>
+              <tbody>
+                {(data?.buybacks ?? []).length === 0 && (
+                  <tr><td colSpan={6} style={{ padding: "10px 12px", fontSize: 12.5, color: "var(--fg-mute)" }}>
+                    None yet. Enter an announced buyback here and it shows on its settlement day as provisional.
+                  </td></tr>
+                )}
+                {(data?.buybacks ?? []).map((b) => (
+                  <tr key={`${b.isin}-${b.settlement_date}`}>
+                    <td className="mono">{String(b.settlement_date).slice(0, 10)}</td>
+                    <td className="mono">{b.isin}</td>
+                    <td className="r mono">{b.accepted_face_crore.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                    <td className="r mono">{b.bb_accepted_face_crore == null ? "—"
+                      : b.bb_accepted_face_crore.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                    <td className="r mono">{b.diff_face_crore == null ? "" : b.diff_face_crore.toFixed(2)}</td>
+                    <td style={{ fontSize: 11 }}>
+                      {b.confirmed ? <span style={{ color: "var(--pos)" }}>BB confirmed</span>
+                        : <span style={{ color: "var(--warn)" }}>provisional</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </Panel>
       </div>

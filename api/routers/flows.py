@@ -127,6 +127,15 @@ def get_drilldown(date: str = Query(..., description="YYYY-MM-DD"),
             ORDER BY b.accepted_face_crore DESC
         """), {"date": date}).fetchall()
 
+        # A buyback the desk knows of that BB has not yet resulted. Listed for the
+        # day, labelled provisional, and NEVER added to any total below.
+        desk_bb = [dict(r._mapping) for r in session.execute(text("""
+            SELECT d.isin, d.accepted_face_crore, d.cash_paid_crore, d.price_per_100, d.entered_by
+            FROM desk_buyback_marks d
+            WHERE d.settlement_date = :date
+              AND NOT EXISTS (SELECT 1 FROM buyback_events b
+                              WHERE b.isin = d.isin AND b.settlement_date = d.settlement_date)
+        """), {"date": date}).fetchall()]
         # BGIS sukuk cash for the day (principal + half-yearly profit), as stored
         # by the daily aggregation; it has no per-security rows of its own here.
         sk = session.execute(text(
@@ -171,6 +180,7 @@ def get_drilldown(date: str = Query(..., description="YYYY-MM-DD"),
             "coupons":    [dict(r._mapping) for r in coupons],
             "auctions":   [dict(r._mapping) for r in auctions],
             "buybacks":   [dict(r._mapping) for r in buybacks],
+            "desk_buybacks": desk_bb,
         }
     finally:
         session.close()

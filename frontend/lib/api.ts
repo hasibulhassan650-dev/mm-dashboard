@@ -436,6 +436,16 @@ export interface DeskMarks {
   configured: boolean;
   tenors: string[];
   marks: DeskMark[];
+  /** Optional: an older deployed API omits it. Provisional; never in a total. */
+  buybacks?: DeskBuyback[];
+}
+
+export interface DeskBuyback {
+  isin: string; settlement_date: string; accepted_face_crore: number;
+  cash_paid_crore: number | null; price_per_100: number | null;
+  entered_by: string | null; note: string | null;
+  confirmed: boolean; shown_source: string; diff_face_crore: number | null;
+  bb_accepted_face_crore: number | null;
 }
 
 export interface PressRelease {
@@ -1013,6 +1023,8 @@ export interface DrilldownResult {
   /** Government buybacks of its own bonds settling on this date — an early
    *  principal repayment. `cash_paid_crore` is null when BB published no
    *  price, in which case the face value is what the ladder used. */
+  desk_buybacks?: { isin: string; accepted_face_crore: number; cash_paid_crore: number | null;
+    price_per_100: number | null; entered_by: string | null }[];
   buybacks?: { isin: string; security_name_norm: string | null;
     security_type: string | null; announced_date: string | null;
     auction_date: string | null; settlement_date: string;

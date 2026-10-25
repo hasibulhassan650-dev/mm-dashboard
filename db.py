@@ -638,6 +638,32 @@ class BgiibAuction(Base):
     ingested_utc    = Column(DateTime)
 
 
+class DeskBuybackMark(Base):
+    """A buyback BB has announced but not yet published results for, as the desk knows it.
+
+    BB's first buyback settled on 12-Oct-2026 and its figures reached the system
+    days later; the desk knew the accepted face value the day of the auction. Like
+    a cut-off mark this is PROVISIONAL and never BB data: it lives in its own
+    table, is shown labelled everywhere, and is NEVER added to a ladder total -
+    cash that moves a number the desk then trades on must come from BB's own
+    event, not a hand-typed one. Once buyback_events holds the same ISIN and
+    settlement date, BB's figure is the one that counts and this row is only the
+    record of what the desk believed.
+    """
+    __tablename__ = "desk_buyback_marks"
+    __table_args__ = (UniqueConstraint("isin", "settlement_date"),)
+    id                  = Column(Integer, primary_key=True, autoincrement=True)
+    isin                = Column(String(12), nullable=False)
+    settlement_date     = Column(Date, nullable=False)
+    accepted_face_crore = Column(Float, nullable=False)
+    cash_paid_crore     = Column(Float)             # NULL until known - never derived
+    price_per_100       = Column(Float)
+    entered_by          = Column(String(60))
+    note                = Column(Text)
+    entered_utc         = Column(DateTime)
+    updated_utc         = Column(DateTime)
+
+
 class SukukOutstanding(Base):
     """BD Govt Investment Sukuk (BGIS) outstanding, from BB's own table.
 
