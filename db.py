@@ -636,6 +636,51 @@ class BgiibAuction(Base):
     ingested_utc    = Column(DateTime)
 
 
+class SukukOutstanding(Base):
+    """BD Govt Investment Sukuk (BGIS) outstanding, from BB's own table.
+
+    A product the dashboard held none of: eleven issues, 53,500 crore, and a
+    sukuk maturing is government cash into the market just as a bond is. One row
+    per ISIN, refreshed each fetch. `profit_frequency` is BB's wording ("Half
+    Yearly" / "on Maturity") and decides whether profit payments can be derived:
+    only an explicit frequency is ever turned into a schedule.
+    """
+    __tablename__ = "sukuk_outstanding"
+    id                = Column(Integer, primary_key=True, autoincrement=True)
+    isin              = Column(String(14), nullable=False, unique=True)
+    project           = Column(Text)
+    tenor_label       = Column(String(12))          # BB's text: "10 Y", "273 D"
+    contract          = Column(String(60))          # Ijarah / Istisna'a ...
+    issue_date        = Column(Date, nullable=False)
+    maturity_date     = Column(Date, nullable=False)
+    profit_rate_pct   = Column(Float)
+    profit_frequency  = Column(String(30))
+    tradability       = Column(String(60))
+    outstanding_crore = Column(Float, nullable=False)
+    first_seen_utc    = Column(DateTime)
+    last_seen_utc     = Column(DateTime)
+    source            = Column(Text)
+
+
+class SukukDocument(Base):
+    """A BGIS auction notice or prospectus BB has posted.
+
+    The point is to tell the desk the day a new one appears: a notice is the
+    announcement of an issue that will pull cash out of the market. `notified_utc`
+    is set only after the announcement issue exists (see engines/announce.py).
+    """
+    __tablename__ = "sukuk_documents"
+    id             = Column(Integer, primary_key=True, autoincrement=True)
+    doc_key        = Column(String(80), nullable=False, unique=True)   # sukuk-<pdf stem>
+    url            = Column(Text, nullable=False)
+    kind           = Column(String(12), nullable=False)                # NOTICE | PROSPECTUS
+    doc_date       = Column(Date)
+    ref            = Column(String(40))                                # BB's reference no.
+    title          = Column(Text)
+    first_seen_utc = Column(DateTime)
+    notified_utc   = Column(DateTime)
+
+
 class DeskMark(Base):
     """What the desk saw at the auction, on the day — never what BB published.
 

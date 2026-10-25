@@ -48,27 +48,52 @@ _WHY = {
                       "auction - the cash outflow on its settlement day.",
     "BGIIB": "An Islamic-window (BGIIB) auction result: bids, accepted amount and the "
              "expected profit rate for the 3- and 6-month tenors.",
-    "SUKUK": "A Sukuk announcement - a product this dashboard does not yet parse.",
+    "SUKUK": "A BGIS (government sukuk) notice or prospectus: an issue that will pull "
+             "cash out of the market on its settlement day. Outstanding issues and "
+             "their maturities are on the Islamic page.",
     "POLICY": "A policy-rate announcement. Rates are re-read from BB's homepage "
               "daily; this is the heads-up.",
 }
 
 
+def _sources():
+    """The tables that can announce something.
+
+    Each source is a table of things BB (or later, the news watch) published, a
+    key column that is unique and goes in the issue title, and the SQL that picks
+    the ones worth an email. The select always yields the same six names so the
+    rest of this module never needs to know which table an item came from.
+    """
+    marks = ",".join(f"'{c}'" for c in HIGH_SIGNAL)          # constants, not user input
+    return (
+        {"table": "press_releases", "key": "serial",
+         "select": "serial, published_date, subject_date, title, url, category",
+         "where": f"category IN ({marks}) AND notified_utc IS NULL AND first_seen_utc >= :since",
+         "order": "published_date, serial"},
+        {"table": "sukuk_documents", "key": "doc_key",
+         "select": "doc_key AS serial, doc_date AS published_date, NULL AS subject_date, "
+                   "title, url, 'SUKUK' AS category",
+         "where": "notified_utc IS NULL AND first_seen_utc >= :since",
+         "order": "doc_date, doc_key"},
+    )
+
+
+_FIELDS = ("serial", "published_date", "subject_date", "title", "url", "category")
+
+
 def pending(session, now: datetime.datetime = None,
             max_age_days: int = MAX_AGE_DAYS, cap: int = CAP_PER_RUN) -> List[Dict]:
-    """Un-notified high-signal releases first seen recently, oldest first."""
+    """Un-notified high-signal items first seen recently, oldest first."""
     from sqlalchemy import text
     now = now or datetime.datetime.utcnow()
     since = now - datetime.timedelta(days=max_age_days)
-    marks = ",".join(f"'{c}'" for c in HIGH_SIGNAL)          # constants, not user input
-    rows = session.execute(text(
-        "SELECT serial, published_date, subject_date, title, url, category "
-        "FROM press_releases "
-        f"WHERE category IN ({marks}) AND notified_utc IS NULL "
-        "AND first_seen_utc >= :since ORDER BY published_date, serial"),
-        {"since": since}).fetchall()
-    out = [dict(zip(("serial", "published_date", "subject_date", "title", "url",
-                     "category"), r)) for r in rows]
+    out: List[Dict] = []
+    for s in _sources():
+        rows = session.execute(text(
+            f"SELECT {s['select']} FROM {s['table']} WHERE {s['where']} ORDER BY {s['order']}"),
+            {"since": since}).fetchall()
+        out += [dict(zip(_FIELDS, r)) for r in rows]
+    out.sort(key=lambda x: (str(x["published_date"] or ""), x["serial"]))
     if len(out) > cap:
         log.warning("%d announcements pending, announcing the %d most recent",
                     len(out), cap)
@@ -81,9 +106,10 @@ def mark_notified(session, serials: Sequence[str], now: datetime.datetime = None
     now = now or datetime.datetime.utcnow()
     n = 0
     for sr in serials:
-        n += session.execute(text(
-            "UPDATE press_releases SET notified_utc = :now WHERE serial = :s "
-            "AND notified_utc IS NULL"), {"now": now, "s": sr}).rowcount
+        for s in _sources():      # keys never collide across tables (pr..., sukuk-...)
+            n += session.execute(text(
+                f"UPDATE {s['table']} SET notified_utc = :now WHERE {s['key']} = :s "
+                "AND notified_utc IS NULL"), {"now": now, "s": sr}).rowcount
     return n
 
 
@@ -96,9 +122,12 @@ def baseline(session, now: datetime.datetime = None) -> int:
     """
     from sqlalchemy import text
     now = now or datetime.datetime.utcnow()
-    return session.execute(text(
-        "UPDATE press_releases SET notified_utc = :now WHERE notified_utc IS NULL"),
-        {"now": now}).rowcount
+    n = 0
+    for s in _sources():
+        n += session.execute(text(
+            f"UPDATE {s['table']} SET notified_utc = :now WHERE notified_utc IS NULL"),
+            {"now": now}).rowcount
+    return n
 
 
 def first_run(session) -> bool:
@@ -115,7 +144,6 @@ def digest_lines(session, now: datetime.datetime = None, hours: int = 24):
     high-signal release that should have been announced but was not."""
     from sqlalchemy import text
     now = now or datetime.datetime.utcnow()
-    marks = ",".join(f"'{c}'" for c in HIGH_SIGNAL)
     new = session.execute(text(
         "SELECT serial, published_date, category, title FROM press_releases "
         "WHERE first_seen_utc >= :s ORDER BY published_date DESC, serial DESC"),
@@ -128,16 +156,24 @@ def digest_lines(session, now: datetime.datetime = None, hours: int = 24):
                          f"({str(pub)[:10]}, {sr})")
     if routine:
         lines.append(f"- {len(routine)} routine release(s) (OMO / results) - see /press")
-    if not new:
+    docs = session.execute(text(
+        "SELECT doc_key, doc_date, kind, title FROM sukuk_documents "
+        "WHERE first_seen_utc >= :s ORDER BY doc_date DESC"),
+        {"s": now - datetime.timedelta(hours=hours)}).fetchall()
+    for key, d, kind, title in docs:
+        lines.append(f"- BGIS Sukuk {str(kind).lower()} · {str(title)[:110]} ({str(d)[:10]}, {key})")
+    if not new and not docs:
         lines.append("- nothing new")
     lines.append("")
     # Stored 2h+ ago, still un-announced: a failed send, or a re-categorised release.
-    stuck = session.execute(text(
-        "SELECT serial FROM press_releases "
-        f"WHERE category IN ({marks}) AND notified_utc IS NULL "
-        "AND first_seen_utc >= :a AND first_seen_utc < :b"),
-        {"a": now - datetime.timedelta(days=7),
-         "b": now - datetime.timedelta(hours=2)}).fetchall()
+    stuck = []
+    for s in _sources():
+        where = s["where"].replace("first_seen_utc >= :since",
+                                   "first_seen_utc >= :a AND first_seen_utc < :b")
+        stuck += session.execute(text(
+            f"SELECT {s['select']} FROM {s['table']} WHERE {where}"),
+            {"a": now - datetime.timedelta(days=7),
+             "b": now - datetime.timedelta(hours=2)}).fetchall()
     problems = []
     if stuck:
         problems.append(f"{len(stuck)} BB announcement(s) never notified")

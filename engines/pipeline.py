@@ -21,7 +21,7 @@ from config import GSOM_TBOND_URL, GSOM_FRTB_URL, GSOM_TBILL_URL
 from db import (
     init_db, get_session,
     Security, CouponEvent, MaturityEvent, BuybackEvent, PressRelease,
-    BgiibAuction,
+    BgiibAuction, SukukOutstanding, SukukDocument,
     AuctionEvent, HolidayCalendar, DailyNetFlow, MtmSnapshot,
     PrimaryYieldSnapshot, OMOTransaction,
 )
@@ -1098,6 +1098,62 @@ def run_bgiib_fetch(limit: int = 12) -> dict:
         session.rollback()
         log.exception("BGIIB fetch failed")
         return {"rows": 0, "errors": [str(exc)]}
+    finally:
+        session.close()
+
+
+def run_sukuk_fetch() -> dict:
+    """Read BB's BGIS Sukuk pages: the outstanding table and the notice / prospectus lists.
+
+    Documents are stored with notified_utc NULL, except on the very first run
+    (an empty table), when every document is marked already told: what BB posted
+    before this existed is history, not news, and an alert that opens by crying
+    wolf is read once.
+    """
+    from fetchers.sukuk import fetch_sukuk
+    init_db()
+    session = get_session()
+    try:
+        out = fetch_sukuk()
+        watch = _register_source(session, out["meta"]) if out.get("meta") else {}
+        now = datetime.datetime.utcnow()
+        added = updated = 0
+        for r in out["outstanding"]:
+            row = session.query(SukukOutstanding).filter_by(isin=r["isin"]).one_or_none()
+            if row is None:
+                session.add(SukukOutstanding(first_seen_utc=now, last_seen_utc=now,
+                                             source="BB sukukoutstanding", **r))
+                added += 1
+            else:
+                for k, v in r.items():
+                    setattr(row, k, v)
+                row.last_seen_utc = now
+                updated += 1
+        first_ever = session.query(SukukDocument).count() == 0
+        docs_added = 0
+        known = {k for (k,) in session.query(SukukDocument.doc_key).all()}
+        for d in out["documents"]:
+            if d["doc_key"] in known:
+                continue
+            session.add(SukukDocument(
+                doc_key=d["doc_key"], url=d["url"], kind=d["kind"], doc_date=d["doc_date"],
+                ref=d.get("ref"), title=d["title"], first_seen_utc=now,
+                notified_utc=now if first_ever else None))
+            known.add(d["doc_key"])
+            docs_added += 1
+        session.commit()
+        log.info("Sukuk: %d issue(s) (%d new), %d new document(s)%s", len(out["outstanding"]),
+                 added, docs_added, " [baseline: marked already told]" if first_ever else "")
+        errs = list(out["errors"])
+        if out["refused"]:
+            errs.append(f"sukuk: refused {out['refused']}")
+        return {"rows": len(out["outstanding"]), "added": added, "updated": updated,
+                "documents_added": docs_added, "refused": out["refused"],
+                "errors": errs, **watch}
+    except Exception as exc:
+        session.rollback()
+        log.exception("Sukuk fetch failed")
+        return {"rows": 0, "errors": [f"sukuk: {exc}"]}
     finally:
         session.close()
 

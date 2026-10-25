@@ -519,6 +519,21 @@ def main():
         log.exception("BGIIB fetch failed: %s", exc)
         errors.append(f"bgiib: {exc}")
 
+    # ── 13c. BGIS Sukuk ──────────────────────────────────────────────────────
+    # BB's government sukuk: the outstanding table (a product we held none of)
+    # and the notice / prospectus lists, whose new rows are announced to the desk.
+    log.info("--- Step 13c: BGIS Sukuk ---")
+    try:
+        from engines.pipeline import run_sukuk_fetch
+        sk = run_sukuk_fetch()
+        log.info("Sukuk OK | %d issue(s) (%d new), %d new document(s)", sk.get("rows", 0),
+                 sk.get("added", 0), sk.get("documents_added", 0))
+        for e in sk.get("errors") or []:
+            errors.append(e)
+    except Exception as exc:
+        log.exception("Sukuk fetch failed: %s", exc)
+        errors.append(f"sukuk: {exc}")
+
     # ── 14. BB's gazetted holiday list ───────────────────────────────────────
     # Weekly, because this is the one feed whose VALUE IS IN THE FUTURE: every
     # settlement date, maturity roll and working-day age is computed from it.

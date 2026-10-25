@@ -185,6 +185,11 @@ DATASETS: List[Dataset] = [
             gap_check=False,
             note="BB auctions BGIIB weekly and publishes the result as a press "
                  "release; the auction day moves, so gaps are not checked."),
+    Dataset("sukuk", "sukuk_outstanding", "last_seen_utc", WEEKLY,
+            "BGIS Sukuk outstanding", "BB sukukoutstanding page", step="sukuk",
+            gap_check=False,
+            note="Refreshed whenever the page is read; a stale last_seen means "
+                 "the sukuk step stopped running, not that nothing was issued."),
     Dataset("buybacks", "buyback_events", "settlement_date", EVENT,
             "Bond buybacks", "BB press release (LMO)", step="press",
             gap_check=False,
@@ -225,6 +230,8 @@ NOT_WATCHED: Dict[str, str] = {
     "source_snapshots": "structural fingerprints; watched by the canary itself",
     "desk_marks": "the desk's own provisional cut-offs, entered by hand on "
                   "auction day; not a BB feed, so it cannot go stale",
+    "sukuk_documents": "BB's sukuk notices and prospectuses; an event feed (a "
+                       "quiet month is normal), announced when a new one appears",
     "data_absences": "days BB itself does not publish, each one evidence from a "
                      "fetch; a ledger of holes, not a feed that can go stale",
 }
