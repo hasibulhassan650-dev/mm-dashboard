@@ -103,6 +103,10 @@ def main():
         if bb_status["state"] in ("maintenance", "partial"):
             log.warning("BB HEALTH: %s — BB's website is serving its maintenance page; "
                         "BB-fed data will not refresh this run", bb_status["state"].upper())
+        elif bb_status["state"] == "unreachable":
+            log.warning("BB HEALTH: UNREACHABLE - no BB page answered, so browser steps will "
+                        "fail fast instead of waiting. This is not maintenance and excuses "
+                        "nothing: it may be BB being down or this runner being blocked.")
     except Exception as exc:
         log.warning("BB health probe failed: %s", exc)
 

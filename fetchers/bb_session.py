@@ -128,12 +128,18 @@ def _precheck(url: str) -> None:
     challenge page, a block, a network error — returns quietly and lets Chrome
     do its job: only BB's own maintenance words short-circuit anything.
     """
-    from fetchers.bb_health import BBMaintenance, classify
+    from fetchers.bb_health import BBMaintenance, BBUnreachable, classify, unreachable_now
     try:
         from curl_cffi import requests as cf
         r = cf.get(url, impersonate="chrome", timeout=15)
         kind = classify(r.status_code, r.text)
-    except Exception:
+    except Exception as exc:
+        # A network error alone proves nothing, so by itself it lets Chrome try.
+        # But when this run's own probes already found BB answering NOWHERE, a
+        # second silence is not worth 3 x 120s of browser: fail in seconds.
+        if unreachable_now():
+            raise BBUnreachable(f"BB's website did not respond at {url} "
+                                f"({type(exc).__name__}); every probe this run timed out") from exc
         return
     if kind == "maintenance":
         raise BBMaintenance(f"BB's website is serving its maintenance page at {url}")

@@ -66,6 +66,19 @@ class BBMaintenance(RuntimeError):
     """
 
 
+class BBUnreachable(BBMaintenance):
+    """BB's site did not answer at all (every plain-HTTP probe timed out).
+
+    A subclass, so every fail-fast path that already stops on BBMaintenance
+    stops on this too - but it is NOT maintenance and must never be reported as
+    such: from here we cannot tell BB being down from this runner being blocked,
+    so it excuses nothing (the guardian still escalates). What it does is stop a
+    run burning its whole time budget: on 25-Oct-2026 every Chrome step waited
+    120s x 3 on a site that never answered, the 30-minute job limit cut the run
+    short, and the steps after it never ran.
+    """
+
+
 def looks_like_maintenance(body: Optional[str]) -> bool:
     """True only for BB's maintenance page: its words, in a small document."""
     if not body or len(body) > _MAX_BODY:
@@ -95,6 +108,11 @@ def check_response(resp) -> None:
     resp.raise_for_status()
 
 
+def unreachable_now() -> bool:
+    """True when THIS process's latest probe got no answer from any BB URL."""
+    return bool(LAST_PROBE and LAST_PROBE.get("state") == "unreachable")
+
+
 def classify(status: Optional[int], body: Optional[str]) -> str:
     """One response -> 'maintenance' | 'ok' | 'blocked' | 'unreachable'.
 
@@ -117,7 +135,8 @@ def summarise(results: Sequence[Tuple[str, Optional[int], str]]) -> Dict:
     maintenance - every URL we could read showed the maintenance page
     partial     - some did and some did not (the 24-Oct picture)
     up          - none did, and at least one was served normally
-    unknown     - nothing readable either way (network down, or only blocks)
+    unreachable - no URL answered at all (every probe timed out / refused)
+    unknown     - nothing readable either way (only blocks, or a mix)
 
     'unknown' is a real answer. Treating "could not tell" as "up" would let an
     outage hide, and treating it as "down" would blame BB for our own network.
@@ -131,6 +150,8 @@ def summarise(results: Sequence[Tuple[str, Optional[int], str]]) -> Dict:
         state = "partial"
     elif n_ok:
         state = "up"
+    elif kinds and all(k == "unreachable" for k in kinds):
+        state = "unreachable"
     else:
         state = "unknown"
     return {"state": state,

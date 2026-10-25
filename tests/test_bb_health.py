@@ -205,3 +205,49 @@ class TestRetryingASiteThatSaidItIsDown:
 
         assert bbs.fetch_with_retry(once, attempts=3, delay=0, label="t") == []
         assert len(calls) == 3
+
+
+class TestASiteThatAnswersNowhereDoesNotBurnTheRunsBudget:
+    """25-Oct-2026, a different regime from maintenance: every BB request simply
+    timed out. Each Chrome step waited 120s x 3 on a site that never answered,
+    the run reached the job's 30-minute limit and was cancelled mid-flight. It
+    is not maintenance - nobody said so - so it excuses nothing; it only stops
+    the run from waiting."""
+
+    def test_every_probe_timing_out_is_its_own_verdict(self):
+        r = [(f"u{i}", None, "unreachable") for i in range(3)]
+        assert H.summarise(r)["state"] == "unreachable"
+
+    def test_it_is_not_a_down_state_so_it_excuses_nothing(self):
+        import engines.bb_outage as O
+        assert "unreachable" not in O.DOWN_STATES
+
+    def test_one_silent_url_among_answers_is_still_up(self):
+        r = [("a", None, "unreachable"), ("b", 200, "ok"), ("c", 200, "ok")]
+        assert H.summarise(r)["state"] == "up"
+
+    def test_a_precheck_timeout_fails_fast_once_the_probe_found_silence(self, monkeypatch):
+        import curl_cffi.requests as cr
+        from fetchers import bb_session as S
+
+        monkeypatch.setattr(H, "LAST_PROBE", {"state": "unreachable"})
+
+        def _get(url, **kw):
+            raise TimeoutError("timed out")
+        monkeypatch.setattr(cr, "get", _get)
+        with pytest.raises(H.BBUnreachable) as ei:
+            S._precheck("https://www.bb.org.bd/x")
+        assert "maintenance" not in str(ei.value).lower()      # never mislabelled
+        assert isinstance(ei.value, H.BBMaintenance)           # existing fail-fast paths catch it
+
+    def test_without_that_evidence_a_timeout_still_lets_chrome_try(self, monkeypatch):
+        """One failed request is not proof; only silence from every probe is."""
+        import curl_cffi.requests as cr
+        from fetchers import bb_session as S
+
+        monkeypatch.setattr(H, "LAST_PROBE", {"state": "up"})
+
+        def _get(url, **kw):
+            raise TimeoutError("timed out")
+        monkeypatch.setattr(cr, "get", _get)
+        assert S._precheck("https://www.bb.org.bd/x") is None
