@@ -275,7 +275,7 @@ class TestTheModelRecalculates:
     def test_the_assumptions_are_real_cells_with_values(self):
         ws = self._wb()["Assumptions"]
         found = {}
-        for r in range(5, 20):
+        for r in range(5, 5 + len(__import__("model_logic").ASSUMPTIONS)):
             label, value = ws.cell(row=r, column=1).value, ws.cell(row=r, column=2).value
             if label:
                 found[label] = value
@@ -297,6 +297,17 @@ class TestTheModelRecalculates:
             for c in range(2, 9):
                 for m in re.finditer(r"Assumptions!\$B\$(\d+)", str(ws.cell(row=r, column=c).value)):
                     used.add(int(m.group(1)))
+        # An input may reach Model through a derived cell on Assumptions (the rate
+        # shock does: Model reads the price AFTER shock). Follow those references
+        # until nothing new is found, so "used" means "can change a Model figure".
+        grew = True
+        while grew:
+            grew = False
+            for row in list(used):
+                for m in re.finditer(r"\$B\$(\d+)", str(asm.cell(row=row, column=2).value)):
+                    if int(m.group(1)) not in used:
+                        used.add(int(m.group(1)))
+                        grew = True
         declared = {5 + i for i in range(len(ASSUMPTIONS))}
         unused = sorted(declared - used)
         assert not unused, (
@@ -382,9 +393,25 @@ class TestTheSummarySheet:
 
     def test_two_charts_read_the_model_sheet(self):
         ws = self._wb()["Summary"]
-        assert len(ws._charts) == 2
+        assert len(ws._charts) == 2          # no auctions in this window, so no cover chart
         for ch in ws._charts:
             assert all("Model" in s.val.numRef.f for s in ch.series)
+
+    def test_the_cover_chart_exists_only_when_there_are_auctions_and_reads_them(self):
+        import datetime
+        import io as _io
+        import sys
+        sys.path.insert(0, os.path.join(_ROOT, "api", "routers"))
+        from model_logic import build_model
+        from openpyxl import load_workbook
+        d = datetime.date(2026, 10, 19)
+        data = {"dates": [d], "omo": [], "flows": [],
+                "auctions": [{"settlement": d, "type": "T_BILL", "tenor": "91D", "offered": 3000.0,
+                              "accepted": 3000.0, "sale": 2940.0, "cutoff": 8.5, "status": "CONFIRMED",
+                              "bids": 7500.0}]}
+        ws = load_workbook(_io.BytesIO(build_model(data, today=d)))["Summary"]
+        assert len(ws._charts) == 3
+        assert "Auctions" in ws._charts[2].series[0].val.numRef.f
 
     def test_charts_cover_every_day_not_a_fixed_prefix(self):
         ws = self._wb(n=400)["Summary"]
@@ -402,8 +429,13 @@ class TestTheSummarySheet:
         """MINIFS/XLOOKUP/LET need a prefix openpyxl does not write: #NAME? in Excel."""
         wb = self._wb()
         text = " ".join(str(c.value) for row in wb["Summary"].iter_rows() for c in row)
-        for fn in ("MINIFS", "MAXIFS", "XLOOKUP", "FILTER(", "LET(", "IFS(", "TEXTJOIN", "XMATCH"):
+        import re
+        for fn in ("MINIFS", "MAXIFS", "XLOOKUP", "FILTER(", "TEXTJOIN", "XMATCH"):
             assert fn not in text.upper(), fn
+        # IFS( and LET( are new functions, but AVERAGEIFS( / COUNTIFS( / SUMIFS( are
+        # Excel 2007 and contain the same letters - match on a word boundary.
+        for fn in (r"\bIFS\(", r"\bLET\("):
+            assert not re.search(fn, text.upper()), fn
 
     def test_a_day_without_an_omo_row_is_flagged_on_model(self):
         ws = self._wb()["Model"]
@@ -428,3 +460,83 @@ def test_the_model_counts_sukuk_cash_like_the_ladder_does():
     heads = [c.value for c in wb["Govt flows"][2]]
     assert "Sukuk in (mn)" in heads
     assert "'Govt flows'!$E:$E" in wb["Model"]["F5"].value
+
+
+class TestRateShockDevolutionAndCover:
+    """The inputs the desk asked for, each of which must be USED, VISIBLE and honest.
+
+    An input that does nothing invites the desk to turn a dial that is not connected;
+    one that does something nobody can see is worse. The shock reaches Model only
+    through two derived cells on Assumptions, so its entire effect is inspectable.
+    """
+
+    def _wb(self):
+        import datetime
+        import io as _io
+        import sys
+        sys.path.insert(0, os.path.join(_ROOT, "api", "routers"))
+        from model_logic import build_model
+        from openpyxl import load_workbook
+        d = datetime.date(2026, 10, 19)
+        data = {"dates": [d], "omo": [], "flows": [],
+                "auctions": [{"settlement": d, "type": "T_BILL", "tenor": "91D", "offered": 3000.0,
+                              "accepted": 3000.0, "sale": 2940.0, "cutoff": 8.5, "status": "CONFIRMED",
+                              "bids": 7500.0}]}
+        return load_workbook(_io.BytesIO(build_model(data, today=d)))
+
+    def test_the_new_inputs_exist_with_neutral_defaults(self):
+        sys_path = os.path.join(_ROOT, "api", "routers")
+        import sys
+        sys.path.insert(0, sys_path)
+        from model_logic import ASSUMPTIONS
+        d = {a[0]: a[2] for a in ASSUMPTIONS}
+        # Defaults must not change today's numbers: no shock, no devolvement.
+        assert d["devolvement_share"] == 0.0 and d["rate_shock_bp"] == 0
+        assert d["bill_duration"] > 0 and d["bond_duration"] > 0
+
+    def test_the_price_after_shock_is_two_visible_formula_cells(self):
+        ws = self._wb()["Assumptions"]
+        rows = {ws.cell(row=r, column=1).value: ws.cell(row=r, column=2).value for r in range(5, 25)}
+        for k in ("T-Bill price after shock", "T-Bond price after shock"):
+            f = rows[k]
+            assert isinstance(f, str) and f.startswith("=") and "10000" in f, (k, f)
+
+    def test_model_reads_the_shocked_price_not_the_raw_one(self):
+        m = self._wb()["Model"]["E5"].value
+        asm = self._wb()["Assumptions"]
+        derived = {asm.cell(row=r, column=1).value: r for r in range(5, 25)}
+        bill_eff = f"$B${derived['T-Bill price after shock']}"
+        bond_eff = f"$B${derived['T-Bond price after shock']}"
+        assert bill_eff in m and bond_eff in m
+        # the raw price rows (7 and 8) must no longer appear in Model directly
+        assert "$B$7" not in m and "$B$8" not in m
+
+    def test_devolvement_applies_to_the_planned_term_only(self):
+        m = self._wb()["Model"]["E5"].value
+        i = m.index('"PLANNED"')
+        assert "(1-Assumptions!$B$9)" in m[i:] or "(1-Assumptions!$B$" in m[i:]
+        assert "(1-Assumptions!$B$" not in m[:i]
+
+    def test_a_bond_beside_a_bill_is_not_priced_at_the_bills_price(self):
+        """The old formula chose ONE price for the whole day: any bill that settled
+        made a same-day bond cost 98 per 100 instead of 100."""
+        m = self._wb()["Model"]["E5"].value
+        assert '"T_BILL")' in m and '"<>T_BILL"' in m
+        assert "IF(SUMIFS" not in m
+
+    def test_cover_is_a_formula_blank_when_bids_equal_accepted(self):
+        ws = self._wb()["Auctions"]
+        assert ws["I2"].value == "Bids received (cr)" and ws["J2"].value == "Cover (x)"
+        f = ws["J3"].value
+        assert f.startswith("=IF(AND(N(I3)>0,N(E3)>0,ABS(I3-E3)>") and '"")' in f
+        assert ws["I3"].value == 7500.0
+
+    def test_summary_carries_average_cover_by_product(self):
+        ws = self._wb()["Summary"]
+        labels = [ws.cell(row=r, column=1).value for r in range(5, 25)]
+        assert "Average cover, T-Bill (confirmed)" in labels and "Average cover, FRTB (confirmed)" in labels
+
+    def test_the_read_me_explains_the_shock_is_an_approximation(self):
+        ws = self._wb()["Read me"]
+        text = " ".join(str(ws.cell(row=r, column=c).value or "") for r in range(1, 30) for c in (1, 2)).lower()
+        assert "duration approximation" in text and "never a published sale value" in text

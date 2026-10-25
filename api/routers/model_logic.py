@@ -64,11 +64,27 @@ ASSUMPTIONS: Tuple[tuple, ...] = (
      100.00, MONEY,
      "A premium re-issue sells above par. Used only where BB has not published "
      "the sale value."),
-    # No rate-stress input. This model's cash is PRICE driven, not yield
-    # driven, so a basis-point stress would have to be converted to a price
-    # through a formula with a day-count approximation buried in it — and an
-    # input that silently does nothing, or does something no one can see, is
-    # worse than an input that is absent. Stress the prices directly.
+    ("devolvement_share", "Share of a planned auction devolving on BB",
+     0.0, PCT,
+     "Whatever BB takes up itself is not cash from the market. Applied to PLANNED "
+     "(notified, not yet auctioned) amounts only; a published result already "
+     "reflects what the market paid."),
+    ("rate_shock_bp", "Rate shock (bp, + = yields up)",
+     0, "0",
+     "Moves the ESTIMATED auction prices through the durations below. It never "
+     "touches a published sale value."),
+    ("bill_duration", "T-Bill duration (years)",
+     0.25, "0.00",
+     "Used only with the rate shock: price change = -duration x shock / 10,000."),
+    ("bond_duration", "T-Bond modified duration (years)",
+     5.00, "0.00",
+     "Used only with the rate shock. A rough single figure for the whole bond "
+     "book: change it to the duration of what is actually being auctioned."),
+    # The rate shock is a DURATION APPROXIMATION and says so on the sheet: the
+    # conversion is two visible cells (bill_price_eff, bond_price_eff), not a
+    # formula buried inside Model. An input that silently does something nobody
+    # can see is worse than an input that is absent, which is why this was left
+    # out until it could be shown.
 )
 
 
@@ -114,7 +130,26 @@ def _assumptions_sheet(wb: Workbook) -> Dict[str, str]:
         refs[key] = f"Assumptions!$B${r}"
         r += 1
 
-    _widths(ws, [34, 14, 78])
+    # Derived cells, visibly: the price AFTER the shock. Model reads these, so
+    # the whole effect of the shock is two cells anyone can inspect.
+    r += 1
+    ws.cell(row=r, column=1, value="Derived — do not edit").font = _LABEL
+    r += 1
+    for key, label, price, dur in (
+            ("bill_price_eff", "T-Bill price after shock", "bill_price", "bill_duration"),
+            ("bond_price_eff", "T-Bond price after shock", "bond_price", "bond_duration")):
+        loc = lambda k: refs[k].split("!")[1]          # noqa: E731  ($B$7)
+        ws.cell(row=r, column=1, value=label).font = _LABEL
+        c = ws.cell(row=r, column=2,
+                    value=f"={loc(price)}*(1-{loc(dur)}*{loc('rate_shock_bp')}/10000)")
+        c.number_format, c.font = MONEY, _FORMULA_FONT
+        ws.cell(row=r, column=3, value=(
+            f"price x (1 - duration x shock / 10,000). With a zero shock this equals "
+            f"the input above.")).alignment = Alignment(wrap_text=True)
+        refs[key] = f"Assumptions!$B${r}"
+        r += 1
+
+    _widths(ws, [38, 14, 78])
     return refs
 
 
@@ -141,7 +176,7 @@ def _actuals_sheet(wb: Workbook, name: str, headers: Sequence[str],
     _widths(ws, [13] + [15] * (len(headers) - 1))
 
 
-def _summary_sheet(wb: Workbook, first: int, last: int) -> None:
+def _summary_sheet(wb: Workbook, first: int, last: int, n_auctions: int = 0) -> None:
     """Headline analytics over the Model sheet - every figure a formula.
 
     A summary typed in at build time would freeze at today's assumptions; these
@@ -192,6 +227,18 @@ def _summary_sheet(wb: Workbook, first: int, last: int) -> None:
         # published", which Model shows as 0. This line says how many days that is.
         ("Days with an OMO row published",
          f"=SUM({rng('I')})", "0", None),
+        # Average bid-to-cover of CONFIRMED auctions, by product. Blank where no
+        # auction has a knowable cover (Auctions!J is blank when bids are missing
+        # or equal accepted, which is BB's old fixed-target artefact).
+        ("Average cover, T-Bill (confirmed)",
+         '=IFERROR(AVERAGEIFS(Auctions!$J:$J,Auctions!$B:$B,"T_BILL",Auctions!$H:$H,"CONFIRMED"),"")',
+         "0.00", None),
+        ("Average cover, T-Bond (confirmed)",
+         '=IFERROR(AVERAGEIFS(Auctions!$J:$J,Auctions!$B:$B,"T_BOND",Auctions!$H:$H,"CONFIRMED"),"")',
+         "0.00", None),
+        ("Average cover, FRTB (confirmed)",
+         '=IFERROR(AVERAGEIFS(Auctions!$J:$J,Auctions!$B:$B,"FRTB",Auctions!$H:$H,"CONFIRMED"),"")',
+         "0.00", None),
     ]
     for n, (label, formula, fmt, date_f) in enumerate(rows):
         r = 5 + n
@@ -225,6 +272,20 @@ def _summary_sheet(wb: Workbook, first: int, last: int) -> None:
     bar.x_axis.number_format = "dd-mmm"
     ws.add_chart(bar, "F21")
 
+    # Cover by settlement date. Reads the helper column K, where an unknown cover
+    # is #N/A and so leaves a gap instead of plotting as zero.
+    auc = wb["Auctions"]
+    if n_auctions > 0:
+        from openpyxl.chart import LineChart as _Line
+        cov = _Line()
+        cov.title, cov.height, cov.width = "Bid-to-cover by settlement date (x)", 8, 18
+        cov.add_data(Reference(auc, min_col=11, min_row=2, max_row=2 + n_auctions),
+                     titles_from_data=True)
+        cov.set_categories(Reference(auc, min_col=1, min_row=3, max_row=2 + n_auctions))
+        cov.x_axis.number_format = "dd-mmm"
+        cov.series[0].marker.symbol = "circle"
+        ws.add_chart(cov, "F38")
+
 
 def build_model(data: dict, today: datetime.date = None) -> bytes:
     """Assemble the workbook. `data` is read-only input from the DB."""
@@ -246,14 +307,23 @@ def build_model(data: dict, today: datetime.date = None) -> bytes:
 
     _actuals_sheet(
         wb, "Auctions", ("Settlement", "Type", "Tenor", "Notified (cr)",
-                         "Accepted face (cr)", "Sale value (cr)", "Cut-off %", "Status"),
+                         "Accepted face (cr)", "Sale value (cr)", "Cut-off %", "Status",
+                         "Bids received (cr)", "Cover (x)", "Cover (chart)"),
+        # Cover is a FORMULA, blank where it cannot be known. Bids equal to
+        # accepted is BB's old fixed-target artefact (see auction_logic.bid_to_cover),
+        # not a fully covered auction, so it is suppressed the same way here.
+        # "Cover (chart)" turns blank into #N/A, which a chart skips instead of
+        # plotting a zero.
         [(r["settlement"], r["type"], r["tenor"], r["offered"], r["accepted"],
-          r["sale"], r["cutoff"], r["status"]) for r in data["auctions"]],
+          r["sale"], r["cutoff"], r["status"], r.get("bids"),
+          f'=IF(AND(N(I{3 + n})>0,N(E{3 + n})>0,ABS(I{3 + n}-E{3 + n})>0.000001),I{3 + n}/E{3 + n},"")',
+          f'=IF(J{3 + n}="",NA(),J{3 + n})')
+         for n, r in enumerate(data["auctions"])],
         "Auction settlements. CONFIRMED rows carry BB's published figures; "
         "PLANNED rows carry BB's notified amount and no cut-off, because the "
         "auction has not happened. Sale value is the cash actually paid and is "
         "blank where BB did not publish it.",
-        formats={1: DATE, 4: MONEY, 5: MONEY, 6: MONEY, 7: RATE})
+        formats={1: DATE, 4: MONEY, 5: MONEY, 6: MONEY, 7: RATE, 9: MONEY, 10: "0.00", 11: "0.00"})
 
     _actuals_sheet(
         wb, "Govt flows", ("Date", "Coupon in (mn)", "Principal in (mn)",
@@ -300,12 +370,18 @@ def build_model(data: dict, today: datetime.date = None) -> bytes:
         # acceptance and price. Each term is visible and editable.
         ws.cell(row=r, column=5, value=(
             f"=SUMIFS(Auctions!$F:$F,Auctions!$A:$A,{A})"
-            f"+SUMIFS(Auctions!$E:$E,Auctions!$A:$A,{A},Auctions!$F:$F,\"\")"
-            f"*IF(SUMIFS(Auctions!$E:$E,Auctions!$A:$A,{A},Auctions!$B:$B,\"T_BILL\")>0,"
-            f"{refs['bill_price']},{refs['bond_price']})/100"
+            # Face with no published sale value is priced PER ROW BY TYPE: bills at the
+            # bill price, everything else at the bond price. (It used to pick one
+            # price for the whole day, so a bond settling beside a bill was priced
+            # at the bill's 98 - 20 crore short on every 1,000.)
+            f"+(SUMIFS(Auctions!$E:$E,Auctions!$A:$A,{A},Auctions!$F:$F,\"\",Auctions!$B:$B,\"T_BILL\")"
+            f"*{refs['bill_price_eff']}"
+            f"+SUMIFS(Auctions!$E:$E,Auctions!$A:$A,{A},Auctions!$F:$F,\"\",Auctions!$B:$B,\"<>T_BILL\")"
+            f"*{refs['bond_price_eff']})/100"
             f"+SUMIFS(Auctions!$D:$D,Auctions!$A:$A,{A},Auctions!$H:$H,\"PLANNED\")"
             f"*{refs['auction_cover']}"
-            f"*{refs['bond_price']}/100"))
+            f"*(1-{refs['devolvement_share']})"
+            f"*{refs['bond_price_eff']}/100"))
         # Government payments in, converted from million to crore.
         ws.cell(row=r, column=6, value=(
             f"=(SUMIFS('Govt flows'!$B:$B,'Govt flows'!$A:$A,{A})"
@@ -333,7 +409,7 @@ def build_model(data: dict, today: datetime.date = None) -> bytes:
             t.number_format, t.font = MONEY, _LABEL
     _widths(ws, [13, 15, 15, 23, 18, 15, 16, 16, 15])
 
-    _summary_sheet(wb, 5, last if dates else 0)
+    _summary_sheet(wb, 5, last if dates else 0, len(data["auctions"]))
 
     # ── cover ────────────────────────────────────────────────────────────────
     cover = wb.create_sheet("Read me", 0)
@@ -347,6 +423,13 @@ def build_model(data: dict, today: datetime.date = None) -> bytes:
         ("", ""),
         ("How to use it", "Edit the shaded cells on Assumptions. Everything on Model "
                           "is a formula and will recalculate."),
+        ("Rate shock", "A duration approximation, shown in two derived cells on "
+                       "Assumptions (price after shock). It moves ESTIMATED auction cash "
+                       "only - never a published sale value. Devolvement removes the share "
+                       "of a PLANNED auction that BB takes up itself."),
+        ("Cover", "Bids received over accepted face, per auction, from BB's results "
+                  "table. Blank where bids are missing or equal accepted (an old BB "
+                  "artefact), never 1.00."),
         ("Summary", "Largest drain and injection with dates, lowest cumulative position, "
                     "average daily net and totals - all formulas over Model, with two "
                     "charts. They move when you change an assumption."),
@@ -399,14 +482,23 @@ def model_data(session, date_from: datetime.date, date_to: datetime.date) -> dic
                  "accepted": float(r[4]) if r[4] is not None else None,
                  "sale": float(r[5]) if r[5] is not None else None,
                  "cutoff": float(r[6]) if r[6] is not None else None,
-                 "status": r[7]}
+                 "status": r[7],
+                 # Bids RECEIVED, from BB's results table, joined exactly as the
+                 # auction book does (tenor + settlement == issue date).
+                 "bids": float(r[8]) if r[8] is not None else None}
                 for r in session.execute(text("""
-                    SELECT settlement_date, security_type, tenor_label,
-                           offered_amount_bdt_crore, accepted_amount_bdt_crore,
-                           sale_value_bdt_crore, weighted_avg_yield_pct, outflow_status
-                    FROM auction_events
-                    WHERE settlement_date BETWEEN :lo AND :hi
-                    ORDER BY settlement_date, security_type, tenor_label
+                    SELECT a.settlement_date, a.security_type, a.tenor_label,
+                           a.offered_amount_bdt_crore, a.accepted_amount_bdt_crore,
+                           a.sale_value_bdt_crore, a.weighted_avg_yield_pct, a.outflow_status,
+                           r.bids
+                    FROM auction_events a
+                    LEFT JOIN (
+                        SELECT tenor_label, issue_date, MAX(offered_bdt_crore) AS bids
+                        FROM primary_yield_snapshots
+                        GROUP BY tenor_label, issue_date
+                    ) r ON r.tenor_label = a.tenor_label AND r.issue_date = a.settlement_date
+                    WHERE a.settlement_date BETWEEN :lo AND :hi
+                    ORDER BY a.settlement_date, a.security_type, a.tenor_label
                 """), {"lo": str(date_from), "hi": str(date_to)}).fetchall()]
 
     flows = [{"date": r[0], "coupon": float(r[1] or 0) or None,
