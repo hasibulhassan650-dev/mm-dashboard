@@ -85,6 +85,17 @@ def get_outstanding(days: int = Query(90, ge=7, le=365)):
         session.close()
 
 
+@router.get("/injection")
+def get_injection(window_days: int = Query(30, ge=1, le=365)):
+    """How much BB is injecting, facility by facility, against what it absorbs."""
+    from .omo_logic import injection_summary
+    session = get_session()
+    try:
+        return injection_summary(session, window_days=window_days)
+    finally:
+        session.close()
+
+
 @router.get("/summary")
 def get_summary():
     """Today's outstanding snapshot — one row per instrument."""
