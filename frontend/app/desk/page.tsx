@@ -2,6 +2,7 @@ import { api } from "@/lib/api";
 import type { DeskMarks } from "@/lib/api";
 import { Panel } from "@/components/terminal/ui";
 import DeskMarkForm from "@/components/DeskMarkForm";
+import DeskSetup from "@/components/DeskSetup";
 import RelatedLinks from "@/components/RelatedLinks";
 
 export const revalidate = 0;   // a mark entered a second ago must show
@@ -10,6 +11,10 @@ export default async function DeskPage() {
   let data: DeskMarks | null = null;
   try { data = await api.deskMarks(60); } catch { data = null; }
 
+  // The page is a server component, so it can read the SITE's own env var - a
+  // boolean only, never the value. The API's side comes from /api/desk/marks.
+  const siteSet = !!process.env.DESK_WRITE_SECRET;
+  const apiSet = data?.configured ?? false;
   const marks = data?.marks ?? [];
   const confirmed = marks.filter((m) => m.confirmed);
   const worst = data?.worst_diff_bps ?? null;
@@ -50,7 +55,8 @@ export default async function DeskPage() {
       <div className="grid12">
         <Panel title="Enter today's cut-off" span={5}
                sub="what the desk saw at the auction, before BB publishes">
-          <DeskMarkForm tenors={data?.tenors ?? []} configured={data?.configured ?? false} />
+          <DeskSetup siteSet={siteSet} apiSet={apiSet} />
+          <DeskMarkForm tenors={data?.tenors ?? []} configured={siteSet && apiSet} />
         </Panel>
 
         <Panel

@@ -227,3 +227,38 @@ class TestTheGuardianReadsTheDifference:
 
     def test_a_fresh_unconfirmed_mark_is_not_nagged_about(self, monkeypatch):
         assert self._issues(monkeypatch, 8.59, None, days_ago=0) == []
+
+
+class TestThePingTellsTheDeskWhichSideIsMissing:
+    """The form used to simply refuse, and the desk could not tell whether the
+    site, the API, or both-with-different-values was the problem. The ping
+    checks the shared secret WITHOUT writing, with the same fail-closed gate."""
+
+    def test_unset_means_503_never_ok(self, desk, monkeypatch):
+        mod, _, s = desk
+        monkeypatch.delenv("DESK_WRITE_SECRET", raising=False)
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc:
+            mod.ping(x_desk_secret="anything")
+        assert exc.value.status_code == 503
+
+    def test_a_wrong_secret_is_403(self, desk, monkeypatch):
+        mod, _, _ = desk
+        monkeypatch.setenv("DESK_WRITE_SECRET", "right")
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc:
+            mod.ping(x_desk_secret="wrong")
+        assert exc.value.status_code == 403
+
+    def test_the_right_secret_is_ok_and_reveals_nothing(self, desk, monkeypatch):
+        mod, _, _ = desk
+        monkeypatch.setenv("DESK_WRITE_SECRET", "s3cret-value")
+        out = mod.ping(x_desk_secret="s3cret-value")
+        assert out == {"ok": True, "configured": True}
+        assert "s3cret" not in str(out)
+
+    def test_it_never_writes(self, desk, monkeypatch):
+        mod, eng, s = desk
+        monkeypatch.setenv("DESK_WRITE_SECRET", "k")
+        mod.ping(x_desk_secret="k")
+        assert s.query(DeskMark).count() == 0

@@ -83,6 +83,21 @@ def _authorise(given: Optional[str]) -> None:
         raise HTTPException(status_code=403, detail="bad desk secret")
 
 
+@router.get("/ping")
+def ping(x_desk_secret: Optional[str] = Header(default=None)):
+    """Does the secret the SITE holds match the one this API holds?
+
+    Writes nothing. It exists because the desk could not tell, from a form that
+    simply refused, WHICH of the two places was missing the secret - the site,
+    the API, or both with different values - and "set it in both" is a
+    two-minute job that is easy to do half of. Same gate as the write route,
+    so it fails closed identically: no secret configured here means 503, a
+    wrong one 403, and the response never contains either value.
+    """
+    _authorise(x_desk_secret)
+    return {"ok": True, "configured": True}
+
+
 @router.post("/mark")
 def put_mark(mark: MarkIn, x_desk_secret: Optional[str] = Header(default=None)):
     """Record (or correct) the desk's cut-off for one auction and tenor."""
