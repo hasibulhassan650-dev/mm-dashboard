@@ -251,6 +251,16 @@ def build() -> tuple:
                 lines.append(f"**Last run reported {len(errs)} step error(s):** "
                              + "; ".join(str(e)[:100] for e in errs[:4]) + "\n")
 
+        # ── what BB announced ────────────────────────────────────────────────
+        try:
+            from engines.announce import digest_lines
+            l, p = digest_lines(s)
+            lines += l
+            problems += p
+        except Exception as exc:
+            s.rollback()      # a failed statement aborts a Postgres transaction
+            lines.append(f"_(announcements unavailable: {exc})_\n")
+
         # ── freshness table ──────────────────────────────────────────────────
         lines.append("| Series | Rows | Latest data | Last write |")
         lines.append("|---|---:|---|---|")

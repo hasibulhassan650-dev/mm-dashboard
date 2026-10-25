@@ -703,6 +703,10 @@ class PressRelease(Base):
     isin           = Column(String(12))
     first_seen_utc = Column(DateTime)
     last_seen_utc  = Column(DateTime)
+    # When the desk was TOLD about this release (a GitHub issue, which emails
+    # the repo owner). NULL = not yet announced. Set only after the issue was
+    # actually created, so a failed notification is retried, never lost.
+    notified_utc   = Column(DateTime)
 
 
 class BuybackEvent(Base):
@@ -870,6 +874,11 @@ def init_db():
         "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS source_pub_date DATE",
         "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS source_serial VARCHAR(40)",
         "ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS quality TEXT",
+        "ALTER TABLE press_releases ADD COLUMN IF NOT EXISTS notified_utc TIMESTAMP",
+        # SQLite has no IF NOT EXISTS for columns, and the local file is a live
+        # database. Without this a stale local copy fails every press query with
+        # "no such column"; on Postgres this errors harmlessly (column exists).
+        "ALTER TABLE press_releases ADD COLUMN notified_utc TIMESTAMP",
         "ALTER TABLE data_absences ADD COLUMN IF NOT EXISTS kind VARCHAR(16) DEFAULT 'bb_omission'",
         "ALTER TABLE daily_net_flow ADD COLUMN IF NOT EXISTS buyback_inflow_bdt_mill REAL DEFAULT 0",
         # A desk mark is a provisional cut-off, never BB's. A sovereign yield

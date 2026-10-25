@@ -71,6 +71,16 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           context: "hourly refresh"
+      - name: Announce new BB releases
+        # One issue per high-signal release (buyback, auction notice, Islamic
+        # window, Sukuk, policy); GitHub emails the repo owner. Runs even when
+        # the refresh failed - a release already stored is still news. Not
+        # always(): that also runs in a CANCELLED job and would race the
+        # replacement run's announcer.
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python -m engines.announce publish
       - name: Summarise log
         if: always()
         run: |
