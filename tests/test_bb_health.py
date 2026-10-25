@@ -177,3 +177,31 @@ class TestCheckResponseNamesTheOutage:
             bbs.bb_get("https://www.bb.org.bd/x", {}, "UA")
         with pytest.raises(H.BBMaintenance):
             bbs.bb_post("https://www.bb.org.bd/x", {}, {}, "UA")
+
+
+class TestRetryingASiteThatSaidItIsDown:
+    """The reference-rate step retried three times against BB's maintenance
+    page in CI, each retry re-running the whole cookie-capture cycle. An
+    ordinary failure deserves its retries; BB announcing it is down does not."""
+
+    def test_maintenance_is_not_retried(self):
+        import fetchers.bb_session as bbs
+        calls = []
+
+        def once():
+            calls.append(1)
+            raise H.BBMaintenance("down")
+
+        assert bbs.fetch_with_retry(once, attempts=3, delay=0, label="t") == []
+        assert len(calls) == 1, f"retried {len(calls)} times against a site that said it was down"
+
+    def test_an_ordinary_failure_still_gets_every_attempt(self):
+        import fetchers.bb_session as bbs
+        calls = []
+
+        def once():
+            calls.append(1)
+            raise ConnectionError("flaky")
+
+        assert bbs.fetch_with_retry(once, attempts=3, delay=0, label="t") == []
+        assert len(calls) == 3

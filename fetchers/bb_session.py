@@ -319,10 +319,17 @@ def fetch_with_retry(fetch_once, attempts: int = 3, delay: int = 4, label: str =
     Returns whatever fetch_once returns. Returns [] if every attempt fails.
     """
     import time
+    from fetchers.bb_health import BBMaintenance
     last_exc = None
     for i in range(attempts):
         try:
             return fetch_once()
+        except BBMaintenance as exc:
+            # BB said it is down. A retry re-runs the whole cookie-capture cycle
+            # against a host that has just told us so - the reference-rate step
+            # did exactly that three times in CI - so stop now, once, loudly.
+            log.error("%s: %s - not retrying", label, exc)
+            return []
         except Exception as exc:
             last_exc = exc
             log.warning("%s attempt %d/%d failed: %s", label, i + 1, attempts, exc)

@@ -138,7 +138,7 @@ def summarise(results: Sequence[Tuple[str, Optional[int], str]]) -> Dict:
             "detail": [{"url": u, "status": s, "kind": k} for u, s, k in results]}
 
 
-def probe(urls: Sequence[str] = PROBE_URLS, timeout: int = 20) -> Dict:
+def probe(urls: Sequence[str] = PROBE_URLS, timeout: int = 10) -> Dict:
     """Ask BB, in plain HTTP, whether it is serving its maintenance page.
 
     Three small GETs, no browser: this is meant to run first in every refresh
