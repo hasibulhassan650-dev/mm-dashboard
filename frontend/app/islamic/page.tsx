@@ -1,7 +1,8 @@
 import { api } from "@/lib/api";
-import type { IslamicWindow } from "@/lib/api";
+import type { IslamicWindow, OmoInjection, OmoTxnRow } from "@/lib/api";
 import { Panel } from "@/components/terminal/ui";
 import RelatedLinks from "@/components/RelatedLinks";
+import IslamicFacilities from "@/components/IslamicFacilities";
 
 export const revalidate = 300;
 
@@ -11,6 +12,12 @@ const n2 = (v: number | null | undefined) =>
 export default async function IslamicPage() {
   let data: IslamicWindow | null = null;
   try { data = await api.islamic(26); } catch { data = null; }
+  // The Islamic banks' own facilities live in the OMO data; this page shows them,
+  // it does not keep a second copy.
+  const [inj, txns]: [OmoInjection | null, OmoTxnRow[]] = await Promise.all([
+    api.omoInjection(30).catch(() => null),
+    api.omoTransactions(90).catch(() => [] as OmoTxnRow[]),
+  ]);
 
   if (!data || !data.count) {
     return (
@@ -129,6 +136,10 @@ export default async function IslamicPage() {
             </p>
           </div>
         </Panel>
+      </div>
+
+      <div className="grid12">
+        <IslamicFacilities inj={inj} txns={txns} />
       </div>
 
       <RelatedLinks items={[

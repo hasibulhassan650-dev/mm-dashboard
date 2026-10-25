@@ -40,6 +40,7 @@ export const api = {
   omoSummary:      () => get<OmoSummaryRow[]>("/api/omo/summary"),
   omoOutstanding:  (days = 90) => get<OmoOutstandingRow[]>("/api/omo/outstanding", { days }),
   omoTransactions: (days = 60) => get<OmoTxnRow[]>("/api/omo/transactions", { days }),
+  omoInjection: (window_days = 30) => get<OmoInjection>("/api/omo/injection", { window_days }),
   yieldCurve:      () => get<YieldRow[]>("/api/yields/curve"),
   yieldSecondary:  () => get<SecondaryYieldRow[]>("/api/yields/secondary"),
   yields:          (months = 12) => get<YieldRow[]>("/api/yields", { months }),
@@ -796,6 +797,26 @@ export interface OmoOutstandingRow {
   date: string; instrument: string; outstanding_bdt_crore: number;
   direction?: string;
 }
+/** BB's injection through OMO, by facility. A STOCK of unmatured tranches measured
+ *  on the last day BB published — not today, and not a sum of what was dealt. */
+export interface OmoInjectionRow {
+  instrument: string; direction: "INJECTION" | "ABSORPTION"; islamic: boolean;
+  outstanding_crore: number; tranches: number; share_of_injected_pct: number | null;
+  dealt_window_crore: number; deals_window: number; wtd_rate_pct: number | null;
+  next_maturity: string | null; maturing_7d_crore: number; maturing_30d_crore: number;
+}
+export interface OmoInjection {
+  as_of: string | null; window_days: number; since?: string; unit?: string;
+  instruments: OmoInjectionRow[];
+  totals: {
+    injected_crore: number; absorbed_crore: number; net_injected_crore: number;
+    islamic_injected_crore: number; conventional_injected_crore: number;
+    dealt_injected_window_crore: number; dealt_absorbed_window_crore: number;
+    injected_maturing_7d_crore: number; injected_maturing_30d_crore: number;
+  } | null;
+  note?: string;
+}
+
 export interface OmoTxnRow {
   transaction_date: string; maturity_date: string; instrument: string;
   tenor_label: string; accepted_bdt_crore: number; rate_pct: number | null;

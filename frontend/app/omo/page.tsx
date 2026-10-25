@@ -9,6 +9,7 @@ import Freshness from "@/components/Freshness";
 import OmoView, { type OmoOpRow } from "@/components/terminal/views/OmoView";
 import { DataWarning } from "@/components/DataWarning";
 import OmoMaturityLadderPanel from "@/components/OmoMaturityLadder";
+import OmoInjectionPanel from "@/components/OmoInjection";
 
 export const revalidate = 300;
 
@@ -16,7 +17,7 @@ const INST_LABEL: Record<string, string> = Object.fromEntries(OMO_INSTRUMENTS.ma
 
 export default async function OmoPage({ searchParams }: { searchParams: Promise<{ from?: string; to?: string }> }) {
   const sp = await searchParams;
-  const [outAll, txnAll, fresh, status, ladder] = await Promise.all([
+  const [outAll, txnAll, fresh, status, ladder, injection] = await Promise.all([
     api.omoOutstanding(365).catch(() => []),
     api.omoTransactions(365).catch(() => []),
     api.freshness(),
@@ -24,6 +25,7 @@ export default async function OmoPage({ searchParams }: { searchParams: Promise<
     // The forward roll-off: 180 days covers BB's longest live tranche (AR runs
     // to 180D), so no funding cliff falls off the end of the window.
     api.omoMaturityLadder({ days: 180 }),
+    api.omoInjection(30).catch(() => null),
   ]);
   // OMO-cadence integrity alerts (missing operation / no CB Repo on a working
   // Tuesday) — the class of BB press-release mistake that must never pass
@@ -84,6 +86,9 @@ export default async function OmoPage({ searchParams }: { searchParams: Promise<
         </div>
       )}
 
+      <div className="grid12">
+        <OmoInjectionPanel data={injection} />
+      </div>
       <div className="grid12">
         <OmoView d={{ omoSeries, omoCats, ops, outstanding, txns: txnAll, stance, latestNet }} />
       </div>
