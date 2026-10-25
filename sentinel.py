@@ -31,9 +31,11 @@ import urllib.request
 FRONTEND = "https://bbmarkets.vercel.app"
 API      = "https://mm-dashboard-vac3.vercel.app"
 DEPLOY_GRACE_MIN = 45   # time to allow Vercel to build+deploy a new commit
-# The refresh runs 3x/day, every day. Missing ALL of them for 14h means the
+# The refresh is started at least every ~50 minutes (cron plus watchdog.py), so
+# six hours with no completed run is already far outside normal. It was 14h when
+# the refresh ran three times a day. Missing ALL of them for this long means the
 # automation is broken, not that Bangladesh Bank published nothing.
-RUN_STALE_HOURS = 14
+RUN_STALE_HOURS = 6
 
 
 def _http(url, timeout=25):

@@ -15,7 +15,11 @@ on:
 
 concurrency:
   group: hourly-refresh
-  cancel-in-progress: true   # a light run is quick; drop a stale one if it overruns
+  # false: the watchdog (refresh_watchdog.yml) now starts runs as well as the
+  # cron, and with true each new trigger would KILL a run mid-fetch, so more
+  # frequent triggering would mean runs that never finish. A run that arrives
+  # while one is going waits for it instead; only one waits at a time.
+  cancel-in-progress: false
 
 # Runner image is PINNED, not ubuntu-latest: that label migrates to Ubuntu 26
 # on 19-Oct-2026, and the BB fetchers ride on the image's preinstalled Chrome

@@ -6,7 +6,7 @@ name: Uptime Sentinel
 
 on:
   schedule:
-    - cron: "17 */2 * * *"    # every 2 hours
+    - cron: "7,37 * * * *"    # twice an hour; GitHub still delays it, so ask often
   workflow_dispatch:
 
 permissions:

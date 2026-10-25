@@ -1,0 +1,39 @@
+name: Refresh Watchdog
+
+# GitHub's scheduler delivered the "hourly" refresh six times in 22 hours on
+# 25-Oct-2026, and the last of them landed in the middle of a BB outage - so
+# when BB came back, nothing noticed for hours. This does not trust that cron:
+# every ten minutes it checks how old the last refresh is and whether BB
+# answers, and starts a refresh itself when one is due. See watchdog.py.
+#
+# It is a separate workflow on purpose: GitHub throttles each schedule
+# independently, so two schedules are two chances, not one.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write           # to start Hourly Refresh
+
+concurrency:
+  group: refresh-watchdog
+  cancel-in-progress: false
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install the one dependency the probe needs
+        run: pip install curl_cffi
+      - name: Start a refresh if one is due
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python watchdog.py
