@@ -141,6 +141,91 @@ def _actuals_sheet(wb: Workbook, name: str, headers: Sequence[str],
     _widths(ws, [13] + [15] * (len(headers) - 1))
 
 
+def _summary_sheet(wb: Workbook, first: int, last: int) -> None:
+    """Headline analytics over the Model sheet - every figure a formula.
+
+    A summary typed in at build time would freeze at today's assumptions; these
+    move when the rollover or price inputs do. Ranges end on the Model's actual
+    last row (never a fixed number), and with no data every figure is blank
+    rather than zero. Functions are Excel-2007 era only: newer ones (MINIFS,
+    XLOOKUP...) need a prefix openpyxl does not write and show #NAME? otherwise.
+    """
+    from openpyxl.chart import BarChart, LineChart, Reference
+
+    ws = wb.create_sheet("Summary", 1)
+    ws["A1"] = "Liquidity summary"
+    ws["A1"].font = _TITLE
+    ws["A2"] = ("Formulas over the Model sheet. Net liquidity is positive when cash "
+                "enters the market and negative when it drains.")
+    ws["A2"].alignment = Alignment(wrap_text=True)
+    ws.merge_cells("A2:D2")
+    ws.row_dimensions[2].height = 30
+    for i, h in enumerate(("Measure", "Value", "Date"), start=1):
+        ws.cell(row=4, column=i, value=h)
+    _style_header(ws, 4, 3)
+    _widths(ws, [38, 18, 14, 3])
+    if last < first:
+        ws["A5"] = "No dates in range - nothing to summarise."
+        return
+
+    def rng(col):
+        return f"Model!${col}${first}:${col}${last}"
+
+    net, cum, dates = rng("G"), rng("H"), rng("A")
+    rows = [
+        ("Largest daily drain (lowest net)", f'=IF(COUNT({net})=0,"",MIN({net}))', MONEY,
+         f'=IF(B5="","",INDEX({dates},MATCH(B5,{net},0)))'),
+        ("Largest daily injection (highest net)", f'=IF(COUNT({net})=0,"",MAX({net}))', MONEY,
+         f'=IF(B6="","",INDEX({dates},MATCH(B6,{net},0)))'),
+        ("Lowest cumulative position", f'=IF(COUNT({cum})=0,"",MIN({cum}))', MONEY,
+         f'=IF(B7="","",INDEX({dates},MATCH(B7,{cum},0)))'),
+        ("Highest cumulative position", f'=IF(COUNT({cum})=0,"",MAX({cum}))', MONEY,
+         f'=IF(B8="","",INDEX({dates},MATCH(B8,{cum},0)))'),
+        ("Average daily net", f'=IF(COUNT({net})=0,"",AVERAGE({net}))', MONEY, None),
+        ("Days with net drain", f'=IF(COUNT({net})=0,"",COUNTIF({net},"<0"))', "0", None),
+        ("Total OMO net (after rollover)", f'=IF(COUNT({rng("D")})=0,"",SUM({rng("D")}))',
+         MONEY, None),
+        ("Total auction cash out", f'=IF(COUNT({rng("E")})=0,"",SUM({rng("E")}))', MONEY, None),
+        ("Total government cash in", f'=IF(COUNT({rng("F")})=0,"",SUM({rng("F")}))', MONEY, None),
+        ("Days in window", f"=ROWS({dates})", "0", None),
+        # OMO is published per operating day; a day with no OMO row is "nothing
+        # published", which Model shows as 0. This line says how many days that is.
+        ("Days with an OMO row published",
+         f"=SUM({rng('I')})", "0", None),
+    ]
+    for n, (label, formula, fmt, date_f) in enumerate(rows):
+        r = 5 + n
+        ws.cell(row=r, column=1, value=label).font = _LABEL
+        c = ws.cell(row=r, column=2, value=formula)
+        c.number_format, c.font = fmt, _FORMULA_FONT
+        if date_f:
+            d = ws.cell(row=r, column=3, value=date_f)
+            d.number_format, d.font = DATE, _FORMULA_FONT
+    ws.cell(row=5 + len(rows) + 1, column=1, value=(
+        "A day with no OMO row shows 0 on Model: nothing was published for it, "
+        "which is not the same as nothing happening.")).alignment = Alignment(wrap_text=True)
+    ws.merge_cells(start_row=5 + len(rows) + 1, start_column=1,
+                   end_row=5 + len(rows) + 1, end_column=3)
+    ws.row_dimensions[5 + len(rows) + 1].height = 30
+
+    model = wb["Model"]
+    cats = Reference(model, min_col=1, min_row=first, max_row=last)
+    line = LineChart()
+    line.title, line.height, line.width = "Cumulative liquidity (BDT crore)", 8, 18
+    line.add_data(Reference(model, min_col=8, min_row=first - 1, max_row=last),
+                  titles_from_data=True)
+    line.set_categories(cats)
+    line.x_axis.number_format = "dd-mmm"
+    ws.add_chart(line, "F4")
+    bar = BarChart()
+    bar.type, bar.title, bar.height, bar.width = "col", "Daily net liquidity (BDT crore)", 8, 18
+    bar.add_data(Reference(model, min_col=7, min_row=first - 1, max_row=last),
+                 titles_from_data=True)
+    bar.set_categories(cats)
+    bar.x_axis.number_format = "dd-mmm"
+    ws.add_chart(bar, "F21")
+
+
 def build_model(data: dict, today: datetime.date = None) -> bytes:
     """Assemble the workbook. `data` is read-only input from the DB."""
     today = today or datetime.date.today()
@@ -190,7 +275,8 @@ def build_model(data: dict, today: datetime.date = None) -> bytes:
     ws.row_dimensions[2].height = 30
 
     headers = ("Date", "OMO dealt", "OMO maturing", "OMO net (after rollover)",
-               "Auction cash out", "Govt cash in", "Net liquidity", "Cumulative")
+               "Auction cash out", "Govt cash in", "Net liquidity", "Cumulative",
+               "OMO published?")
     for i, h in enumerate(headers, start=1):
         ws.cell(row=4, column=i, value=h)
     _style_header(ws, 4, len(headers))
@@ -230,6 +316,10 @@ def build_model(data: dict, today: datetime.date = None) -> bytes:
             cell = ws.cell(row=r, column=c)
             cell.number_format = MONEY
             cell.font = _FORMULA_FONT
+        # 1 when BB published at least one OMO row for this date. A 0 above on a
+        # day marked 0 here means "nothing published", not "nothing happened".
+        flag = ws.cell(row=r, column=9, value=f"=IF(COUNTIF(OMO!$A:$A,{A})>0,1,0)")
+        flag.number_format, flag.font = "0", _FORMULA_FONT
 
     last = 4 + len(dates)
     if dates:
@@ -238,7 +328,9 @@ def build_model(data: dict, today: datetime.date = None) -> bytes:
             col = get_column_letter(c)
             t = ws.cell(row=last + 2, column=c, value=f"=SUM({col}5:{col}{last})")
             t.number_format, t.font = MONEY, _LABEL
-    _widths(ws, [13, 15, 15, 23, 18, 15, 16, 16])
+    _widths(ws, [13, 15, 15, 23, 18, 15, 16, 16, 15])
+
+    _summary_sheet(wb, 5, last if dates else 0)
 
     # ── cover ────────────────────────────────────────────────────────────────
     cover = wb.create_sheet("Read me", 0)
@@ -252,6 +344,9 @@ def build_model(data: dict, today: datetime.date = None) -> bytes:
         ("", ""),
         ("How to use it", "Edit the shaded cells on Assumptions. Everything on Model "
                           "is a formula and will recalculate."),
+        ("Summary", "Largest drain and injection with dates, lowest cumulative position, "
+                    "average daily net and totals - all formulas over Model, with two "
+                    "charts. They move when you change an assumption."),
         ("What is a value", "Anything BB has published: OMO deals and maturities, "
                             "auction results, scheduled coupons and redemptions. These "
                             "cells are not driven by any assumption."),

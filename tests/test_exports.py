@@ -330,3 +330,82 @@ class TestTheModelRecalculates:
                         for r in range(1, 16) for c in (1, 2)).lower()
         assert "formula" in text and "opinion" in text
         assert "never zero" in text
+
+
+class TestTheSummarySheet:
+    """Headline analytics on the model - and every figure a formula over Model.
+
+    A summary typed in at build time is a picture of one afternoon: change the
+    rollover assumption and it would not move, which is exactly what the Model
+    sheet exists to avoid. The ranges must also end on the Model's real last row
+    - a fixed range quietly drops every day past it.
+    """
+
+    def _wb(self, n=2):
+        import datetime
+        import io as _io
+        import sys
+        sys.path.insert(0, os.path.join(_ROOT, "api", "routers"))
+        from model_logic import build_model
+        from openpyxl import load_workbook
+        start = datetime.date(2026, 10, 19)
+        d = [start + datetime.timedelta(days=i) for i in range(n)]
+        data = {"dates": d,
+                "omo": [{"date": d[0], "instrument": "CB_REPO", "dealt": 100.0,
+                         "maturing": None, "rate": 9.5}] if d else [],
+                "auctions": [], "flows": []}
+        return load_workbook(_io.BytesIO(build_model(data, today=start)))
+
+    def test_every_figure_is_a_formula_over_the_model_sheet(self):
+        ws = self._wb()["Summary"]
+        for r in range(5, 16):
+            v = ws.cell(row=r, column=2).value
+            assert isinstance(v, str) and v.startswith("=") and "Model!" in v \
+                or "SUM(Model!" in str(v), f"Summary row {r} is not a formula over Model: {v!r}"
+
+    def test_ranges_end_on_the_last_model_row_not_a_fixed_number(self):
+        ws = self._wb(n=400)["Summary"]               # longer than any fixed cap
+        last = 4 + 400
+        assert f"$G${last}" in ws["B5"].value and f"$G${last + 1}" not in ws["B5"].value
+        assert f"$H${last}" in ws["B7"].value
+
+    def test_no_data_is_blank_not_zero(self):
+        """An average of nothing is not 0 - someone would read it as a quiet day."""
+        ws = self._wb()["Summary"]
+        for r in (5, 6, 7, 8, 9, 10):
+            assert ws.cell(row=r, column=2).value.startswith('=IF(COUNT('), r
+
+    def test_the_peak_date_is_looked_up_on_the_same_range_as_the_peak(self):
+        ws = self._wb()["Summary"]
+        assert "$G$" in ws["B5"].value and "$G$" in ws["C5"].value      # drain: net
+        assert "$H$" in ws["B7"].value and "$H$" in ws["C7"].value      # cumulative
+
+    def test_two_charts_read_the_model_sheet(self):
+        ws = self._wb()["Summary"]
+        assert len(ws._charts) == 2
+        for ch in ws._charts:
+            assert all("Model" in s.val.numRef.f for s in ch.series)
+
+    def test_charts_cover_every_day_not_a_fixed_prefix(self):
+        ws = self._wb(n=400)["Summary"]
+        last = 4 + 400
+        for ch in ws._charts:
+            assert all(f"${last}" in s.val.numRef.f for s in ch.series), "series stops short"
+            assert f"${last}" in ch.series[0].cat.numRef.f, "x-axis stops short"
+
+    def test_an_empty_window_builds_without_charts(self):
+        """$5:$4 is an invalid range; an empty window must still produce a file."""
+        ws = self._wb(n=0)["Summary"]
+        assert len(ws._charts) == 0 and "No dates" in str(ws["A5"].value)
+
+    def test_nothing_newer_than_excel_2007(self):
+        """MINIFS/XLOOKUP/LET need a prefix openpyxl does not write: #NAME? in Excel."""
+        wb = self._wb()
+        text = " ".join(str(c.value) for row in wb["Summary"].iter_rows() for c in row)
+        for fn in ("MINIFS", "MAXIFS", "XLOOKUP", "FILTER(", "LET(", "IFS(", "TEXTJOIN", "XMATCH"):
+            assert fn not in text.upper(), fn
+
+    def test_a_day_without_an_omo_row_is_flagged_on_model(self):
+        ws = self._wb()["Model"]
+        assert "COUNTIF(OMO!" in ws["I5"].value
+        assert ws["I4"].value == "OMO published?"
