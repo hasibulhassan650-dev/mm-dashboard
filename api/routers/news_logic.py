@@ -12,7 +12,7 @@ from typing import Dict, List, Optional
 
 from sqlalchemy import text
 
-_COLS = ("id, kind, direction, amount_crore, amount_unverified, event_date, announced_date, status, "
+_COLS = ("id, kind, direction, amount_crore, amount_unverified, is_cumulative, event_date, announced_date, status, "
          "channel, counterparty, summary, evidence_quote, sources_json, confidence, matters, "
          "redundant_with, first_seen_utc, verified_by")
 
@@ -45,6 +45,7 @@ def _row(r) -> Dict:
         m[k] = str(_d(m[k])) if _d(m[k]) else None
     m["first_seen_utc"] = str(m["first_seen_utc"]) if m.get("first_seen_utc") else None
     m["matters"] = bool(m["matters"])
+    m["is_cumulative"] = bool(m.get("is_cumulative"))
     m["when"] = m["event_date"] or m["announced_date"] or (m["first_seen_utc"] or "")[:10] or None
     return m
 
@@ -60,7 +61,9 @@ def news_block(session, today: datetime.date = None, days: int = 120,
 
     counted = [r for r in rows if r["matters"] and not r["redundant_with"]
                and r["direction"] in ("INJECT", "ABSORB")]
-    known = [r for r in counted if r["amount_crore"] is not None]
+    # A running total ("Tk 47bn until mid-August") is listed but never added: the next
+    # article's "Tk 70bn until September" would count the first 47bn twice.
+    known = [r for r in counted if r["amount_crore"] is not None and not r["is_cumulative"]]
 
     monthly: Dict[str, Dict] = {}
     for r in known:
@@ -85,6 +88,11 @@ def news_block(session, today: datetime.date = None, days: int = 120,
         "SELECT COUNT(*) FROM news_articles WHERE triage_status IN ('untriaged', 'error')")).scalar() or 0
     counts = {k: n for k, n in session.execute(text(
         "SELECT triage_status, COUNT(*) FROM news_articles GROUP BY triage_status")).fetchall()}
+    reader_row = session.execute(text(
+        "SELECT triage_model FROM news_articles WHERE triage_status = 'extracted' "
+        "AND triage_model IS NOT NULL ORDER BY triage_utc DESC LIMIT 1")).fetchone()
+    reader = ("none yet" if not reader_row else
+              "rules" if str(reader_row[0]).startswith("rules") else "claude")
     return {
         "as_of": str(today), "window_days": days,
         "fiscal_year_start": fy,
@@ -95,13 +103,15 @@ def news_block(session, today: datetime.date = None, days: int = 120,
             "fy_absorb_crore": tot(lambda w: w >= fy, "ABSORB"),
             "events_counted": len(counted),
             # events that matter but state no taka amount: counted as events, never as zero
-            "events_without_amount": len(counted) - len(known),
+            "events_without_amount": sum(1 for r in counted if r["amount_crore"] is None),
+            "events_cumulative": sum(1 for r in counted if r["is_cumulative"]),
         },
         "monthly": [monthly[k] for k in sorted(monthly)],
         "hidden": {"redundant": sum(1 for r in rows if r["redundant_with"]),
                    "minor": sum(1 for r in rows if not r["matters"] and not r["redundant_with"])},
         "health": {
             "last_fetch_utc": str(last) if last else None,
+            "reader": reader,
             "articles_waiting_for_claude": int(waiting),
             "articles_by_status": counts,
         },

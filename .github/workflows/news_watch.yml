@@ -8,9 +8,11 @@ name: News Watch
 # It needs no Chrome and no BB: the sources are newspaper RSS feeds, so it keeps working
 # while bb.org.bd is down - which is exactly when the press is the only source.
 #
-# Needs the repository secret ANTHROPIC_API_KEY. Without it the job still runs and still
-# stores articles, but marks them untriaged; the digest and the integrity check then say,
-# loudly, that Claude is not reading them. Nothing is silently dropped.
+# The repository secret ANTHROPIC_API_KEY is OPTIONAL. Without it (cost: nothing) every
+# candidate article is read by the free rule reader (engines/news_rules.py) and held to the
+# same checks; the page says which reader is in use. With it, Claude reads what rules cannot -
+# unusual wording, several events in one article - under hard per-run and per-day call caps,
+# and the backfill action (Claude searching the web month by month) becomes available.
 #
 # backfill_since: re-reads history (the feeds only reach back a few days, so older
 # material arrives through engines.news_backfill). Events found by a backfill are marked

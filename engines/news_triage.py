@@ -21,6 +21,7 @@ import os
 from typing import Callable, Dict, List, Optional
 
 from engines import liquidity_news as L
+from engines import news_rules as R
 
 log = logging.getLogger("news_triage")
 
@@ -72,7 +73,9 @@ EXTRACT_SYSTEM = (
     "Report ONLY what the article states. Never infer an amount, a date or a status. For every event "
     "give `evidence_quote`: the exact sentence from the article that supports it, copied verbatim. "
     "`amount_crore` is in Bangladeshi crore taka (1 billion taka = 100 crore; 1 million = 0.1 crore; "
-    "1 lakh crore = 100,000 crore); null if the article gives no taka amount. `status`: ANNOUNCED "
+    "1 lakh crore = 100,000 crore); null if the article gives no taka amount. `is_cumulative` is true "
+    "when the amount is a running total over a period (\"disbursed Tk 47 billion until mid-August\", "
+    "\"so far this fiscal year\", \"in the first quarter\") rather than one payment. `status`: ANNOUNCED "
     "(planned or requested), APPROVED, DISBURSED (cash moved) or COMPLETED. `channel`: CASH, BONDS, "
     "BB_CREDIT (Bangladesh Bank lending) or REGULATORY (a reserve-requirement change). `direction` "
     "must match the kind. Dates are YYYY-MM-DD or null. `confidence` is 0-1: how sure you are the "
@@ -88,12 +91,13 @@ EXTRACT_SCHEMA = {
     "type": "object", "additionalProperties": False, "required": ["events"],
     "properties": {"events": {"type": "array", "items": {
         "type": "object", "additionalProperties": False,
-        "required": ["kind", "direction", "amount_crore", "event_date", "announced_date", "status",
-                     "channel", "counterparty", "summary", "evidence_quote", "confidence"],
+        "required": ["kind", "direction", "amount_crore", "is_cumulative", "event_date", "announced_date",
+                     "status", "channel", "counterparty", "summary", "evidence_quote", "confidence"],
         "properties": {
             "kind": {"type": "string", "enum": list(L.KINDS)},
             "direction": {"type": "string", "enum": ["INJECT", "ABSORB", "NEUTRAL"]},
-            "amount_crore": _nullable("number"), "event_date": _nullable("string"),
+            "amount_crore": _nullable("number"), "is_cumulative": {"type": "boolean"},
+            "event_date": _nullable("string"),
             "announced_date": _nullable("string"), "status": _nullable("string"),
             "channel": _nullable("string"), "counterparty": _nullable("string"),
             "summary": {"type": "string"}, "evidence_quote": {"type": "string"},
@@ -178,10 +182,29 @@ def ingest_items(session, source_key: str, items: List[Dict], now: datetime.date
 
 
 def calls_today(session, now: datetime.datetime) -> int:
+    """Model calls already made today. The free rule reader makes none and is not counted."""
     from db import NewsArticle
     start = datetime.datetime(now.year, now.month, now.day)
     return session.query(NewsArticle).filter(NewsArticle.triage_utc >= start,
-                                             NewsArticle.triage_model.isnot(None)).count()
+                                             NewsArticle.triage_model.isnot(None),
+                                             NewsArticle.triage_model != R.RULES_MODEL).count()
+
+
+def _store_events(session, raw_events, art: Dict, now: datetime.datetime, stats: Dict,
+                  verified_by: str, url: str) -> None:
+    """Validate what a reader reported and store what survives. Shared by the Claude reader and
+    the rule reader, so both are held to exactly the same checks."""
+    for raw in raw_events:
+        ev, why = L.validate_event(raw, art)
+        if ev is None:
+            stats["events_rejected"] += 1
+            stats["reasons"].append(f"{url}: rejected - {'; '.join(why)}")
+            continue
+        red = L.redundancy(session, ev, art)
+        row, how = L.merge_or_create(session, ev, art, now, verified_by=verified_by)
+        if red and not row.redundant_with:
+            row.redundant_with = red
+        stats["events_created" if how == "created" else "events_merged"] += 1
 
 
 def triage_pending(session, client, now: datetime.datetime,
@@ -237,10 +260,21 @@ def triage_pending(session, client, now: datetime.datetime,
         work.append(a)
 
     if client is None:
-        stats["untriaged_left"] = len(work)
-        stats["reasons"].append("no ANTHROPIC_API_KEY: candidates kept untriaged, nothing dropped")
+        # No key means no bill, not no reading: the free rule reader takes every candidate
+        # through the same validation. Claude, when a key exists, reads what rules cannot.
+        stats["mode"] = "rules"
+        stats["reasons"].append("no ANTHROPIC_API_KEY: read by the rule reader (free, conservative)")
+        for a in work:
+            art = _article_dict(a)
+            a.triage_model, a.triage_utc = R.RULES_MODEL, now
+            raw_events = R.extract(art)
+            a.triage_json = json.dumps(raw_events)[:20000]
+            _store_events(session, raw_events, art, now, stats, "rules", a.url)
+            a.triage_status = "extracted"
+            stats["extracted"] += 1
         session.flush()
         return stats
+    stats["mode"] = "claude"
 
     budget_left = max_calls_per_day - calls_today(session, now)
     screens = extracts = 0
@@ -263,17 +297,7 @@ def triage_pending(session, client, now: datetime.datetime,
             a.triage_model = EXTRACT_MODEL
             raw_events = extract(client, art)
             a.triage_json = json.dumps(raw_events)[:20000]
-            for raw in raw_events:
-                ev, why = L.validate_event(raw, art)
-                if ev is None:
-                    stats["events_rejected"] += 1
-                    stats["reasons"].append(f"{a.url}: rejected - {'; '.join(why)}")
-                    continue
-                red = L.redundancy(session, ev, art)
-                row, how = L.merge_or_create(session, ev, art, now)
-                if red and not row.redundant_with:
-                    row.redundant_with = red
-                stats["events_created" if how == "created" else "events_merged"] += 1
+            _store_events(session, raw_events, art, now, stats, "llm", a.url)
             a.triage_status = "extracted"
             stats["extracted"] += 1
         except _Budget:

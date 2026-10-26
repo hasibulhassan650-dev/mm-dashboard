@@ -82,7 +82,8 @@ def _sources():
          "select": "('ev-' || CAST(id AS TEXT)) AS serial, COALESCE(event_date, announced_date) AS "
                    "published_date, NULL AS subject_date, "
                    "(kind || ': ' || COALESCE(summary, '')) AS title, '' AS url, kind AS category, "
-                   "'Liquidity news' AS prefix",
+                   "(CASE WHEN verified_by = 'rules' THEN 'Liquidity news (rule-read)' "
+                   "ELSE 'Liquidity news' END) AS prefix",
          "where": "matters IS TRUE AND redundant_with IS NULL AND notified_utc IS NULL "
                   "AND first_seen_utc >= :since",
          "order": "first_seen_utc, id"},

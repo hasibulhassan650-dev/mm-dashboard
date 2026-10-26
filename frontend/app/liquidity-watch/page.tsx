@@ -89,7 +89,9 @@ export default async function LiquidityWatchPage({
         {kpi("Injected, FY to date", fmt(t.fy_inject_crore), `crore · since ${feed.fiscal_year_start}`, "var(--pos)")}
         {kpi("Absorbed, FY to date", fmt(t.fy_absorb_crore), "crore", "var(--warn)")}
         {kpi("Events counted", String(t.events_counted),
-             t.events_without_amount ? `${t.events_without_amount} state no amount — listed, never counted as 0` : "all state an amount")}
+             [t.events_without_amount ? `${t.events_without_amount} state no amount — never counted as 0` : "",
+              t.events_cumulative ? `${t.events_cumulative} are running totals — shown, never added` : ""]
+               .filter(Boolean).join(" · ") || "all state an amount")}
       </div>
 
       <div className="grid12">
@@ -124,6 +126,8 @@ export default async function LiquidityWatchPage({
                   <tr key={e.id} style={e.redundant_with || !e.matters ? { opacity: 0.6 } : undefined}>
                     <td className="mono">{e.when ?? "—"}</td>
                     <td>{KIND_LABEL[e.kind] ?? e.kind}
+                      {e.is_cumulative && <div style={{ fontSize: 10, color: "var(--fg-mute)" }}>running total — not added</div>}
+                      {e.verified_by === "rules" && <div style={{ fontSize: 10, color: "var(--fg-mute)" }}>rule-read</div>}
                       {e.redundant_with && <div style={{ fontSize: 10, color: "var(--fg-mute)" }}>already in {e.redundant_with}</div>}
                       {!e.matters && !e.redundant_with && <div style={{ fontSize: 10, color: "var(--fg-mute)" }}>below threshold</div>}
                     </td>
@@ -189,6 +193,8 @@ export default async function LiquidityWatchPage({
               <div key={k}><b className="mono" style={{ color: "var(--fg)" }}>{n}</b> {k.replace("_", " ")}</div>
             ))}
             <div style={{ marginTop: 8, color: "var(--fg-mute)", fontSize: 11.5 }}>
+              Reader: {h.reader === "claude" ? "Claude (verified by code)" : h.reader === "rules"
+                ? "free rule reader (verified by the same code; Claude reads more when a key is added)" : "none yet"}.{" "}
               Last read: {lastIso ? lastIso.replace("T", " ").replace("Z", "") : "never"} (UTC). Sources: The Daily Star, The Business Standard,
               Prothom Alo English, Dhaka Tribune, The Daily Observer. Bangladesh Bank&apos;s own releases are on the
               Press Releases page.

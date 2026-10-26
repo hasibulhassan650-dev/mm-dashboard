@@ -121,6 +121,12 @@ def backfill(session, client, since: datetime.date, now: datetime.datetime = Non
     fetch_body = fetch_body or N.fetch_body
     queries = queries or QUERIES
     stats = {"searches": 0, "urls_found": 0, "new_articles": 0, "search_errors": [], "budget_hit": False}
+    # Articles the free rule reader has already read get a second, better reading by Claude:
+    # the rules are the floor, and a key arriving later should lift what is already stored.
+    from sqlalchemy import text as _t
+    stats["reread_by_claude"] = session.execute(_t(
+        "UPDATE news_articles SET triage_status = 'untriaged' "
+        "WHERE triage_model = :m AND body_text IS NOT NULL"), {"m": T.R.RULES_MODEL}).rowcount
     since_dt = datetime.datetime.combine(since, datetime.time())
     for month in months_between(since, now.date()):
         for q in queries:

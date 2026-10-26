@@ -451,7 +451,7 @@ export interface NewsEvent {
   event_date: string | null; announced_date: string | null; when: string | null;
   status: string | null; channel: string | null; counterparty: string | null;
   summary: string; evidence_quote: string; confidence: number; matters: boolean;
-  redundant_with: string | null; verified_by: string;
+  redundant_with: string | null; verified_by: string; is_cumulative?: boolean;
   sources: { url: string; source: string; title: string; published?: string }[];
 }
 export interface NewsFeed {
@@ -459,11 +459,12 @@ export interface NewsFeed {
   totals: {
     month_inject_crore: number; month_absorb_crore: number; fy_inject_crore: number;
     fy_absorb_crore: number; events_counted: number; events_without_amount: number;
+    events_cumulative?: number;
   };
   monthly: { month: string; inject_crore: number; absorb_crore: number; events: number }[];
   hidden: { redundant: number; minor: number };
   health: { last_fetch_utc: string | null; articles_waiting_for_claude: number;
-            articles_by_status: Record<string, number> };
+            articles_by_status: Record<string, number>; reader?: "rules" | "claude" | "none yet" };
   events: NewsEvent[];
 }
 

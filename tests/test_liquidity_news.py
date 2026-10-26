@@ -319,13 +319,14 @@ class TestTriage:
         st = T.triage_pending(s, c, NOW, fetch_body=lambda u: None)
         assert st["skipped"] == 1 and c.calls == []
 
-    def test_no_key_keeps_candidates_untriaged_and_says_so(self):
-        """Never silently drop what could not be read."""
+    def test_no_key_still_reads_the_article_with_the_free_rule_reader_and_says_so(self):
+        """A key is a bill, so no key must not mean no reading (see test_news_rules.py)."""
         s = _mem()
         _article(s)
         st = T.triage_pending(s, None, NOW, fetch_body=lambda u: None)
-        assert st["no_key"] and st["untriaged_left"] == 1
-        assert s.query(NewsArticle).one().triage_status == "untriaged"
+        assert st["no_key"] and st["mode"] == "rules" and st["untriaged_left"] == 0
+        assert s.query(NewsArticle).one().triage_status == "extracted"
+        assert any("rule reader" in r for r in st["reasons"])
 
     def test_a_refusal_is_an_error_to_retry_not_a_silent_skip(self):
         s = _mem()

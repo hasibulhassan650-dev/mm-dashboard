@@ -186,6 +186,7 @@ def validate_event(raw: Dict, article: Dict) -> Tuple[Optional[Dict], List[str]]
     ev = {
         "kind": kind, "direction": KINDS[kind], "amount_crore": amount,
         "amount_unverified": unverified,
+        "is_cumulative": bool(raw.get("is_cumulative")),
         "event_date": near(raw.get("event_date")), "announced_date": near(raw.get("announced_date")) or (pub if pub else None),
         "status": status if status in STATUSES else None,
         "channel": channel if channel in CHANNELS else None,
@@ -223,7 +224,9 @@ def same_counterparty(a: Optional[str], b: Optional[str]) -> bool:
 def dedupe_key(ev: Dict) -> str:
     d = ev.get("event_date") or ev.get("announced_date")
     amt = ev.get("amount_crore")
-    return f"{ev['kind']}|{_cp(ev.get('counterparty'))[:40]}|{round(amt) if amt else 'na'}|{d.strftime('%Y-%m') if d else 'na'}"
+    # A running total and a single payment of the same size are different facts.
+    return (f"{ev['kind']}|{_cp(ev.get('counterparty'))[:40]}|{round(amt) if amt else 'na'}|"
+            f"{d.strftime('%Y-%m') if d else 'na'}|{'cum' if ev.get('is_cumulative') else 'one'}")
 
 
 _RANK = {s: i for i, s in enumerate(STATUSES)}
@@ -235,13 +238,16 @@ def _src(article: Dict) -> Dict:
             "published": pub.isoformat() if hasattr(pub, "isoformat") else pub}
 
 
-def merge_or_create(session, ev: Dict, article: Dict, now: datetime.datetime = None):
+def merge_or_create(session, ev: Dict, article: Dict, now: datetime.datetime = None,
+                    verified_by: str = "llm"):
     """Fold a validated event into the stored ones. Returns (row, 'created'|'merged')."""
     from db import LiquidityEvent, LiquidityEventHistory
     now = now or datetime.datetime.utcnow()
     anchor = ev.get("event_date") or ev.get("announced_date")
     match = None
     for row in session.query(LiquidityEvent).filter(LiquidityEvent.kind == ev["kind"]).all():
+        if bool(row.is_cumulative) != bool(ev.get("is_cumulative")):
+            continue
         if not same_counterparty(row.counterparty, ev.get("counterparty")):
             continue
         a, b = row.amount_crore, ev.get("amount_crore")
@@ -283,11 +289,12 @@ def merge_or_create(session, ev: Dict, article: Dict, now: datetime.datetime = N
     row = LiquidityEvent(
         dedupe_key=dedupe_key(ev), kind=ev["kind"], direction=ev["direction"],
         amount_crore=ev.get("amount_crore"), amount_unverified=ev.get("amount_unverified", False),
+        is_cumulative=bool(ev.get("is_cumulative")),
         event_date=ev.get("event_date"), announced_date=ev.get("announced_date"),
         status=ev.get("status"), channel=ev.get("channel"), counterparty=ev.get("counterparty"),
         summary=ev.get("summary"), evidence_quote=ev["evidence_quote"],
         sources_json=json.dumps([_src(article)]), confidence=ev.get("confidence"),
-        matters=matters(ev), first_seen_utc=now, updated_utc=now, verified_by="llm")
+        matters=matters(ev), first_seen_utc=now, updated_utc=now, verified_by=verified_by)
     session.add(row)
     session.flush()
     return row, "created"
