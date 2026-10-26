@@ -111,16 +111,28 @@ SCREEN_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["
 
 
 def get_client():
-    """An Anthropic client, or None when there is no key (nothing is dropped then)."""
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        return None
-    import anthropic
-    return anthropic.Anthropic()
+    """The best reader available: Claude if there is a key, else a free-tier OpenAI-compatible
+    model if LLM_* is configured, else None - and None means the free rule reader, not no reading."""
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        import anthropic
+        return anthropic.Anthropic()
+    from engines.llm_provider import from_env
+    return from_env()
+
+
+def _is_free_provider(client) -> bool:
+    return hasattr(client, "chat_json")
+
+
+def _model_tag(client, fallback: str) -> str:
+    return getattr(client, "model_tag", fallback)
 
 
 def _ask(client, model: str, system: str, user: str, schema: Dict, effort: str,
          max_tokens: int) -> Dict:
     """One structured call. Raises TriageError on a refusal, truncation or bad JSON."""
+    if _is_free_provider(client):
+        return client.chat_json(system, user, schema, max_tokens)
     resp = client.messages.create(
         model=model, max_tokens=max_tokens, system=system,
         output_config={"effort": effort, "format": {"type": "json_schema", "schema": schema}},
@@ -137,6 +149,8 @@ def _ask(client, model: str, system: str, user: str, schema: Dict, effort: str,
 
 
 def screen(client, article: Dict) -> bool:
+    if getattr(client, "skip_screen", False):
+        return True            # a free tier is spent on reading, not on a second opinion
     body = (article.get("body_text") or article.get("summary") or "")[:SCREEN_CHARS]
     out = _ask(client, SCREEN_MODEL, SCREEN_SYSTEM, f"Title: {article['title']}\n\n{body}",
                SCREEN_SCHEMA, "low", 2000)
@@ -276,7 +290,7 @@ def triage_pending(session, client, now: datetime.datetime,
             stats["extracted"] += 1
         session.flush()
         return stats
-    stats["mode"] = "claude"
+    stats["mode"] = "llm" if _is_free_provider(client) else "claude"
 
     budget_left = max_calls_per_day - calls_today(session, now)
     screens = extracts = 0
@@ -287,7 +301,7 @@ def triage_pending(session, client, now: datetime.datetime,
                 raise _Budget()
             screens += 1
             budget_left -= 1
-            a.triage_model, a.triage_utc = SCREEN_MODEL, now
+            a.triage_model, a.triage_utc = _model_tag(client, SCREEN_MODEL), now
             if not screen(client, art):
                 a.triage_status = "screened_out"
                 stats["screened_out"] += 1
@@ -296,7 +310,7 @@ def triage_pending(session, client, now: datetime.datetime,
                 raise _Budget()
             extracts += 1
             budget_left -= 1
-            a.triage_model = EXTRACT_MODEL
+            a.triage_model = _model_tag(client, EXTRACT_MODEL)
             raw_events = extract(client, art)
             a.triage_json = json.dumps(raw_events)[:20000]
             _store_events(session, raw_events, art, now, stats, "llm", a.url)
@@ -305,14 +319,23 @@ def triage_pending(session, client, now: datetime.datetime,
         except _Budget:
             stats["budget_hit"] = True
             stats["untriaged_left"] += 1
-        except TriageError as exc:
-            a.triage_status, a.triage_json = "error", str(exc)[:500]
+        except (TriageError, Exception) as exc:          # model, network, SDK, anything else
+            msg = f"{type(exc).__name__}: {exc}"[:500]
             stats["errors"] += 1
-            stats["reasons"].append(f"{a.url}: {exc}")
-        except Exception as exc:                         # network, SDK, anything else
-            a.triage_status, a.triage_json = "error", f"{type(exc).__name__}: {exc}"[:500]
-            stats["errors"] += 1
-            stats["reasons"].append(f"{a.url}: {type(exc).__name__}: {exc}")
+            stats["reasons"].append(f"{a.url}: {msg}")
+            if _is_free_provider(client):
+                # A free tier fails routinely (rate limit, bad model name). The article is still
+                # read, by the rule reader, so coverage never drops below the floor - and the
+                # failure above is still counted, so a misconfiguration is fixed, not hidden.
+                a.triage_model, a.triage_utc = R.RULES_MODEL, now
+                raw_events = R.extract(art)
+                a.triage_json = json.dumps(raw_events)[:20000]
+                _store_events(session, raw_events, art, now, stats, "rules", a.url)
+                a.triage_status = "extracted"
+                stats["extracted"] += 1
+                stats["llm_fallbacks"] = stats.get("llm_fallbacks", 0) + 1
+            else:
+                a.triage_status, a.triage_json = "error", msg
     session.flush()
     return stats
 

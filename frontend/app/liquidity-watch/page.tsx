@@ -193,7 +193,8 @@ export default async function LiquidityWatchPage({
               <div key={k}><b className="mono" style={{ color: "var(--fg)" }}>{n}</b> {k.replace("_", " ")}</div>
             ))}
             <div style={{ marginTop: 8, color: "var(--fg-mute)", fontSize: 11.5 }}>
-              Reader: {h.reader === "claude" ? "Claude (verified by code)" : h.reader === "rules"
+              Reader: {h.reader === "claude" ? "Claude (verified by code)" : h.reader === "llm"
+                ? "a free-tier language model (verified by the same code; the rule reader covers any call that fails)" : h.reader === "rules"
                 ? "free rule reader (verified by the same code; Claude reads more when a key is added)" : "none yet"}.{" "}
               Last read: {lastIso ? lastIso.replace("T", " ").replace("Z", "") : "never"} (UTC). Sources: The Daily Star, The Business Standard,
               Prothom Alo English, Dhaka Tribune, The Daily Observer. Bangladesh Bank&apos;s own releases are on the

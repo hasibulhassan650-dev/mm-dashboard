@@ -92,7 +92,8 @@ def news_block(session, today: datetime.date = None, days: int = 120,
         "SELECT triage_model FROM news_articles WHERE triage_status = 'extracted' "
         "AND triage_model IS NOT NULL ORDER BY triage_utc DESC LIMIT 1")).fetchone()
     reader = ("none yet" if not reader_row else
-              "rules" if str(reader_row[0]).startswith("rules") else "claude")
+              "rules" if str(reader_row[0]).startswith("rules") else
+              "llm" if str(reader_row[0]).startswith("llm:") else "claude")
     return {
         "as_of": str(today), "window_days": days,
         "fiscal_year_start": fy,

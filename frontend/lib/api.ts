@@ -464,7 +464,7 @@ export interface NewsFeed {
   monthly: { month: string; inject_crore: number; absorb_crore: number; events: number }[];
   hidden: { redundant: number; minor: number };
   health: { last_fetch_utc: string | null; articles_waiting_for_claude: number;
-            articles_by_status: Record<string, number>; reader?: "rules" | "claude" | "none yet" };
+            articles_by_status: Record<string, number>; reader?: "rules" | "claude" | "llm" | "none yet" };
   events: NewsEvent[];
 }
 
