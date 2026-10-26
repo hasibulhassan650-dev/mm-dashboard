@@ -243,7 +243,16 @@ class TestABlockedResponseIsNotBBChangingItsPage:
         out = self._fetch(monkeypatch, 403, "x")
         assert SW.compare(None, out["meta"])[0] == "unread"
 
-    def test_a_200_with_no_table_is_still_a_structural_finding(self, monkeypatch):
-        """The distinction has to cut both ways."""
-        out = self._fetch(monkeypatch, 200, "<html><body>nothing here</body></html>")
+    def test_a_full_size_200_with_no_table_is_still_a_structural_finding(self, monkeypatch):
+        """The distinction has to cut both ways: a REAL page (tens of kilobytes) that has
+        lost its table is BB reorganising it."""
+        page = "<html><body>" + "<p>Bangladesh Bank navigation and content</p>" * 600 + "</body></html>"
+        out = self._fetch(monkeypatch, 200, page)
         assert out["meta"]["error"] and not out["meta"]["transport_error"]
+
+    def test_a_tiny_200_with_no_table_is_a_block_page_not_a_restructure(self, monkeypatch):
+        """The GitHub runner was served a few kilobytes with no table and the guardian
+        reported 'BB changed its page AND the parse got worse'. It had been blocked."""
+        out = self._fetch(monkeypatch, 200, "<html><body>nothing here</body></html>")
+        assert out["meta"]["transport_error"] and not out["meta"]["error"]
+        assert out["rows"] == []

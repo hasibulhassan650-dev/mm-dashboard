@@ -1128,13 +1128,20 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
             if iss and span and span[0][0]:
                 lo, hi = (x if hasattr(x, "year") else datetime.date.fromisoformat(str(x)[:10])
                           for x in span[0])
+                # rebuild_daily_flows derives sukuk cash only over its own window (120 days
+                # back, 365 forward). Older ladder rows predate the sukuk line, and BB's
+                # outstanding table no longer lists the issues that have matured, so history
+                # cannot be rebuilt honestly - comparing it would flag every old row.
+                lo = max(lo, datetime.date.today() - datetime.timedelta(days=120))
+                hi = min(hi, datetime.date.today() + datetime.timedelta(days=365))
                 want: dict = {}
                 for f in sukuk_cash_flows(iss, lo, hi):
                     k = str(f["payment_date"])
                     want[k] = want.get(k, 0.0) + f["amount_bdt_mill"]
                 have = {str(r[0])[:10]: float(r[1] or 0) for r in q(
                     "SELECT flow_date, sukuk_inflow_bdt_mill FROM daily_net_flow "
-                    "WHERE sukuk_inflow_bdt_mill > 0")}
+                    "WHERE sukuk_inflow_bdt_mill > 0 AND flow_date BETWEEN :lo AND :hi",
+                    lo=lo, hi=hi)}
                 for d in sorted(set(want) | set(have)):
                     a, e = have.get(d, 0.0), want.get(d, 0.0)
                     if abs(a - e) > max(1.0, e * 0.001):

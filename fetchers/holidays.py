@@ -206,6 +206,14 @@ def fetch_holidays() -> dict:
         return {"rows": [], "refused": {}, "reason": f"{type(exc).__name__} {exc}",
                 "meta": SW.fingerprint("holidays", BB_HOLIDAY_URL,
                                        transport_error=f"{type(exc).__name__} {exc}")}
+    # A 200 with no table and only a few kilobytes is a block or challenge page served to
+    # this address, not BB reorganising its page - and recording it as the latter raised a
+    # false "BB changed AND the parse got worse" alarm from the GitHub runner.
+    if "<table" not in html.lower() and len(html) < 15000:
+        from fetchers import source_watch as SW
+        return {"rows": [], "refused": {}, "reason": f"{len(html)}-byte page without a table (blocked?)",
+                "meta": SW.fingerprint("holidays", BB_HOLIDAY_URL,
+                                       transport_error=f"{len(html)}-byte page without a table")}
     out = parse_page(html)
     if not out["rows"]:
         out["reason"] = (out["meta"].get("error")

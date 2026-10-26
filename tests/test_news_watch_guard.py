@@ -132,3 +132,24 @@ def test_the_news_workflow_exists_with_its_secret_and_no_cancel_on_progress():
 def test_the_requirements_pin_anthropic_with_an_upper_bound():
     req = open(os.path.join(_ROOT, "requirements.txt"), encoding="utf-8").read()
     assert "anthropic>=" in req and "<3" in req
+
+
+def test_the_sukuk_reconciliation_only_covers_the_window_the_ladder_is_rebuilt_over(monkeypatch):
+    """Older ladder rows predate the sukuk line and matured issues are off BB's table, so
+    comparing history would flag every old row for something that cannot be rebuilt."""
+    old = datetime.date.today() - datetime.timedelta(days=400)
+
+    def pop(s):
+        s.add(dbmod.SukukOutstanding(isin="BDS1", project="p", issue_date=old - datetime.timedelta(days=1000),
+                                     maturity_date=old + datetime.timedelta(days=10000), outstanding_crore=1000.0,
+                                     profit_rate_pct=10.0, profit_frequency="Half Yearly"))
+        s.add(dbmod.DailyNetFlow(flow_date=old, coupon_inflow_bdt_mill=0, principal_inflow_bdt_mill=0,
+                                 total_inflow_bdt_mill=0, auction_outflow_confirmed_mill=0,
+                                 auction_outflow_best_mill=0, data_complete=True))
+        s.add(dbmod.DailyNetFlow(flow_date=datetime.date.today(), coupon_inflow_bdt_mill=0,
+                                 principal_inflow_bdt_mill=0, total_inflow_bdt_mill=0,
+                                 auction_outflow_confirmed_mill=0, auction_outflow_best_mill=0,
+                                 data_complete=True))
+    rep = _check(monkeypatch, pop)
+    assert not [i for i in _mine(rep, "ladder-recon") if "sukuk" in i and str(old.year) in i[:30]
+                and i.split(":")[1].strip()[:10] == str(old)]

@@ -185,3 +185,34 @@ class TestStoringAndAnnouncing:
     def test_the_weekly_job_runs_the_step(self):
         src = open(os.path.join(_ROOT, "weekly_fetch.py"), encoding="utf-8").read()
         assert "run_sukuk_fetch" in src
+
+
+class TestABlockedPageIsNotBBRestructuring:
+    """The GitHub runner got a 200 with no table. Recording that as 'BB changed its page and
+    the parse got worse' is a false alarm about BB and hides that this runner was blocked."""
+
+    def test_a_tiny_page_without_a_table_is_a_transport_error(self, monkeypatch):
+        import curl_cffi.requests as cr
+
+        class R:
+            status_code, text, url = 200, "<html><body>Please enable JS</body></html>", "u"
+
+            def raise_for_status(self):
+                pass
+        monkeypatch.setattr(cr, "get", lambda *a, **k: R())
+        out = S.fetch_sukuk()
+        assert out["outstanding"] == []
+        assert out["meta"]["transport_error"] and not out["meta"]["error"]
+
+    def test_the_real_page_still_parses(self, monkeypatch):
+        import curl_cffi.requests as cr
+        real = _read("bgis_outstanding.html")
+
+        class R:
+            status_code, url = 200, "u"
+            text = real + (" " * 20000)          # a real page is large
+
+            def raise_for_status(self):
+                pass
+        monkeypatch.setattr(cr, "get", lambda *a, **k: R())
+        assert len(S.fetch_sukuk()["outstanding"]) == 11
