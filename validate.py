@@ -156,9 +156,23 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
         for r in q("SELECT auction_date, tenor_label, cutoff_yield_pct FROM primary_yield_snapshots "
                    "WHERE cutoff_yield_pct <= 0 OR cutoff_yield_pct > 30"):
             add("yields", f"{r[0]} {r[1]} implausible cut-off {r[2]}%")
-        for r in q("SELECT auction_date, tenor_label, cutoff_yield_pct FROM primary_yield_snapshots "
+        # A bill's cut-off below 1% outside the COVID window USED to be called a parse
+        # error unconditionally. It is not: in mid and late 2018 BB really accepted
+        # 91-day bills at 0.5-1.0% (banks were flush), and a refetch of that history
+        # raised twelve false alarms. BB prints a second, independent figure on the same
+        # row - the weighted-average PRICE - so the test is whether the two agree.
+        # A price of 99.78 on a 91-day bill IS a yield of about 0.9%; a parse error
+        # that put 0.99 where 3.0 belongs would sit beside a price near 99.25 and
+        # disagree by two points. Bonds and rows with no price keep the old rule.
+        for r in q("SELECT auction_date, tenor_label, cutoff_yield_pct, weighted_avg_price "
+                   "FROM primary_yield_snapshots "
                    "WHERE cutoff_yield_pct > 0 AND cutoff_yield_pct < 1.0 "
                    "AND (auction_date < :lo OR auction_date > :hi)", lo=_COVID_LO, hi=_COVID_HI):
+            lbl, price = str(r[1]), r[3]
+            if lbl.endswith("D") and lbl[:-1].isdigit() and price and float(price) > 0:
+                implied = (100.0 / float(price) - 1.0) * 365.0 / int(lbl[:-1]) * 100.0
+                if abs(implied - float(r[2])) <= 1.0:
+                    continue          # BB's own price confirms the low yield
             add("yields", f"{r[0]} {r[1]} sub-1% ({r[2]}%) outside COVID window — likely parse error")
         for r in q("SELECT DISTINCT tenor_label FROM primary_yield_snapshots"):
             if r[0] not in _YIELD_TENORS:

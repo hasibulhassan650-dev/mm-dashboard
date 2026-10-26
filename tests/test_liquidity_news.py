@@ -441,3 +441,40 @@ def test_the_threshold_and_kinds_are_defined_in_code_not_by_the_model():
     assert set(L.KINDS.values()) == {"INJECT", "ABSORB", "NEUTRAL"}
     assert L.MATTERS_MIN_CRORE == 500.0 and L.MATTERS_MIN_CONFIDENCE == 0.6
     assert set(T._KIND_HELP) == set(L.KINDS), "every kind needs a definition in the prompt"
+
+
+class TestExitCode:
+    def test_one_blocked_source_does_not_turn_the_job_red(self, monkeypatch, capsys):
+        """The Observer returns 403 to a GitHub runner. A job that is red every half hour
+        for one source is a job nobody looks at when it is red for a real reason."""
+        s = _mem()
+        monkeypatch.setattr(T, "get_client", lambda: None)
+        res = {"sources": {"a": 5, "b": 0, "c": 5, "d": 5}, "problems": ["b: HTTP 403"], "new_articles": 0,
+               "triage": {"no_key": True, "untriaged_left": 0, "budget_hit": False, "errors": 0}}
+        monkeypatch.setattr(T, "run", lambda *a, **k: res)
+        import db
+        monkeypatch.setattr(db, "get_session", lambda: s)
+        monkeypatch.setattr(db, "init_db", lambda: None)
+        assert T.main(["run"]) == 0
+
+    def test_most_sources_gone_is_red(self, monkeypatch):
+        s = _mem()
+        monkeypatch.setattr(T, "get_client", lambda: None)
+        res = {"sources": {"a": 0, "b": 0, "c": 5}, "problems": ["a: HTTP 403", "b: HTTP 403"], "new_articles": 0,
+               "triage": {"no_key": True, "untriaged_left": 0, "budget_hit": False, "errors": 0}}
+        monkeypatch.setattr(T, "run", lambda *a, **k: res)
+        import db
+        monkeypatch.setattr(db, "get_session", lambda: s)
+        monkeypatch.setattr(db, "init_db", lambda: None)
+        assert T.main(["run"]) == 1
+
+    def test_a_model_error_is_red(self, monkeypatch):
+        s = _mem()
+        monkeypatch.setattr(T, "get_client", lambda: None)
+        res = {"sources": {"a": 5}, "problems": [], "new_articles": 0,
+               "triage": {"no_key": False, "untriaged_left": 0, "budget_hit": False, "errors": 2}}
+        monkeypatch.setattr(T, "run", lambda *a, **k: res)
+        import db
+        monkeypatch.setattr(db, "get_session", lambda: s)
+        monkeypatch.setattr(db, "init_db", lambda: None)
+        assert T.main(["run"]) == 1

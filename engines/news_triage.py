@@ -214,6 +214,8 @@ def triage_pending(session, client, now: datetime.datetime,
             stats["bodies"] += 1
             if body:
                 a.body_text = body
+            else:
+                stats["bodies_unreadable"] = stats.get("bodies_unreadable", 0) + 1
         score, passes = L.keyword_score(a.title, a.body_text or a.summary or "")
         a.keyword_score = score
         if not passes:
@@ -328,7 +330,12 @@ def main(argv=None) -> int:
         # fail loud: the job must go red when the watch cannot do its job
         # No key is NOT a failed job (it would email every half hour until the key is
         # added); it is a standing defect the integrity check and the digest report.
-        return 1 if t["budget_hit"] or t["errors"] or res["problems"] else 0
+        # One source blocking the runner (the Observer and Dhaka Tribune return 403 to a
+        # datacenter address) is recorded by its fingerprint and printed above; it must
+        # not turn the job red every half hour. Red means the watch cannot do its job:
+        # the model calls failed, a budget was hit, or most of the sources are gone.
+        sources_down = len(res["problems"]) * 2 > max(1, len(res["sources"]))
+        return 1 if t["budget_hit"] or t["errors"] or sources_down else 0
     finally:
         s.close()
 
