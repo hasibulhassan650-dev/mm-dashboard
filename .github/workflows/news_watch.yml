@@ -22,9 +22,13 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "run (default) or list"
+        description: "run (default), backfill (search the web month by month since the date below) or list"
         required: false
         default: "run"
+      since:
+        description: "backfill only: first date to cover"
+        required: false
+        default: "2026-07-01"
 
 permissions:
   contents: read
@@ -53,9 +57,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
       - name: Read the news
-        run: python -m engines.news_triage ${{ inputs.action || 'run' }}
+        run: python -m engines.news_triage ${{ inputs.action || 'run' }} --since "${{ inputs.since || '2026-07-01' }}"
       - name: Announce events that matter
-        if: ${{ !cancelled() }}
+        # Never after a backfill: its events are history and are already marked announced.
+        if: ${{ !cancelled() && inputs.action != 'backfill' }}
         run: python -m engines.announce publish
       - name: Data integrity gate
         # The gate files or updates the same alert issue the hourly refresh does. It is

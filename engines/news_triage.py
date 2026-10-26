@@ -185,9 +185,17 @@ def calls_today(session, now: datetime.datetime) -> int:
 
 
 def triage_pending(session, client, now: datetime.datetime,
-                   fetch_body: Callable[[str], Optional[str]]) -> Dict:
-    """Score, screen and extract the articles still waiting. Budgeted; never silent."""
+                   fetch_body: Callable[[str], Optional[str]],
+                   max_screens: int = None, max_extracts: int = None, max_bodies: int = None,
+                   max_calls_per_day: int = None) -> Dict:
+    """Score, screen and extract the articles still waiting. Budgeted; never silent.
+
+    The limits default to the module's per-run caps; a backfill passes larger ones."""
     from db import NewsArticle
+    max_screens = MAX_SCREENS if max_screens is None else max_screens
+    max_extracts = MAX_EXTRACTS if max_extracts is None else max_extracts
+    max_bodies = MAX_BODY_FETCHES if max_bodies is None else max_bodies
+    max_calls_per_day = MAX_CALLS_PER_DAY if max_calls_per_day is None else max_calls_per_day
     stats = {"bodies": 0, "skipped": 0, "screened_out": 0, "extracted": 0, "events_created": 0,
              "events_merged": 0, "events_rejected": 0, "errors": 0, "untriaged_left": 0,
              "budget_hit": False, "no_key": client is None, "reasons": []}
@@ -198,7 +206,11 @@ def triage_pending(session, client, now: datetime.datetime,
     work = []
     for a in pend:
         score, passes = L.keyword_score(a.title, a.summary or "")
-        if not passes and not a.body_text:
+        # An article a web search surfaced for a liquidity query has already been judged
+        # relevant by the search; it goes straight to having its body read, where the
+        # keyword filter and then the guards still apply.
+        found_by_search = (a.source or "").startswith("search:")
+        if not passes and not a.body_text and not found_by_search:
             # the blurb is too short to judge a long article; the title carrying an
             # actor and an action is the minimum worth a body fetch
             tscore, tpass = L.keyword_score(a.title, "")
@@ -207,7 +219,7 @@ def triage_pending(session, client, now: datetime.datetime,
                 stats["skipped"] += 1
                 continue
         if not a.body_text:
-            if stats["bodies"] >= MAX_BODY_FETCHES:
+            if stats["bodies"] >= max_bodies:
                 stats["untriaged_left"] += 1         # out of fetch budget: try next run, do not judge it blind
                 continue
             body = fetch_body(a.url)
@@ -230,12 +242,12 @@ def triage_pending(session, client, now: datetime.datetime,
         session.flush()
         return stats
 
-    budget_left = MAX_CALLS_PER_DAY - calls_today(session, now)
+    budget_left = max_calls_per_day - calls_today(session, now)
     screens = extracts = 0
     for a in work:
         art = _article_dict(a)
         try:
-            if budget_left <= 0 or screens >= MAX_SCREENS:
+            if budget_left <= 0 or screens >= max_screens:
                 raise _Budget()
             screens += 1
             budget_left -= 1
@@ -244,7 +256,7 @@ def triage_pending(session, client, now: datetime.datetime,
                 a.triage_status = "screened_out"
                 stats["screened_out"] += 1
                 continue
-            if budget_left <= 0 or extracts >= MAX_EXTRACTS:
+            if budget_left <= 0 or extracts >= max_extracts:
                 raise _Budget()
             extracts += 1
             budget_left -= 1
@@ -312,7 +324,9 @@ def run(session, client=None, now: datetime.datetime = None, sources: Optional[L
 def main(argv=None) -> int:
     import argparse
     ap = argparse.ArgumentParser(description="Liquidity Watch: read Bangladesh's financial news")
-    ap.add_argument("action", choices=("run", "list"))
+    ap.add_argument("action", choices=("run", "list", "backfill"))
+    ap.add_argument("--since", default="2026-07-01",
+                    help="backfill: first date to cover (default: start of FY2026-27)")
     a = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     from db import get_session, init_db
@@ -324,6 +338,16 @@ def main(argv=None) -> int:
             for e in s.query(LiquidityEvent).order_by(LiquidityEvent.event_date.desc().nullslast()).limit(50):
                 print(e.event_date, e.kind, e.amount_crore, e.status, e.counterparty, "|", e.summary)
             return 0
+        if a.action == "backfill":
+            client = get_client()
+            if client is None:
+                print("backfill needs ANTHROPIC_API_KEY (it searches the web through Claude)")
+                return 1
+            from engines.news_backfill import backfill
+            res = backfill(s, client, datetime.date.fromisoformat(a.since))
+            print(json.dumps(res, indent=2, default=str))
+            t = res["triage"]
+            return 1 if res["search_errors"] or t["errors"] or t["budget_hit"] or res["budget_hit"] else 0
         res = run(s, get_client())
         print(json.dumps(res, indent=2, default=str))
         t = res["triage"]
