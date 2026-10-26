@@ -108,6 +108,31 @@ def check_response(resp) -> None:
     resp.raise_for_status()
 
 
+_BLOCK_MARKERS = ("request rejected", "support id", "captcha", "enable javascript", "access denied",
+                  "human visitor", "incapsula", "tspd", "just a moment", "attention required")
+
+
+def looks_blocked_page(html: Optional[str]) -> bool:
+    """A 200 with no table that is a block/challenge page rather than BB's own content.
+
+    Two signals, either is enough: a few kilobytes of body (a real BB page is tens of kB), or
+    the vocabulary of a bot challenge. A genuine restructure of a real page - big, no challenge
+    wording - is NOT matched, so it is still reported as BB changing its page."""
+    if not html or "<table" in html.lower():
+        return False
+    low = html.lower()
+    return len(html) < 15000 or any(m in low for m in _BLOCK_MARKERS)
+
+
+def describe_page(html: Optional[str], n: int = 160) -> str:
+    """What the page said, in one short line, for the run log: '2,310 bytes: "Please enable..."'.
+    A guardian message that cannot tell you what the page was is a message you cannot act on."""
+    import re
+    txt = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", html or "", flags=re.S | re.I)
+    txt = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", txt)).strip()
+    return f"{len(html or ''):,} bytes: {txt[:n]!r}"
+
+
 def unreachable_now() -> bool:
     """True when THIS process's latest probe got no answer from any BB URL."""
     return bool(LAST_PROBE and LAST_PROBE.get("state") == "unreachable")

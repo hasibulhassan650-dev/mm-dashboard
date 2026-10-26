@@ -216,3 +216,30 @@ class TestABlockedPageIsNotBBRestructuring:
                 pass
         monkeypatch.setattr(cr, "get", lambda *a, **k: R())
         assert len(S.fetch_sukuk()["outstanding"]) == 11
+
+
+class TestBlockPageDetection:
+    """The runner's holiday page came back 'with no table' and was big enough to slip past the
+    size rule. A block page is recognised by its size OR by challenge wording - and a real, large
+    BB page that has genuinely lost its table is still BB's doing."""
+
+    def test_a_small_page_is_blocked(self):
+        from fetchers.bb_health import looks_blocked_page
+        assert looks_blocked_page("<html>hi</html>")
+
+    def test_a_large_page_with_challenge_wording_is_blocked(self):
+        from fetchers.bb_health import looks_blocked_page
+        assert looks_blocked_page("<html>" + "x" * 30000 + "Request Rejected. Your support ID is: 123</html>")
+
+    def test_a_large_ordinary_page_without_a_table_is_a_restructure_not_a_block(self):
+        from fetchers.bb_health import looks_blocked_page
+        assert not looks_blocked_page("<html><body>" + "<p>Bangladesh Bank news and navigation</p>" * 800 + "</body></html>")
+
+    def test_a_page_with_a_table_is_never_blocked(self):
+        from fetchers.bb_health import looks_blocked_page
+        assert not looks_blocked_page("<table><tr><td>x</td></tr></table>")
+
+    def test_the_run_log_says_what_the_page_actually_was(self):
+        from fetchers.bb_health import describe_page
+        d = describe_page("<html><script>var x=1;</script><body><h1>Please enable JavaScript</h1></body></html>")
+        assert "bytes" in d and "Please enable JavaScript" in d and "var x" not in d

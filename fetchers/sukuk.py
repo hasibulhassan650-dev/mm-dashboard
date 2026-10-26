@@ -162,18 +162,14 @@ def fetch_sukuk() -> dict:
         check_response(r)           # BB's maintenance page is named as such
         return r.text or ""
 
-    def looks_blocked(html: str) -> bool:
-        """A real BB page is tens of kilobytes. A 200 with no table and a few kilobytes of
-        body is a challenge or block page served to this address - a fact about the
-        transport, not BB reorganising its site (which is what 'no table' would record)."""
-        return "<table" not in html.lower() and len(html) < 15000
+    from fetchers.bb_health import describe_page, looks_blocked_page as looks_blocked
 
     try:
         page = get(OUTSTANDING_URL)
         if looks_blocked(page):
-            out["errors"].append(f"sukuk outstanding: page not served ({len(page)} bytes, no table)")
+            out["errors"].append(f"sukuk outstanding: page not served - {describe_page(page)}")
             out["meta"] = SW.fingerprint("sukuk_outstanding", OUTSTANDING_URL,
-                                         transport_error=f"{len(page)}-byte page without a table")
+                                         transport_error=f"block page: {describe_page(page)}")
             page = None
         o = parse_outstanding(page) if page else {"rows": [], "refused": {}, "meta": out["meta"]}
         out["outstanding"], out["meta"] = o["rows"], o["meta"]
