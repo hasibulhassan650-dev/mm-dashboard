@@ -157,12 +157,22 @@ def fetch_sukuk() -> dict:
 
     out = {"outstanding": [], "documents": [], "refused": {}, "errors": [], "meta": None}
 
+    from fetchers.bb_health import describe_page, looks_blocked_page as looks_blocked
+    shared = {"cookies": None}
+
     def get(url):
         r = cr.get(url, impersonate="chrome", timeout=30)
         check_response(r)           # BB's maintenance page is named as such
-        return r.text or ""
-
-    from fetchers.bb_health import describe_page, looks_blocked_page as looks_blocked
+        page = r.text or ""
+        if looks_blocked(page):
+            # A datacenter address is served F5's "Please enable JavaScript" challenge instead of
+            # the page. Clear it once with a real browser and reuse its cookies for every page.
+            try:
+                from fetchers.bb_session import fetch_via_chrome
+                page, shared["cookies"] = fetch_via_chrome(url, cookies=shared["cookies"])
+            except Exception as exc:
+                log.warning("sukuk: Chrome fallback failed for %s: %s", url, type(exc).__name__)
+        return page
 
     try:
         page = get(OUTSTANDING_URL)
@@ -184,7 +194,11 @@ def fetch_sukuk() -> dict:
 
     for kind, url in DOC_PAGES:
         try:
-            d = parse_documents(get(url), kind)
+            page = get(url)
+            if looks_blocked(page):
+                out["errors"].append(f"sukuk {kind.lower()}s: page not served - {describe_page(page)}")
+                continue
+            d = parse_documents(page, kind)
             out["documents"].extend(d["rows"])
             out["refused"].update({f"{kind.lower()}: {k}": v for k, v in d["refused"].items()})
         except Exception as exc:

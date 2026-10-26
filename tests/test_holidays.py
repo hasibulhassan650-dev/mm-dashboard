@@ -251,8 +251,27 @@ class TestABlockedResponseIsNotBBChangingItsPage:
         assert out["meta"]["error"] and not out["meta"]["transport_error"]
 
     def test_a_tiny_200_with_no_table_is_a_block_page_not_a_restructure(self, monkeypatch):
-        """The GitHub runner was served a few kilobytes with no table and the guardian
+        """The GitHub runner was served a challenge with no table and the guardian
         reported 'BB changed its page AND the parse got worse'. It had been blocked."""
+        self._no_chrome(monkeypatch)
         out = self._fetch(monkeypatch, 200, "<html><body>nothing here</body></html>")
         assert out["meta"]["transport_error"] and not out["meta"]["error"]
         assert out["rows"] == []
+
+    def _no_chrome(self, monkeypatch):
+        from fetchers import bb_session
+        monkeypatch.setattr(bb_session, "get_f5_cookies",
+                            lambda *a, **k: (_ for _ in ()).throw(bb_session.F5Unavailable("no browser here")))
+
+    def test_a_challenge_page_is_cleared_by_a_real_browser_and_then_parsed(self, monkeypatch):
+        """From GitHub's runners BB answered 'Please enable JavaScript ... support ID'
+        (45 kB, no table). Chrome clears it; the page behind it is the real one."""
+        from fetchers import bb_session
+        challenge = ("<html><body>Please enable JavaScript to view the page content. Your support ID is: 1. "
+                     "This question is for testing whether you are a human visitor</body></html>" + " " * 40000)
+        real = _page(_row("Durga Puja", "20 & 21 October 2026", "Tuesday", 2)) + " " * 40000
+        seen = {}
+        monkeypatch.setattr(bb_session, "get_f5_cookies", lambda *a, **k: ({"c": "1"}, "ua"))
+        monkeypatch.setattr(bb_session, "bb_get", lambda url, ck, ua: seen.setdefault("html", real))
+        out = self._fetch(monkeypatch, 200, challenge)
+        assert seen and out["rows"], "the browser-fetched page was not used"

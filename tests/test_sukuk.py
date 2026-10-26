@@ -193,6 +193,9 @@ class TestABlockedPageIsNotBBRestructuring:
 
     def test_a_tiny_page_without_a_table_is_a_transport_error(self, monkeypatch):
         import curl_cffi.requests as cr
+        from fetchers import bb_session
+        monkeypatch.setattr(bb_session, "get_f5_cookies",
+                            lambda *a, **k: (_ for _ in ()).throw(bb_session.F5Unavailable("no browser")))
 
         class R:
             status_code, text, url = 200, "<html><body>Please enable JS</body></html>", "u"
@@ -243,3 +246,49 @@ class TestBlockPageDetection:
         from fetchers.bb_health import describe_page
         d = describe_page("<html><script>var x=1;</script><body><h1>Please enable JavaScript</h1></body></html>")
         assert "bytes" in d and "Please enable JavaScript" in d and "var x" not in d
+
+
+class TestTheChromeFallback:
+    def test_a_challenge_is_cleared_once_and_the_cookies_serve_all_three_pages(self, monkeypatch):
+        """Launching Chrome costs a minute or more. The three sukuk pages share one browser."""
+        import curl_cffi.requests as cr
+        from fetchers import bb_session
+        challenge = "<html>Please enable JavaScript to view the page content. Your support ID is: 9</html>" + " " * 40000
+
+        class R:
+            status_code, url, text = 200, "u", challenge
+
+            def raise_for_status(self):
+                pass
+        monkeypatch.setattr(cr, "get", lambda *a, **k: R())
+        launches = []
+        monkeypatch.setattr(bb_session, "get_f5_cookies", lambda *a, **k: launches.append(1) or ({"c": "1"}, "ua"))
+        pad = " " * 20000          # real BB pages are ~45 kB; the saved fixtures are trimmed
+        pages = {S.OUTSTANDING_URL: _read("bgis_outstanding.html") + pad,
+                 S.DOC_PAGES[0][1]: _read("bgis_notices.html") + pad,
+                 S.DOC_PAGES[1][1]: _read("bgis_prospectus.html") + pad}
+        monkeypatch.setattr(bb_session, "bb_get", lambda url, ck, ua: pages[url])
+        out = S.fetch_sukuk()
+        assert len(out["outstanding"]) == 11 and len(out["documents"]) == 22 and out["errors"] == []
+        assert launches == [1], "Chrome must be launched once and its cookies reused"
+
+    def test_a_blocked_documents_page_is_reported_not_silently_empty(self, monkeypatch):
+        import curl_cffi.requests as cr
+        from fetchers import bb_session
+        good = _read("bgis_outstanding.html") + " " * 20000
+        challenge = "<html>Please enable JavaScript. Your support ID is: 9</html>" + " " * 40000
+
+        class R:
+            status_code, url = 200, "u"
+
+            def __init__(self, text):
+                self.text = text
+
+            def raise_for_status(self):
+                pass
+        monkeypatch.setattr(cr, "get", lambda url, **k: R(good if url == S.OUTSTANDING_URL else challenge))
+        monkeypatch.setattr(bb_session, "get_f5_cookies",
+                            lambda *a, **k: (_ for _ in ()).throw(bb_session.F5Unavailable("no browser")))
+        out = S.fetch_sukuk()
+        assert len(out["outstanding"]) == 11 and out["documents"] == []
+        assert sum("page not served" in e for e in out["errors"]) == 2

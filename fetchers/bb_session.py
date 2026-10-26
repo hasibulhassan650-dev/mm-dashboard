@@ -145,6 +145,20 @@ def _precheck(url: str) -> None:
         raise BBMaintenance(f"BB's website is serving its maintenance page at {url}")
 
 
+def fetch_via_chrome(url: str, wait_selector: str = "table", cookies=None) -> tuple:
+    """(html, (cookies, user_agent)): a BB page the way a real browser gets it.
+
+    BB's F5 serves a plain-HTTP client from a datacenter address a 45 kB 'Please enable
+    JavaScript ... support ID ...' challenge instead of the page (seen from GitHub's runners on
+    26-Oct-2026 for the holiday and sukuk pages). A real Chrome clears the challenge once and
+    hands back cookies that plain HTTP then reuses - so pass the cookies a previous call returned
+    and a run that needs three pages launches the browser once, not three times."""
+    if cookies is None:
+        cookies = get_f5_cookies(url, wait_selector)
+    ck, ua = cookies
+    return bb_get(url, ck, ua), cookies
+
+
 def reset_f5_breaker() -> None:
     """For tests, and for a long-lived process that wants a fresh start."""
     global _F5_EXHAUSTED

@@ -211,6 +211,14 @@ def fetch_holidays() -> dict:
     # false "BB changed AND the parse got worse" alarm from the GitHub runner.
     from fetchers.bb_health import describe_page, looks_blocked_page
     if looks_blocked_page(html):
+        # BB's F5 answers a datacenter address with a "Please enable JavaScript" challenge, not
+        # the page. A real browser clears it; only if that also fails is it recorded as a block.
+        try:
+            from fetchers.bb_session import fetch_via_chrome
+            html, _ = fetch_via_chrome(BB_HOLIDAY_URL)
+        except Exception as exc:
+            log.warning("holidays: Chrome fallback failed: %s", type(exc).__name__)
+    if looks_blocked_page(html):
         from fetchers import source_watch as SW
         return {"rows": [], "refused": {}, "reason": f"block page - {describe_page(html)}",
                 "meta": SW.fingerprint("holidays", BB_HOLIDAY_URL,
