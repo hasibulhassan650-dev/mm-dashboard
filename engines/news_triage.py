@@ -31,7 +31,9 @@ EXTRACT_MODEL = "claude-sonnet-5-5"
 MAX_BODY_FETCHES = 40
 MAX_SCREENS = 40
 MAX_EXTRACTS = 15
-MAX_CALLS_PER_DAY = 400
+# The ceiling is a MONEY cap in disguise: each call costs cents, so this bounds a runaway
+# (a feed that suddenly floods, a bug) to roughly a dollar a day. Normal days use a handful.
+MAX_CALLS_PER_DAY = 40
 SCREEN_CHARS = 1500
 
 

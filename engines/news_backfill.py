@@ -148,8 +148,8 @@ def backfill(session, client, since: datetime.date, now: datetime.datetime = Non
     session.flush()
     # Read them all, with the backfill's larger budgets.
     stats["triage"] = T.triage_pending(session, client, now, fetch_body,
-                                       max_screens=400, max_extracts=150, max_bodies=400,
-                                       max_calls_per_day=1200)
+                                       max_screens=250, max_extracts=100, max_bodies=300,
+                                       max_calls_per_day=350)
     stats["marked_as_history"] = mark_history(session, now)
     session.commit()
     return stats
