@@ -158,3 +158,25 @@ by the API; API-only means the form never sends anything.
 A desk mark is never stored as BB data: it lives in its own table, is labelled
 provisional everywhere it appears, and BB's published cut-off is preferred the
 moment it exists.
+
+### Liquidity Watch — runs with nothing to configure
+
+`/liquidity-watch` lists liquidity events reported in the Bangladeshi press that BB's own
+tables do not hold (a subsidy release, government borrowing from BB, support to a bank, a
+CRR/SLR change). The **News Watch** workflow reads the feeds every 30 minutes and needs no
+secret: a free rule reader (`engines/news_rules.py`) does the reading, and every event it
+reports is checked in code (the quote must be in the article, the amount is re-read from it).
+The page says which reader is in use.
+
+Two optional upgrades, both repository **secrets** (Settings → Secrets and variables → Actions):
+
+* **A free language model** — set all three of `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` for
+  any OpenAI-compatible endpoint with a free tier (Gemini: base URL
+  `https://generativelanguage.googleapis.com/v1beta/openai`, key from aistudio.google.com/apikey).
+  A failing call falls back to the rule reader, so nothing goes unread.
+* **Claude** — `ANTHROPIC_API_KEY` (pay-per-token; capped at 40 calls a day). Wins over the free
+  model if both are set, and enables the backfill: run News Watch with `action = backfill`,
+  `since = 2026-07-01` and Claude searches Bangladesh's outlets month by month (history is marked
+  as already announced, so it sends no emails).
+
+News-derived events are never added to a ladder, cumulative or model total.
