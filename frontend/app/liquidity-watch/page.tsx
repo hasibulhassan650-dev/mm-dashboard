@@ -51,7 +51,12 @@ export default async function LiquidityWatchPage({
 
   const t = feed.totals;
   const h = feed.health;
-  const stale = !h.last_fetch_utc || (Date.now() - new Date(h.last_fetch_utc + "Z").getTime()) > 6 * 3600e3;
+  // The API sends "2026-10-26 12:49:49.679364" (a space, microseconds, no zone). Date() cannot
+  // parse that with a "Z" appended, returns NaN, and "NaN > 6h" is false - which silently
+  // turned the staleness banner off. Normalise to ISO first, and treat NaN as stale.
+  const lastIso = h.last_fetch_utc ? h.last_fetch_utc.replace(" ", "T").slice(0, 19) + "Z" : null;
+  const ageMs = lastIso ? Date.now() - new Date(lastIso).getTime() : NaN;
+  const stale = !(ageMs <= 6 * 3600e3);
   const waiting = h.articles_waiting_for_claude;
   const qs = (r: boolean, m: boolean) => `?${r ? "redundant=1&" : ""}${m ? "minor=1" : ""}`.replace(/[?&]$/, "");
 
@@ -184,7 +189,7 @@ export default async function LiquidityWatchPage({
               <div key={k}><b className="mono" style={{ color: "var(--fg)" }}>{n}</b> {k.replace("_", " ")}</div>
             ))}
             <div style={{ marginTop: 8, color: "var(--fg-mute)", fontSize: 11.5 }}>
-              Last read: {h.last_fetch_utc ?? "never"} (UTC). Sources: The Daily Star, The Business Standard,
+              Last read: {lastIso ? lastIso.replace("T", " ").replace("Z", "") : "never"} (UTC). Sources: The Daily Star, The Business Standard,
               Prothom Alo English, Dhaka Tribune, The Daily Observer. Bangladesh Bank&apos;s own releases are on the
               Press Releases page.
             </div>

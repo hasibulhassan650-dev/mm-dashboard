@@ -163,3 +163,13 @@ def test_it_respects_the_api_deploy_boundary():
                 else (n.module or "") for n in ast.walk(ast.parse(src)) if isinstance(n, ast.ImportFrom)}
         mods |= {a.name.split(".")[0] for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Import) for a in n.names}
         assert not mods & {"engines", "fetchers", "config", "calendar_utils"}, (f, mods)
+
+
+def test_the_staleness_banner_can_actually_fire():
+    """The API sends '2026-10-26 12:49:49.679364' (a space, microseconds, no zone). The page
+    once appended 'Z' and handed that to Date(), got NaN, and 'NaN > 6h' is false - so the
+    banner that says the watch has stopped could never appear. It must normalise the string
+    and treat an unreadable age as stale, never as fresh."""
+    src = open(os.path.join(_ROOT, "frontend", "app", "liquidity-watch", "page.tsx"), encoding="utf-8").read()
+    assert '.replace(" ", "T")' in src
+    assert "const stale = !(ageMs <= 6 * 3600e3)" in src
