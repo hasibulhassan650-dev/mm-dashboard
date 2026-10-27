@@ -72,7 +72,10 @@ SCREEN_SYSTEM = (
 
 EXTRACT_SYSTEM = (
     "You extract liquidity events from one Bangladeshi news article for a money-market desk. "
-    "Report ONLY what the article states. Never infer an amount, a date or a status. For every event "
+    "Report ONLY what the article states. Never infer an amount, a date or a status. A REQUEST, "
+    "demand, estimate, projection or plan (\"Petrobangla has requested Tk 27,000 crore\", \"BERC projects\", "
+    "\"the ministry plans to issue\") is NOT an event: report only cash that moved, or that an authority "
+    "has formally decided to move. For every event "
     "give `evidence_quote`: the exact sentence from the article that supports it, copied verbatim. "
     "`amount_crore` is in Bangladeshi crore taka (1 billion taka = 100 crore; 1 million = 0.1 crore; "
     "1 lakh crore = 100,000 crore); null if the article gives no taka amount. `is_cumulative` is true "

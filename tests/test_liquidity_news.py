@@ -479,3 +479,57 @@ class TestExitCode:
         monkeypatch.setattr(db, "get_session", lambda: s)
         monkeypatch.setattr(db, "init_db", lambda: None)
         assert T.main(["run"]) == 1
+
+
+class TestARequestIsNotAnEventWhoeverReportsIt:
+    """From the first real Claude call (26-Oct): over a live article it reported
+    'Petrobangla has requested Tk 27,000 crore' as a subsidy RELEASE. The quote was verbatim and the
+    amount matched, so quote and amount checks passed - only the meaning was wrong. The meaning test
+    now applies to every reader's output."""
+
+    ARTICLE = {"title": "LNG subsidy", "published_utc": datetime.datetime(2026, 8, 20),
+               "body_text": "Petrobangla has requested Tk 27,000 crore for the first six months of FY27. "
+                            "Petrobangla sought Tk 4,200 crore but the finance ministry released only Tk 2,500 crore. "
+                            "Bangladesh Bank will inject fresh liquidity into National Bank Ltd to repay depositors."}
+
+    def _raw(self, quote, **kw):
+        r = {"kind": "SUBSIDY_RELEASE", "direction": "INJECT", "amount_crore": 27000.0, "is_cumulative": False,
+             "event_date": None, "announced_date": None, "status": "ANNOUNCED", "channel": "CASH",
+             "counterparty": "Petrobangla", "summary": "s", "evidence_quote": quote, "confidence": 0.8}
+        r.update(kw)
+        return r
+
+    def test_a_request_is_rejected(self):
+        ev, why = L.validate_event(self._raw(
+            "Petrobangla has requested Tk 27,000 crore for the first six months of FY27."), self.ARTICLE)
+        assert ev is None and "request" in why[0]
+
+    def test_a_sentence_that_both_asks_and_pays_is_kept(self):
+        ev, _ = L.validate_event(self._raw(
+            "Petrobangla sought Tk 4,200 crore but the finance ministry released only Tk 2,500 crore.",
+            amount_crore=2500.0, status="DISBURSED"), self.ARTICLE)
+        assert ev is not None and ev["amount_crore"] == 2500.0
+
+    def test_an_announced_injection_into_a_bank_is_still_an_event(self):
+        ev, _ = L.validate_event(self._raw(
+            "Bangladesh Bank will inject fresh liquidity into National Bank Ltd to repay depositors.",
+            kind="BB_BANK_SUPPORT", amount_crore=None, channel="BB_CREDIT"), self.ARTICLE)
+        assert ev is not None and ev["status"] == "ANNOUNCED"
+
+    def test_a_future_subsidy_with_no_payment_yet_is_not_an_event(self):
+        art = {**self.ARTICLE, "body_text": "The Finance Division will release Tk 3,000 crore for LNG next month, officials said."}
+        ev, _ = L.validate_event(self._raw("The Finance Division will release Tk 3,000 crore for LNG next month, officials said.",
+                                           amount_crore=3000.0), art)
+        # An announced release is kept - as ANNOUNCED, which the page lists but never adds to a total.
+        assert ev is not None and ev["status"] == "ANNOUNCED"
+
+    def test_the_prompt_tells_the_model_the_same(self):
+        assert "REQUEST" in T.EXTRACT_SYSTEM and "is NOT an event" in T.EXTRACT_SYSTEM
+
+
+    def test_a_future_release_labelled_disbursed_by_a_reader_is_forced_to_announced(self):
+        """A mislabelled status would add promised cash to 'injected this month'."""
+        art = {**self.ARTICLE, "body_text": "The Finance Division will release Tk 3,000 crore for LNG next month, officials said."}
+        ev, _ = L.validate_event(self._raw("The Finance Division will release Tk 3,000 crore for LNG next month, officials said.",
+                                           amount_crore=3000.0, status="DISBURSED"), art)
+        assert ev["status"] == "ANNOUNCED"

@@ -173,3 +173,19 @@ def test_the_staleness_banner_can_actually_fire():
     src = open(os.path.join(_ROOT, "frontend", "app", "liquidity-watch", "page.tsx"), encoding="utf-8").read()
     assert '.replace(" ", "T")' in src
     assert "const stale = !(ageMs <= 6 * 3600e3)" in src
+
+
+class TestOnlyCashThatMovedIsAdded:
+    def test_an_announced_or_approved_release_is_listed_but_not_added(self):
+        s = _mem()
+        _ev(s)                                          # DISBURSED 4,000
+        _ev(s, status="ANNOUNCED", amount_crore=3000.0)
+        _ev(s, status="APPROVED", amount_crore=2000.0)
+        _ev(s, status=None, amount_crore=1000.0)
+        b = NL.news_block(s, today=TODAY)
+        assert b["totals"]["month_inject_crore"] == 4000.0 and b["count"] == 4
+
+    def test_a_completed_one_is_added(self):
+        s = _mem()
+        _ev(s, status="COMPLETED", amount_crore=700.0)
+        assert NL.news_block(s, today=TODAY)["totals"]["month_inject_crore"] == 700.0

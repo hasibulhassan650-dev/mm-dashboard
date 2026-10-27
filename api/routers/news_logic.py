@@ -63,7 +63,10 @@ def news_block(session, today: datetime.date = None, days: int = 120,
                and r["direction"] in ("INJECT", "ABSORB")]
     # A running total ("Tk 47bn until mid-August") is listed but never added: the next
     # article's "Tk 70bn until September" would count the first 47bn twice.
-    known = [r for r in counted if r["amount_crore"] is not None and not r["is_cumulative"]]
+    # Only cash that has MOVED is added: an announced or approved release is a promise, and a
+    # status the article never gave is unknown - neither belongs in "injected this month".
+    known = [r for r in counted if r["amount_crore"] is not None and not r["is_cumulative"]
+             and r["status"] in ("DISBURSED", "COMPLETED")]
 
     monthly: Dict[str, Dict] = {}
     for r in known:

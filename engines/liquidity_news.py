@@ -165,6 +165,16 @@ def validate_event(raw: Dict, article: Dict) -> Tuple[Optional[Dict], List[str]]
     if len(quote) < 20 or _norm(quote) not in haystack:
         return None, ["the evidence quote is not in the article"]
 
+    # A REQUEST is not an event. The first real Claude call over a live article reported
+    # "Petrobangla has requested Tk 27,000 crore" as a subsidy release: the quote was verbatim
+    # and the amount matched it, so every other check passed. Only the sentence's meaning was
+    # wrong, so the rule reader's own test of meaning is applied to every reader's output: a
+    # sentence that asks, estimates or plans, and contains no act of paying, is rejected.
+    from engines import news_rules as _R
+    done, future = _R._tense(quote)
+    if _R._REQUEST.search(quote) and not done and not (future and kind in ALWAYS_MATTERS):
+        return None, ["the quote is a request, estimate or plan, not a payment"]
+
     amount, unverified = verify_amount(raw.get("amount_crore"), quote)
     if unverified:
         why.append("amount does not match the quote; dropped")
@@ -178,6 +188,8 @@ def validate_event(raw: Dict, article: Dict) -> Tuple[Optional[Dict], List[str]]
         return d if pub - datetime.timedelta(days=120) <= d <= pub + datetime.timedelta(days=60) else None
 
     status = (raw.get("status") or "").upper()
+    if future and not done:
+        status = "ANNOUNCED"      # "will release": whatever the reader labelled it, no cash has moved
     channel = (raw.get("channel") or "").upper()
     try:
         conf = max(0.0, min(1.0, float(raw.get("confidence", 0.5))))
