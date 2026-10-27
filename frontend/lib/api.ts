@@ -47,6 +47,7 @@ export const api = {
   },
   omoInjection: (window_days = 30) => get<OmoInjection>("/api/omo/injection", { window_days }),
   yieldCurve:      () => get<YieldRow[]>("/api/yields/curve"),
+  yieldProvisional: () => get<ProvisionalYield[]>("/api/yields/curve/provisional"),
   yieldSecondary:  () => get<SecondaryYieldRow[]>("/api/yields/secondary"),
   yields:          (months = 12) => get<YieldRow[]>("/api/yields", { months }),
   // Explicit date window (YYYY-MM-DD) — supports the full 2007→present range.
@@ -888,6 +889,13 @@ export interface YieldRow {
   /** Issue/settlement date BB prints (T+1 working day after the auction). */
   issue_date?: string | null;
   offered_bdt_crore?: number; accepted_bdt_crore?: number;
+}
+/** A desk cut-off mark for an auction BB has not published yet. Never BB data. */
+export interface ProvisionalYield {
+  tenor_label: string; tenor_years: number; security_type: string;
+  cutoff_yield_pct: number; auction_date: string;
+  bb_yield_pct: number; bb_auction_date: string; diff_bps_vs_bb_latest: number;
+  source: string; entered_by?: string | null;
 }
 export interface CurveSlopeRow {
   date: string;

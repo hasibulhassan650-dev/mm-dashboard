@@ -90,6 +90,46 @@ def get_yield_curve():
         session.close()
 
 
+@router.get("/curve/provisional")
+def get_provisional_curve():
+    """Desk cut-off marks for auctions BB has not published yet, one per tenor.
+
+    The desk reads the cut-off when the auction closes; BB prints it the next working day or
+    later. Until then the curve above is a day or more behind what the desk knows, so the pages
+    draw these as a clearly separate, provisional layer on top of it. A mark appears only while it
+    is NEWER than BB's latest published auction for that tenor: the moment BB publishes (or a later
+    auction does) it drops out and BB's figure stands alone. Nothing here is ever BB data, and
+    nothing here feeds a spread, slope or history."""
+    session = get_session()
+    try:
+        rows = session.execute(text("""
+            SELECT d.tenor_label, d.security_type, d.cutoff_yield_pct, d.auction_date,
+                   d.entered_by, d.updated_utc,
+                   y.tenor_years, y.cutoff_yield_pct AS bb_yield_pct, y.auction_date AS bb_auction_date
+            FROM desk_marks d
+            JOIN primary_yield_snapshots y
+              ON y.tenor_label = d.tenor_label
+             AND y.cutoff_yield_pct IS NOT NULL
+             AND y.auction_date = (SELECT MAX(p.auction_date) FROM primary_yield_snapshots p
+                                   WHERE p.tenor_label = d.tenor_label AND p.cutoff_yield_pct IS NOT NULL)
+            WHERE d.auction_date > y.auction_date
+              AND d.auction_date = (SELECT MAX(m.auction_date) FROM desk_marks m
+                                    WHERE m.tenor_label = d.tenor_label)
+        """)).fetchall()
+        out, seen = [], set()
+        for r in rows:                     # two same-day BB auctions of one tenor share a label
+            m = dict(r._mapping)
+            if m["tenor_label"] in seen:
+                continue
+            seen.add(m["tenor_label"])
+            m["diff_bps_vs_bb_latest"] = round((float(m["cutoff_yield_pct"]) - float(m["bb_yield_pct"])) * 100, 1)
+            m["source"] = "DESK (provisional)"
+            out.append(m)
+        return sorted(out, key=lambda x: x["tenor_years"] or 0)
+    finally:
+        session.close()
+
+
 @router.get("/slope")
 def get_curve_slope(months: int = Query(24, ge=3, le=60)):
     """

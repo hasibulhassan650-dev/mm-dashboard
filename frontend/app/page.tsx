@@ -1,7 +1,7 @@
 import { api } from "@/lib/api";
 import NextAuction from "@/components/NextAuction";
 import { fmtDate } from "@/lib/format";
-import { OMO_INSTRUMENTS, pivotOmo, omoNetSeries, omoCatsFromData, buildCurve, tenorSeries, fxRateSeries } from "@/lib/terminal";
+import { OMO_INSTRUMENTS, pivotOmo, omoNetSeries, omoCatsFromData, buildCurve, deskOverlay, tenorSeries, fxRateSeries } from "@/lib/terminal";
 import OverviewView, { type OverviewData, type OmoAuctionRow, type SecAuctionRow } from "@/components/terminal/views/OverviewView";
 import type { Kpi } from "@/components/terminal/ui";
 import Freshness from "@/components/Freshness";
@@ -15,7 +15,8 @@ function delta(series: number[]): number | null {
 }
 
 export default async function Home() {
-  const [summary, curve, history, outstanding, txns, cm, fx, policy, macro, fresh, ibfx, nextAuction] = await Promise.all([
+  const [summary, curve, history, outstanding, txns, cm, fx, policy, macro, fresh, ibfx, nextAuction, provisional] = await Promise.all([
+
     api.omoSummary().catch(() => []),
     api.yieldCurve().catch(() => []),
     api.yields(6).catch(() => []),
@@ -28,12 +29,14 @@ export default async function Home() {
     api.freshness(),
     api.interbankFx(365),
     api.nextAuction(),
+    api.yieldProvisional().catch(() => []),
   ]);
 
   const omoSeries = pivotOmo(outstanding);
   const omoCats = omoCatsFromData(outstanding);   // every product present, none dropped
   const netSeries = omoNetSeries(omoSeries);
   const cb = buildCurve(curve, history);
+  const desk = deskOverlay(cb.tenors, cb.today, provisional);
 
   // ---- KPIs ----
   const totalInjection = summary.filter((r) => r.direction === "INJECTION").reduce((s, r) => s + r.outstanding_bdt_crore, 0);
@@ -89,7 +92,7 @@ export default async function Home() {
     }));
 
   const data: OverviewData = {
-    kpis, tenors: cb.tenors, today: cb.today, weekAgo: cb.weekAgo, monthAgo: cb.monthAgo,
+    kpis, tenors: cb.tenors, today: cb.today, weekAgo: cb.weekAgo, monthAgo: cb.monthAgo, desk,
     omoSeries, omoCats, corridor, omoAuctions, secAuctions,
   };
   return (

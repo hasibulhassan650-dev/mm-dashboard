@@ -31,6 +31,7 @@ export interface OverviewData {
   today: number[];
   weekAgo: number[] | null;
   monthAgo: number[] | null;
+  desk?: import("@/lib/terminal").DeskOverlay | null;
   omoSeries: Record<string, number | string>[];
   omoCats: StackCat[];
   corridor: CorridorData | null;
@@ -47,6 +48,7 @@ export default function OverviewView({ d }: { d: OverviewData }) {
   const series: LineSeries[] = [{ name: "Today", data: d.today, color: "var(--accent)" }];
   if (curveMode === "vs 1W" && d.weekAgo) series.push({ name: "1W ago", data: d.weekAgo, color: "var(--info)", dashed: true });
   if (curveMode === "vs 1M" && d.monthAgo) series.push({ name: "1M ago", data: d.monthAgo, color: "var(--warn)", dashed: true });
+  if (d.desk) series.push({ name: "With desk marks (provisional)", data: d.desk.values, color: "var(--pos)", dashed: true });
 
   const omoCols: Col<OmoAuctionRow>[] = [
     { key: "date", label: "Date" },

@@ -1,7 +1,7 @@
 // Pure transforms that turn the real BB API payloads into the shapes the
 // terminal components expect. Server-safe (no React, no browser APIs).
 import type {
-  YieldRow, OmoOutstandingRow, CallMoneyResult, FxAuctionRow,
+  YieldRow, OmoOutstandingRow, CallMoneyResult, FxAuctionRow, ProvisionalYield,
 } from "@/lib/api";
 import type { StackCat } from "@/components/terminal/charts";
 import type { ComboRow } from "@/components/terminal/charts";
@@ -99,6 +99,16 @@ export function omoNetSeries(pivot: Record<string, number | string>[]): number[]
     const v = Number(d[k]) || 0;
     return s + (OMO_ABSORPTION_KEYS.has(k) ? -v : v);
   }, 0));
+}
+
+/** The curve with the desk's provisional marks laid over BB's latest points, aligned to `tenors`.
+ *  Null when there is no mark to show. Display only: spreads, slope and history stay BB-only. */
+export interface DeskOverlay { values: number[]; marks: Record<string, { yld: number; date: string; bps: number }> }
+export function deskOverlay(tenors: string[], today: number[], prov: ProvisionalYield[]): DeskOverlay | null {
+  const marks: DeskOverlay["marks"] = {};
+  for (const p of prov) if (tenors.includes(p.tenor_label)) marks[p.tenor_label] = { yld: p.cutoff_yield_pct, date: p.auction_date, bps: p.diff_bps_vs_bb_latest };
+  if (!Object.keys(marks).length) return null;
+  return { values: tenors.map((t, i) => marks[t]?.yld ?? today[i]), marks };
 }
 
 export interface CurveBuild {

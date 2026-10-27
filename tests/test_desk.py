@@ -262,3 +262,51 @@ class TestThePingTellsTheDeskWhichSideIsMissing:
         monkeypatch.setenv("DESK_WRITE_SECRET", "k")
         mod.ping(x_desk_secret="k")
         assert s.query(DeskMark).count() == 0
+
+
+class TestTheCurveShowsTheDeskMarkUntilBBPublishes:
+    """The desk reads a cut-off the day it happens; BB prints it later. The curve was a day behind
+    what the desk knew, so the mark is drawn on it - as its own provisional layer, never as BB's."""
+
+    @pytest.fixture
+    def curve(self, monkeypatch):
+        import yields as ymod
+        eng, s = _mem()
+        monkeypatch.setattr(ymod, "get_session", lambda: sessionmaker(bind=eng)())
+        return ymod, s
+
+    def _bb(self, s, when, tenor="91D", yld=8.50, years=0.25):
+        s.add(PrimaryYieldSnapshot(snapshot_date=when, auction_date=when, issue_date=when,
+                                   security_type="T_BILL", tenor_label=tenor, tenor_years=years,
+                                   cutoff_yield_pct=yld, source="BB Treasury"))
+
+    def _mark(self, s, when, tenor="91D", yld=8.60):
+        s.add(DeskMark(auction_date=when, tenor_label=tenor, security_type="T_BILL", cutoff_yield_pct=yld,
+                       entered_by="desk"))
+
+    def test_a_mark_newer_than_bbs_latest_is_on_the_curve_and_labelled(self, curve):
+        ymod, s = curve
+        self._bb(s, TODAY - datetime.timedelta(days=7)); self._mark(s, TODAY); s.commit()
+        got = ymod.get_provisional_curve()
+        assert len(got) == 1 and got[0]["tenor_label"] == "91D" and got[0]["cutoff_yield_pct"] == 8.60
+        assert got[0]["source"] == "DESK (provisional)"
+        assert got[0]["diff_bps_vs_bb_latest"] == 10.0 and got[0]["tenor_years"] == 0.25
+
+    def test_it_drops_off_the_moment_bb_publishes_that_auction(self, curve):
+        """Otherwise the desk's read would sit beside BB's own figure for the same auction."""
+        ymod, s = curve
+        self._bb(s, TODAY); self._mark(s, TODAY); s.commit()
+        assert ymod.get_provisional_curve() == []
+
+    def test_an_old_mark_behind_a_later_bb_auction_is_not_shown(self, curve):
+        ymod, s = curve
+        self._mark(s, TODAY - datetime.timedelta(days=14)); self._bb(s, TODAY - datetime.timedelta(days=7)); s.commit()
+        assert ymod.get_provisional_curve() == []
+
+    def test_only_the_latest_mark_per_tenor_and_bbs_own_curve_is_unchanged(self, curve):
+        ymod, s = curve
+        self._bb(s, TODAY - datetime.timedelta(days=14))
+        self._mark(s, TODAY - datetime.timedelta(days=7), yld=8.55); self._mark(s, TODAY, yld=8.62); s.commit()
+        got = ymod.get_provisional_curve()
+        assert [g["cutoff_yield_pct"] for g in got] == [8.62]
+        assert s.query(PrimaryYieldSnapshot).count() == 1, "a desk mark reached BB's own table"

@@ -4,15 +4,18 @@ import { Panel, DataTable, SegTabs, MetricList, DrillModal, type Col, type Drill
 import { LineChart, type LineSeries } from "@/components/terminal/charts";
 import { useTheme } from "@/components/terminal/ThemeProvider";
 import { tenorDrill } from "@/components/terminal/views/OverviewView";
+import type { DeskOverlay } from "@/lib/terminal";
 
 export interface YieldsData {
   tenors: string[];
   today: number[];
   weekAgo: number[] | null;
   monthAgo: number[] | null;
+  /** the desk's marks for auctions BB has not published yet; provisional, drawn apart from BB's curve */
+  desk?: DeskOverlay | null;
 }
 
-interface Row { tenor: string; today: number; w: number | null; m: number | null }
+interface Row { tenor: string; today: number; w: number | null; m: number | null; desk: { yld: number; date: string; bps: number } | null }
 
 export default function YieldsView({ d }: { d: YieldsData }) {
   const { grid } = useTheme();
@@ -22,11 +25,13 @@ export default function YieldsView({ d }: { d: YieldsData }) {
   const series: LineSeries[] = [{ name: "Today", data: d.today, color: "var(--accent)" }];
   if (mode === "vs 1W" && d.weekAgo) series.push({ name: "1W ago", data: d.weekAgo, color: "var(--info)", dashed: true });
   if (mode === "vs 1M" && d.monthAgo) series.push({ name: "1M ago", data: d.monthAgo, color: "var(--warn)", dashed: true });
+  if (d.desk) series.push({ name: "With desk marks (provisional)", data: d.desk.values, color: "var(--pos)", dashed: true });
 
   const rows: Row[] = d.tenors.map((t, i) => ({
     tenor: t, today: d.today[i],
     w: d.weekAgo ? d.today[i] - d.weekAgo[i] : null,
     m: d.monthAgo ? d.today[i] - d.monthAgo[i] : null,
+    desk: d.desk?.marks[t] ?? null,
   }));
   const bpsCell = (v: number | null) => v == null ? <span style={{ color: "var(--fg-mute)" }}>—</span>
     : <span className={v >= 0 ? "pos" : "neg"}>{v >= 0 ? "+" : ""}{Math.round(v * 100)}</span>;
@@ -35,6 +40,8 @@ export default function YieldsView({ d }: { d: YieldsData }) {
     { key: "today", label: "Yield", align: "r", mono: true, render: (r) => r.today.toFixed(2) + "%" },
     { key: "w", label: "Δ 1W (bps)", align: "r", mono: true, render: (r) => bpsCell(r.w) },
     { key: "m", label: "Δ 1M (bps)", align: "r", mono: true, render: (r) => bpsCell(r.m) },
+    ...(d.desk ? [{ key: "desk", label: "Desk (provisional)", align: "r" as const, mono: true,
+      render: (r: Row) => r.desk ? <span title={`desk mark for the ${r.desk.date} auction, not yet published by BB`}>{r.desk.yld.toFixed(2)}% <span className={r.desk.bps >= 0 ? "pos" : "neg"}>({r.desk.bps >= 0 ? "+" : ""}{Math.round(r.desk.bps)}bps)</span></span> : <span style={{ color: "var(--fg-mute)" }}>—</span> }] : []),
   ];
 
   const idx = (t: string) => d.tenors.indexOf(t);
@@ -53,7 +60,7 @@ export default function YieldsView({ d }: { d: YieldsData }) {
 
   return (
     <>
-      <Panel title="Sovereign Yield Curve" sub="cut-off yields · click a tenor for detail" span={8}
+      <Panel title="Sovereign Yield Curve" sub={d.desk ? "BB cut-off yields · dashed green = with the desk's provisional marks (BB has not published those auctions yet)" : "cut-off yields · click a tenor for detail"} span={8}
         right={<SegTabs tabs={["vs 1W", "vs 1M"]} value={mode} onChange={setMode} />}>
         <LineChart labels={d.tenors} series={series} height={360} showGrid={grid}
           onPointClick={(i) => setDrill(tenorDrill(d.tenors, d.today, d.weekAgo, d.monthAgo, i))} />

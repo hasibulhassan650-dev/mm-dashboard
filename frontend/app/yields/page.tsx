@@ -1,6 +1,6 @@
 import { api } from "@/lib/api";
 import RelatedLinks from "@/components/RelatedLinks";
-import { buildCurve } from "@/lib/terminal";
+import { buildCurve, deskOverlay } from "@/lib/terminal";
 import { bidToCover } from "@/lib/analytics";
 import { fmtDate } from "@/lib/format";
 import { Panel } from "@/components/terminal/ui";
@@ -18,15 +18,17 @@ import { DataWarning } from "@/components/DataWarning";
 export const revalidate = 300;
 
 export default async function YieldsPage() {
-  const [primary, secondary, history, slope, fresh, range] = await Promise.all([
+  const [primary, secondary, history, slope, fresh, range, provisional] = await Promise.all([
     api.yieldCurve().catch(() => []),
     api.yieldSecondary().catch(() => []),
     api.yields(12).catch(() => []),
     api.yieldSlope(24).catch(() => []),
     api.freshness(),
     api.yieldDateRange(),
+    api.yieldProvisional().catch(() => []),
   ]);
   const cb = buildCurve(primary, history);
+  const desk = deskOverlay(cb.tenors, cb.today, provisional);
 
   const tbills = primary.filter((r) => r.security_type === "T_BILL");
   const tbonds = primary.filter((r) => r.security_type !== "T_BILL");
@@ -59,7 +61,7 @@ export default async function YieldsPage() {
       </div>
 
       <div className="grid12">
-        <YieldsView d={{ tenors: cb.tenors, today: cb.today, weekAgo: cb.weekAgo, monthAgo: cb.monthAgo }} />
+        <YieldsView d={{ tenors: cb.tenors, today: cb.today, weekAgo: cb.weekAgo, monthAgo: cb.monthAgo, desk }} />
       </div>
 
       <div className="grid12" style={{ marginTop: "var(--gap)" }}>
