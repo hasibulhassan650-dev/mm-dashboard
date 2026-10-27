@@ -406,3 +406,32 @@ class TestOurOwnFailuresAreNotBBsChanges:
         src = Path("canary.py").read_text(encoding="utf-8")
         assert not re.search(r'selector=f?"largest table via', src), \
             "the transport is back inside the selector"
+
+
+class TestAGoodReadAfterABadOneSettlesTheAlarm:
+    """GitHub's runners are shown F5's CAPTCHA and read 'no table'; the desk PC reads the same page
+    fine an hour later. The alarm must follow the newest read, or a firewall blocking one machine
+    keeps a data defect on the page for four days after the data is fine."""
+
+    def _world(self, monkeypatch, order):
+        import validate
+        eng = create_engine("sqlite:///:memory:")
+        dbmod.Base.metadata.create_all(eng)
+        s = sessionmaker(bind=eng)()
+        now = datetime.datetime.utcnow()
+        for hours_ago, shape, verdict in order:
+            s.add(dbmod.SourceSnapshot(source="sukuk_outstanding", structure_hash=shape, first_seen=now,
+                                       last_seen=now - datetime.timedelta(hours=hours_ago), seen_count=1,
+                                       verdict=verdict, reasons='["the parse failed outright"]',
+                                       selector="table", column_count=11))
+        s.commit()
+        monkeypatch.setattr(validate, "get_session", lambda: sessionmaker(bind=eng)())
+        return validate.integrity_check(limit_per_rule=200)
+
+    def test_a_clean_read_after_a_degraded_one_is_silent(self, monkeypatch):
+        rep = self._world(monkeypatch, [(5, "blocked", "degraded"), (1, "good", "ok")])
+        assert not [i for i in rep["issues"] if "sukuk_outstanding" in i and "page changed" in i]
+
+    def test_a_degraded_read_after_a_clean_one_still_alarms(self, monkeypatch):
+        rep = self._world(monkeypatch, [(5, "good", "ok"), (1, "blocked", "degraded")])
+        assert [i for i in rep["issues"] if "sukuk_outstanding" in i and "page changed" in i]

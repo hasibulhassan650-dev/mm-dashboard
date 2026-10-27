@@ -1254,7 +1254,7 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
         try:
             srows = q("SELECT source, verdict, reasons, last_seen, selector, "
                       "       column_count, seen_count "
-                      "FROM source_snapshots WHERE verdict <> 'ok' "
+                      "FROM source_snapshots "
                       "ORDER BY last_seen DESC")
         except Exception:
             s.rollback()          # table not migrated yet on this DB
@@ -1267,6 +1267,16 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
             if src in seen_sources:
                 continue
             seen_sources.add(src)
+            # The newest shape of the source decides. A clean read AFTER a bad one (the
+            # same page, read again from somewhere BB's firewall lets through) settles it;
+            # looking only at the non-ok rows kept the old alarm up for four days.
+            if verdict == "ok":
+                continue
+            if isinstance(last_seen, str):      # raw SQL over SQLite hands back text, Postgres a datetime
+                try:
+                    last_seen = datetime.datetime.fromisoformat(last_seen[:26])
+                except ValueError:
+                    last_seen = None
             if last_seen is None or (datetime.datetime.utcnow() - last_seen).days > 4:
                 continue
             try:
