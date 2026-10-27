@@ -1,0 +1,19 @@
+# Settle a BB closure circular the code could not prove on its own (engines/calendar_notices.py).
+#
+# A circular is PENDING when a date could not be read from its (font-garbled) Bengali PDF, or a future
+# date is not a declared general holiday and does not extend a closure the gazette already lists. It
+# is announced as a GitHub issue and listed as a data-integrity defect naming the circular; until a
+# person decides, the dates derived from the calendar are NOT moved.
+#
+# To confirm: read the circular PDF, then add an entry. Every field is required - an entry missing
+# one is reported as an error and writes nothing.
+#
+#   decisions:
+#     - url: https://www.bb.org.bd/mediaroom/circulars/sdad/oct112026sdadl15.pdf
+#       decision: confirm            # or: reject (the circular does not close those days)
+#       dates: ["2026-10-22"]        # the days the banks are closed
+#       quote: "20 to 22 October 2026 respectively Tuesday, Wednesday and Thursday ... banks closed"
+#
+# The next run of the circular watch applies it (adds a CIRCULAR_CLOSURE row carrying the quote and the
+# URL as evidence), re-rolls maturities/coupons/settlements and rebuilds the ladder.
+decisions: []
