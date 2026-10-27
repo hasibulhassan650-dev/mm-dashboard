@@ -51,6 +51,30 @@ def _load_holidays(session):
     log.info("Loaded %d calendar rows", len(rows))
 
 
+def propagate_calendar_change(session) -> dict:
+    """Bring everything derived from the holiday calendar into line after the calendar changed.
+
+    A new closure moves dates that were computed under the old calendar: OMO tranche maturities,
+    coupon and maturity payment dates, planned auction settlements. The self-heal re-rolls them
+    (it runs at the start of every refresh, but a refresh that learns a closure mid-run must not wait
+    for the next one) and the ladder, a materialised aggregate, is rebuilt from the corrected events.
+    Idempotent and offline: a second call changes nothing."""
+    from engines.guardian import record_repairs
+    from engines.repair import self_heal
+    _load_holidays(session)                    # the process-wide cache would otherwise keep the old calendar
+    healed = self_heal(session)
+    session.commit()
+    rebuilt = rebuild_daily_flows(session)
+    session.commit()
+    try:
+        record_repairs(session, healed)
+        session.commit()
+    except Exception as exc:                   # the audit trail must not undo the repair
+        session.rollback()
+        log.warning("calendar change: repairs not logged: %s", exc)
+    return {"repaired": healed.get("repaired") or {}, "ladder_rows_rebuilt": rebuilt}
+
+
 def _upsert_security(session, row: dict):
     """Insert new security or update outstanding/quality on existing one."""
     existing = session.get(Security, row["isin"])
@@ -960,9 +984,14 @@ def run_holiday_fetch() -> dict:
         ours_only = [d for d in existing
                      if d.year in {r["calendar_date"].year for r in rows}
                      and d not in {r["calendar_date"] for r in rows}
-                     and existing[d].holiday_type not in ("WORKING_DAY",)]
+                     and existing[d].holiday_type not in ("WORKING_DAY", calendar_utils.CIRCULAR_CLOSURE_TYPE)]
         session.commit()
         _load_holidays(session)
+        if added or upgraded:                  # a closure learned now must move the dates derived under the old list
+            try:
+                propagate_calendar_change(session)
+            except Exception as exc:
+                log.warning("holiday list changed but the dependent dates were not re-rolled: %s", exc)
         log.info("Holidays: %d added, %d upgraded, %d unchanged, %d conflict(s)",
                  added, upgraded, unchanged, conflicts)
         return {"rows": len(rows), "added": added, "upgraded": upgraded,

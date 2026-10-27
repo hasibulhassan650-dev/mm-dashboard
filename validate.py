@@ -545,6 +545,20 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
                                 f"seed it as WORKING_DAY or settlements roll past it")
             d += datetime.timedelta(days=1)
 
+        # ---- BB closure circulars: proven, or a person has to decide ----
+        # A circular the code could not settle (an unreadable date, a closure it could not check
+        # against the market) leaves the dates derived from the calendar where they were. That is a
+        # defect while it stands, naming the circular, so it is settled rather than forgotten.
+        try:
+            for url, title, status, reason, pub in q(
+                    "SELECT url, title, status, reason, published_date FROM calendar_notices "
+                    "WHERE status = 'PENDING' AND published_date >= :lo",
+                    lo=today - datetime.timedelta(days=60)):
+                add("calendar-notice", f"BB circular of {str(pub)[:10]} ({str(title)[:90]}) is PENDING - {reason}. "
+                                       f"Confirm it in data/seeds/calendar_decisions.yaml: {url}")
+        except Exception:
+            s.rollback()                       # table not migrated yet on this DB
+
         # ---- payment dates must be rolled under the CURRENT calendar ----
         # Events are re-rolled every pipeline run, so a stale payment_date means
         # the holiday table changed after the last run (or the run failed). 31

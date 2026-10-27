@@ -60,6 +60,9 @@ REGIONAL_TYPE = "REGIONAL_HOLIDAY"
 # copies of "holiday_type <> 'WORKING_DAY'" is six places to forget a third
 # type. api/ cannot import this module (deploy boundary), so the one copy
 # there is marked and must be changed with it.
+# A closure announced by a BB circular and not (yet) on the gazetted list. It closes the day like any
+# other closure type (CLOSURE_SQL is a deny-list), so no consumer has to know it exists.
+CIRCULAR_CLOSURE_TYPE = "CIRCULAR_CLOSURE"
 NON_CLOSURE_TYPES = (WORKING_DAY_TYPE, REGIONAL_TYPE)
 CLOSURE_SQL = ("(holiday_type IS NULL OR holiday_type NOT IN "
                "('WORKING_DAY', 'REGIONAL_HOLIDAY'))")

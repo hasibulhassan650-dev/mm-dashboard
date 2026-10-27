@@ -53,6 +53,11 @@ _WHY = {
              "their maturities are on the Islamic page.",
     "POLICY": "A policy-rate announcement. Rates are re-read from BB's homepage "
               "daily; this is the heads-up.",
+    "CALENDAR": "A BB circular closing (or possibly closing) the banks. APPLIED: the closure is in "
+                "the holiday calendar and every maturity, coupon, settlement and OMO tranche that "
+                "fell on it has been rolled to the next working day. PENDING: the code could not be "
+                "sure - confirm in data/seeds/calendar_decisions.yaml; until then those dates are "
+                "NOT moved. REJECTED: the market traded on a day the circular closes.",
 }
 
 
@@ -78,6 +83,16 @@ def _sources():
         # Events read from the news (engines/liquidity_news.py): only those that MATTER
         # and that BB's own tables do not already hold. The key is built, so the
         # issue title carries "[ev-12]" and a rerun finds its own issue.
+        # A BB circular that closes (or may close) the banks. APPLIED means the calendar changed and
+        # the dates derived from it were re-rolled; PENDING means the code could not be sure and a
+        # person has to decide (data/seeds/calendar_decisions.yaml).
+        {"table": "calendar_notices", "key": "('cal-' || CAST(id AS TEXT))",
+         "select": "('cal-' || CAST(id AS TEXT)) AS serial, published_date, NULL AS subject_date, "
+                   "(status || ': ' || COALESCE(title, '')) AS title, url, 'CALENDAR' AS category, "
+                   "'BB bank-closure circular' AS prefix",
+         "where": "status IN ('APPLIED', 'PENDING', 'REJECTED') AND notified_utc IS NULL "
+                  "AND first_seen_utc >= :since",
+         "order": "published_date, id"},
         {"table": "liquidity_events", "key": "('ev-' || CAST(id AS TEXT))",
          "select": "('ev-' || CAST(id AS TEXT)) AS serial, COALESCE(event_date, announced_date) AS "
                    "published_date, NULL AS subject_date, "

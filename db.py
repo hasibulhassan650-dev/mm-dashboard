@@ -567,6 +567,36 @@ class HolidayCalendar(Base):
     holiday_type   = Column(String(30))
     fiscal_year    = Column(String(7))
     source         = Column(String(200))
+    # Where a closure came from when it was not on BB's gazetted list: the circular itself.
+    evidence_url   = Column(String(400))
+    evidence_quote = Column(Text)
+    announced_date = Column(Date)
+
+
+class CalendarNotice(Base):
+    """A BB circular about bank closures, and what the system did with it.
+
+    BB announces closures the gazetted list does not carry (Sharadiya Durga Puja 2026: 20-22 Oct,
+    by SDAD circular letter 15 of 11-Oct). A closure unknown to the calendar leaves every maturity,
+    coupon and settlement on a day the market was shut. A notice is APPLIED to holiday_calendar only
+    when the circular's dates are corroborated by something other than the circular (the market was
+    silent that day, the gazette overlaps, or it is a government-declared general holiday);
+    anything the code cannot be sure of is PENDING and is announced, never guessed.
+    """
+    __tablename__ = "calendar_notices"
+    id             = Column(Integer, primary_key=True, autoincrement=True)
+    url            = Column(String(400), nullable=False, unique=True)
+    published_date = Column(Date)
+    department     = Column(String(40))
+    title          = Column(Text)
+    kind           = Column(String(12))             # CLOSURE | OTHER
+    dates_json     = Column(Text)                   # the dates the circular closes
+    evidence_quote = Column(Text)
+    status         = Column(String(12))             # APPLIED | PENDING | REJECTED | HISTORICAL
+    reason         = Column(Text)
+    first_seen_utc = Column(DateTime)
+    decided_utc    = Column(DateTime)
+    notified_utc   = Column(DateTime)
 
 
 class DailyNetFlow(Base):
@@ -1030,8 +1060,14 @@ def init_db():
         "ALTER TABLE data_absences ADD COLUMN IF NOT EXISTS kind VARCHAR(16) DEFAULT 'bb_omission'",
         "ALTER TABLE daily_net_flow ADD COLUMN IF NOT EXISTS buyback_inflow_bdt_mill REAL DEFAULT 0",
         "ALTER TABLE daily_net_flow ADD COLUMN IF NOT EXISTS sukuk_inflow_bdt_mill REAL DEFAULT 0",
+        "ALTER TABLE holiday_calendar ADD COLUMN IF NOT EXISTS evidence_url VARCHAR(400)",
+        "ALTER TABLE holiday_calendar ADD COLUMN IF NOT EXISTS evidence_quote TEXT",
+        "ALTER TABLE holiday_calendar ADD COLUMN IF NOT EXISTS announced_date DATE",
         # SQLite has no IF NOT EXISTS for columns; errors harmlessly on Postgres.
         "ALTER TABLE daily_net_flow ADD COLUMN sukuk_inflow_bdt_mill REAL DEFAULT 0",
+        "ALTER TABLE holiday_calendar ADD COLUMN evidence_url VARCHAR(400)",
+        "ALTER TABLE holiday_calendar ADD COLUMN evidence_quote TEXT",
+        "ALTER TABLE holiday_calendar ADD COLUMN announced_date DATE",
         # A desk mark is a provisional cut-off, never BB's. A sovereign yield
         # outside 0-30% is a typo in any century, and the constraint is the
         # layer below every code path that could write one.

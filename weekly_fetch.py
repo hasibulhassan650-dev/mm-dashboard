@@ -578,6 +578,24 @@ def main():
             log.exception("Holiday fetch failed: %s", exc)
             errors.append(f"holidays: {exc}")
 
+    # ── 14b. BB circulars that close the banks ───────────────────────────────
+    # The gazetted list does not carry everything: Sharadiya Durga Puja 2026 closed the banks on
+    # 20-22 Oct by circular and the calendar only knew 20 and 21. One page, one request; a page that
+    # is not served changes nothing and is reported.
+    log.info("--- Step 14b: BB closure circulars ---")
+    try:
+        from engines.calendar_notices import run_circular_watch
+        cw = run_circular_watch()
+        log.info("Circulars OK | %d listed, %d applied, %d pending, %d rejected",
+                 cw.get("rows", 0), cw.get("applied", 0), cw.get("pending", 0), cw.get("rejected", 0))
+        for line in cw.get("lines") or []:
+            log.warning("Calendar: %s", line)
+        for e in cw.get("errors") or []:
+            errors.append(e)
+    except Exception as exc:
+        log.exception("Circular watch failed: %s", exc)
+        errors.append(f"circulars: {exc}")
+
     # ── Summary ───────────────────────────────────────────────────────────────
     elapsed = (datetime.datetime.now() - start).seconds
     if errors:
