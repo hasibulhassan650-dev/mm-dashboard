@@ -30,7 +30,7 @@ def load_llm_settings(path: str = _ENV, env=None) -> dict:
             continue
         k, v = line.split("=", 1)
         k, v = k.strip(), v.strip().strip('"').strip("'")
-        if k.startswith("LLM_") and k not in env:
+        if k.startswith(("LLM_", "LLM2_")) and k not in env:
             env[k] = v
             got[k] = v
     return got
@@ -58,8 +58,9 @@ def lift_rule_reads(session, now=None, days: int = 3) -> int:
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     load_llm_settings()
-    if not all(os.environ.get(k) for k in ("LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL")):
-        print("LLM_BASE_URL, LLM_API_KEY and LLM_MODEL must be set in .env (see engines/news_local.py)")
+    if not any(all(os.environ.get(f"{p}{k}") for k in ("BASE_URL", "API_KEY", "MODEL")) for p in ("LLM_", "LLM2_")):
+        print("LLM_BASE_URL, LLM_API_KEY and LLM_MODEL (and optionally LLM2_*) must be set in .env "
+              "(see engines/news_local.py)")
         return 2
     from db import get_session, init_db
     init_db()

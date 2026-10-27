@@ -161,7 +161,7 @@ class TestConfiguration:
         assert hasattr(T.get_client(), "chat_json")
 
     def test_with_nothing_configured_it_is_none_and_that_means_the_rule_reader(self, monkeypatch):
-        for k in ("ANTHROPIC_API_KEY", "LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL"):
+        for k in ("ANTHROPIC_API_KEY", "LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL", "LLM2_BASE_URL", "LLM2_API_KEY", "LLM2_MODEL"):
             monkeypatch.delenv(k, raising=False)
         assert T.get_client() is None
 

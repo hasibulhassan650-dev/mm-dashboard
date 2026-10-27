@@ -175,6 +175,12 @@ def validate_event(raw: Dict, article: Dict) -> Tuple[Optional[Dict], List[str]]
     if _R._REQUEST.search(quote) and not done and not (future and kind in ALWAYS_MATTERS):
         return None, ["the quote is a request, estimate or plan, not a payment"]
 
+    # A running STOCK is not new cash: "as of June BB had provided Tk 76,000 crore" restates what
+    # has been lent over years. gemini-3.8-flash-high and gemini-3.5-flash both reported it as an
+    # event in the first model benchmark, so the rule reader's test applies to every reader.
+    if _R._STOCK.search(quote):
+        return None, ["the quote restates a running total ('as of', 'so far', 'outstanding'), not a new payment"]
+
     amount, unverified = verify_amount(raw.get("amount_crore"), quote)
     if unverified:
         why.append("amount does not match the quote; dropped")

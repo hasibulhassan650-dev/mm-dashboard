@@ -30,7 +30,7 @@ def test_a_missing_file_is_not_an_error(tmp_path):
 
 
 def test_without_all_three_settings_it_says_so_and_stops(monkeypatch, capsys):
-    for k in ("LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL"):
+    for k in ("LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL", "LLM2_BASE_URL", "LLM2_API_KEY", "LLM2_MODEL"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setattr(NLoc, "load_llm_settings", lambda *a, **k: {})
     assert NLoc.main([]) == 2

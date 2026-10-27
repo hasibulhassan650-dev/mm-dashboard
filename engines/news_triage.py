@@ -164,7 +164,7 @@ def extract(client, article: Dict) -> List[Dict]:
     pub = article.get("published_utc")
     user = (f"Published: {pub.date() if hasattr(pub, 'date') else pub}\nTitle: {article['title']}\n\n"
             f"{article.get('body_text') or article.get('summary') or ''}")
-    out = _ask(client, EXTRACT_MODEL, EXTRACT_SYSTEM, user, EXTRACT_SCHEMA, "medium", 6000)
+    out = _ask(client, EXTRACT_MODEL, EXTRACT_SYSTEM, user, EXTRACT_SCHEMA, "medium", 12000)
     return list(out.get("events") or [])
 
 
@@ -315,6 +315,7 @@ def triage_pending(session, client, now: datetime.datetime,
             budget_left -= 1
             a.triage_model = _model_tag(client, EXTRACT_MODEL)
             raw_events = extract(client, art)
+            a.triage_model = _model_tag(client, EXTRACT_MODEL)       # a provider chain: the one that answered
             a.triage_json = json.dumps(raw_events)[:20000]
             _store_events(session, raw_events, art, now, stats, "llm", a.url)
             a.triage_status = "extracted"
