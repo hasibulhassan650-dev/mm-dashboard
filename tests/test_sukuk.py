@@ -292,3 +292,15 @@ class TestTheChromeFallback:
         out = S.fetch_sukuk()
         assert len(out["outstanding"]) == 11 and out["documents"] == []
         assert sum("page not served" in e for e in out["errors"]) == 2
+
+
+def test_the_slow_f5_sources_are_read_in_full_runs_not_every_hour():
+    """Holidays change once a year and sukuk weekly; both sit behind F5, whose challenge costs
+    minutes to clear from CI. An hourly run (FETCH_MODE=light, 30-minute budget) must not wait on
+    them - a run that did took 1,229 s."""
+    src = open(os.path.join(_ROOT, "weekly_fetch.py"), encoding="utf-8").read()
+    for marker in ("Step 13c: BGIS Sukuk", "Step 14: BB gazetted holidays"):
+        block = src[src.index(marker): src.index(marker) + 1400]
+        assert "if LIGHT:" in block, marker
+    wf = open(os.path.join(_ROOT, ".github", "workflows", "full_refresh.yml"), encoding="utf-8").read()
+    assert "FETCH_MODE" not in wf or 'FETCH_MODE: "light"' not in wf, "the full run must not be light"

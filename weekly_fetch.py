@@ -523,25 +523,31 @@ def main():
     # BB's government sukuk: the outstanding table (a product we held none of)
     # and the notice / prospectus lists, whose new rows are announced to the desk.
     log.info("--- Step 13c: BGIS Sukuk ---")
-    try:
-        from engines.pipeline import run_sukuk_fetch
-        sk = run_sukuk_fetch()
-        log.info("Sukuk OK | %d issue(s) (%d new), %d new document(s)", sk.get("rows", 0),
-                 sk.get("added", 0), sk.get("documents_added", 0))
-        for e in sk.get("errors") or []:
-            errors.append(e)
-        # A new issue, a changed amount or a moved maturity changes cash on specific days:
-        # the ladder is a materialised aggregate and is stale until rebuilt.
-        if sk.get("added") or sk.get("changed"):
-            from engines.pipeline import rebuild_daily_flows
-            _s = get_session()
-            try:
-                log.warning("Sukuk table changed - rebuilt %d ladder row(s)", rebuild_daily_flows(_s))
-            finally:
-                _s.close()
-    except Exception as exc:
-        log.exception("Sukuk fetch failed: %s", exc)
-        errors.append(f"sukuk: {exc}")
+    # Slow-changing (weekly) and behind F5, which from CI answers with a JavaScript challenge
+    # that costs minutes to clear: read it in the full runs (three a day), not every hour, so
+    # an hourly run cannot spend its 30-minute budget waiting on a page that changes weekly.
+    if LIGHT:
+        log.info("Sukuk: skipped in light/hourly mode (read in the full runs)")
+    else:
+        try:
+            from engines.pipeline import run_sukuk_fetch
+            sk = run_sukuk_fetch()
+            log.info("Sukuk OK | %d issue(s) (%d new), %d new document(s)", sk.get("rows", 0),
+                     sk.get("added", 0), sk.get("documents_added", 0))
+            for e in sk.get("errors") or []:
+                errors.append(e)
+            # A new issue, a changed amount or a moved maturity changes cash on specific days:
+            # the ladder is a materialised aggregate and is stale until rebuilt.
+            if sk.get("added") or sk.get("changed"):
+                from engines.pipeline import rebuild_daily_flows
+                _s = get_session()
+                try:
+                    log.warning("Sukuk table changed - rebuilt %d ladder row(s)", rebuild_daily_flows(_s))
+                finally:
+                    _s.close()
+        except Exception as exc:
+            log.exception("Sukuk fetch failed: %s", exc)
+            errors.append(f"sukuk: {exc}")
 
     # ── 14. BB's gazetted holiday list ───────────────────────────────────────
     # Weekly, because this is the one feed whose VALUE IS IN THE FUTURE: every
@@ -551,20 +557,26 @@ def main():
     # the next year's list late in December, so a weekly read picks it up
     # within days of publication instead of in January.
     log.info("--- Step 14: BB gazetted holidays ---")
-    try:
-        from engines.pipeline import run_holiday_fetch
-        hol = run_holiday_fetch()
-        log.info("Holidays OK | %d parsed, %d added, %d upgraded, %d conflict(s)",
-                 hol.get("rows", 0), hol.get("added", 0), hol.get("upgraded", 0),
-                 hol.get("conflicts", 0))
-        for e in hol.get("errors") or []:
-            errors.append(e)
-        if hol.get("refused"):
-            errors.append(f"holidays: refused {sum(hol['refused'].values())} row(s) — "
-                          f"{hol['refused']}")
-    except Exception as exc:
-        log.exception("Holiday fetch failed: %s", exc)
-        errors.append(f"holidays: {exc}")
+    # The list changes once a year, and F5 answers a datacenter address with a JavaScript
+    # challenge that costs minutes to clear. Read it in the full runs (three a day) - an hourly
+    # run has no business spending its 30-minute budget on a page that changes in December.
+    if LIGHT:
+        log.info("Holidays: skipped in light/hourly mode (read in the full runs)")
+    else:
+        try:
+            from engines.pipeline import run_holiday_fetch
+            hol = run_holiday_fetch()
+            log.info("Holidays OK | %d parsed, %d added, %d upgraded, %d conflict(s)",
+                     hol.get("rows", 0), hol.get("added", 0), hol.get("upgraded", 0),
+                     hol.get("conflicts", 0))
+            for e in hol.get("errors") or []:
+                errors.append(e)
+            if hol.get("refused"):
+                errors.append(f"holidays: refused {sum(hol['refused'].values())} row(s) — "
+                              f"{hol['refused']}")
+        except Exception as exc:
+            log.exception("Holiday fetch failed: %s", exc)
+            errors.append(f"holidays: {exc}")
 
     # ── Summary ───────────────────────────────────────────────────────────────
     elapsed = (datetime.datetime.now() - start).seconds
