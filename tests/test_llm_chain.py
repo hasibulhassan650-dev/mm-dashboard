@@ -65,7 +65,7 @@ def _article(s):
 
 
 class TestConfiguration:
-    ENV = {"LLM_BASE_URL": "http://127.0.0.1:8317/v1", "LLM_API_KEY": "a", "LLM_MODEL": "gemini-3.8-flash-high",
+    ENV = {"LLM_BASE_URL": "http://127.0.0.1:8000/v1", "LLM_API_KEY": "a", "LLM_MODEL": "gemini-3.8-flash-high",
            "LLM2_BASE_URL": "https://generativelanguage.googleapis.com/v1beta/openai", "LLM2_API_KEY": "b",
            "LLM2_MODEL": "gemini-3.8-flash", "LLM2_REASONING": "high"}
 
@@ -166,7 +166,7 @@ class TestSeveralModelsOnOneEndpoint:
         assert P.from_env({**base, "LLM_TIMEOUT": "soon"}).timeout == 45
 
     def test_a_slot_can_mix_with_the_proxy_slot(self):
-        env = {"LLM_BASE_URL": "http://127.0.0.1:8317/v1", "LLM_API_KEY": "a", "LLM_MODEL": "gemini-3.8-flash-high",
+        env = {"LLM_BASE_URL": "http://127.0.0.1:8000/v1", "LLM_API_KEY": "a", "LLM_MODEL": "gemini-3.8-flash-high",
                "LLM2_BASE_URL": "https://g/v1", "LLM2_API_KEY": "b", "LLM2_MODEL": "gemini-3.5-flash,gemini-3-flash-preview"}
         assert [p.model for p in P.from_env(env).providers] == [
             "gemini-3.8-flash-high", "gemini-3.5-flash", "gemini-3-flash-preview"]
@@ -218,3 +218,18 @@ class TestARestatedStockIsNotAnEvent:
         ev, _ = L.validate_event({**EV, "amount_crore": 4700.0, "is_cumulative": True,
             "evidence_quote": "Until mid-August the Finance Division had disbursed Tk 47 billion in favour of Energy Division for LNG subsidy"}, art)
         assert ev is not None and ev["is_cumulative"]
+
+
+class TestTheDailyCapFollowsWhatTheCallCosts:
+    def test_a_free_provider_gets_the_larger_cap_and_claude_keeps_the_small_one(self):
+        """Rapid re-scanning on the desk PC must not stall on a guard meant for a paid API."""
+        assert T.MAX_CALLS_PER_DAY == 40 and T.MAX_CALLS_PER_DAY_FREE > T.MAX_CALLS_PER_DAY
+        s = _mem()
+        for i in range(45):                       # 45 calls already made today
+            s.add(NewsArticle(url=f"https://old/{i}", source="tbs", title="t", summary="", body_text=LNG,
+                              published_utc=NOW, fetched_utc=NOW, triage_status="extracted",
+                              triage_model="llm:m", triage_utc=NOW))
+        s.commit()
+        _article(s)
+        st = T.triage_pending(s, P.ChainClient([Fake("m")]), NOW, fetch_body=lambda u: None)
+        assert st["extracted"] == 1 and not st["budget_hit"]

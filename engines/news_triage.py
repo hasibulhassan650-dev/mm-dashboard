@@ -34,6 +34,9 @@ MAX_EXTRACTS = 15
 # The ceiling is a MONEY cap in disguise: each call costs cents, so this bounds a runaway
 # (a feed that suddenly floods, a bug) to roughly a dollar a day. Normal days use a handful.
 MAX_CALLS_PER_DAY = 40
+# A free model costs nothing per call, and the desk's PC re-scans every few minutes, so the paid-API
+# guard would stall it after the first hour. The free tier's own rate limit is the real ceiling.
+MAX_CALLS_PER_DAY_FREE = 300
 SCREEN_CHARS = 1500
 
 
@@ -237,7 +240,8 @@ def triage_pending(session, client, now: datetime.datetime,
     max_screens = MAX_SCREENS if max_screens is None else max_screens
     max_extracts = MAX_EXTRACTS if max_extracts is None else max_extracts
     max_bodies = MAX_BODY_FETCHES if max_bodies is None else max_bodies
-    max_calls_per_day = MAX_CALLS_PER_DAY if max_calls_per_day is None else max_calls_per_day
+    if max_calls_per_day is None:
+        max_calls_per_day = MAX_CALLS_PER_DAY_FREE if _is_free_provider(client) else MAX_CALLS_PER_DAY
     stats = {"bodies": 0, "skipped": 0, "screened_out": 0, "extracted": 0, "events_created": 0,
              "events_merged": 0, "events_rejected": 0, "errors": 0, "untriaged_left": 0,
              "budget_hit": False, "no_key": client is None, "reasons": []}

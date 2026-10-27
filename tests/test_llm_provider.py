@@ -218,6 +218,7 @@ class TestInTheTriageLoop:
     def test_the_daily_call_ceiling_still_applies_to_a_free_tier(self, monkeypatch):
         """Free tiers have quotas too; exhausting one should stop, not loop."""
         monkeypatch.setattr(T, "MAX_CALLS_PER_DAY", 0)
+        monkeypatch.setattr(T, "MAX_CALLS_PER_DAY_FREE", 0)
         s = _mem()
         _article(s)
         c = FakeFree()
