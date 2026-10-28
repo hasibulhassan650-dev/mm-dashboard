@@ -1,0 +1,31 @@
+# Holes in the record that no fetch can fill, established from evidence. Loaded by
+# engines/absences.py::sync_known_absences on every refresh. Rules, same as every other absence:
+#   * a reason with the evidence is required;
+#   * a day we HOLD data for is refused (it is not absent);
+#   * kind bb_omission = BB did not publish it; kind lost = ours, and BB cannot give it back.
+# They stay visible in the digest forever - a skipped day is a known hole, not an invisible one.
+absences:
+  # OMO on Saturday 17-Oct-2026. The banks WERE open that day (SDAD circular letter 15 of 11-Oct reopens
+  # Saturday 17-Oct on the normal schedule; call money, reference rates and the interbank repo printed),
+  # and BB did operate: the 18-Oct release prints maturities of 3,471.54 (Assured Repo) and 1,634.34 (SDF)
+  # that only a 17-Oct deal can explain. But BB never posted the release: its press list carries "as on
+  # 15 October" (serial 05/2026-470) and then "as on 18 October" (05/2026-472), and serial 471 is absent
+  # from every list read between 18-Oct and 28-Oct. The size of the 17-Oct deals is not guessed from the
+  # maturities - it stays unknown, and the ledger rule below says why.
+  - dataset: omo
+    date: 2026-10-17
+    kind: bb_omission
+    source: https://www.bb.org.bd/en/index.php/mediaroom/press_release
+    reason: >-
+      BB posted no OMO release for Saturday 17-Oct-2026 although the banks were open and it operated
+      (18-Oct maturities imply deals); serial 05/2026-471 is missing from BB's press list.
+  # Exchange rates for Sunday 25-Oct-2026. The page describes the previous business day and only ever
+  # shows its latest snapshot; the run that should have read it was blocked by BB's firewall (a CAPTCHA to
+  # GitHub's servers from 22-Oct), and by the time the page was read from a PC it had moved on.
+  - dataset: fxrates
+    date: 2026-10-25
+    kind: lost
+    source: https://www.bb.org.bd/en/index.php/econdata/exchangerate
+    reason: >-
+      Not read while BB's firewall blocked the scheduled runners; BB's page keeps only the latest day, so
+      it cannot be re-read.

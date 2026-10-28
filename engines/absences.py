@@ -213,6 +213,51 @@ def record_loss(session, dataset: str, day: datetime.date, reason: str,
     return True
 
 
+KNOWN_ABSENCES_PATH = None      # set below: data/seeds/known_absences.yaml
+
+
+def sync_known_absences(session, path: str = None, now: datetime.datetime = None) -> dict:
+    """Record the holes a person has established from evidence the fetchers cannot gather themselves.
+
+    `confirm_absences` proves an absence from a page re-read over a whole month. Some holes cannot be
+    proven that way - an OMO release BB never posted (its press list carries the days either side and
+    the serial number skips), an exchange-rate day lost while BB's firewall blocked our runners and
+    the page only ever shows today. They are written down in data/seeds/known_absences.yaml with the
+    evidence, and loaded here under the same two rules as every other absence: a reason must be given,
+    and a day we HOLD data for is never recorded as absent. Returns {"recorded", "errors"}."""
+    import os
+
+    import yaml
+
+    import engines.expectations as EX
+    from db import DataAbsence
+    path = path or KNOWN_ABSENCES_PATH
+    now = now or datetime.datetime.utcnow()
+    out = {"recorded": [], "errors": []}
+    if not path or not os.path.exists(path):
+        return out
+    with open(path, encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh) or {}
+    for i, e in enumerate(doc.get("absences") or [], 1):
+        where = f"known_absences.yaml entry {i}"
+        ds, day, kind = e.get("dataset"), _as_date(e.get("date")), e.get("kind") or "bb_omission"
+        if ds not in EX.BY_KEY or day is None or kind not in ("bb_omission", "lost") or not (e.get("reason") or "").strip():
+            out["errors"].append(f"{where}: needs a known dataset, a date, kind bb_omission|lost and a reason")
+            continue
+        if kind == "bb_omission" and day in _stored_dates(session, ds):
+            out["errors"].append(f"{where}: we hold {ds} data for {day}, so it is not an absence")
+            continue
+        row = session.query(DataAbsence).filter_by(dataset=ds, absent_date=day).one_or_none()
+        if row is None:
+            session.add(DataAbsence(dataset=ds, absent_date=day, kind=kind, reason=e["reason"].strip(),
+                                    source=(e.get("source") or "")[:300], verified_utc=now, checks=1))
+            out["recorded"].append(f"{ds} {day} ({kind})")
+        else:
+            row.checks = (row.checks or 0) + 1
+            row.verified_utc = now
+    return out
+
+
 def summary(session, kind: Optional[str] = "bb_omission") -> dict:
     """What is on record, for the digest. Never a bare count: the newest one
     matters, because a cluster of fresh absences is a story about BB."""
@@ -230,3 +275,8 @@ def summary(session, kind: Optional[str] = "bb_omission") -> dict:
         session.rollback()
         return {}
     return {r[0]: {"count": r[1], "latest": str(r[2])} for r in rows}
+
+
+import os as _os
+KNOWN_ABSENCES_PATH = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+                                    "data", "seeds", "known_absences.yaml")

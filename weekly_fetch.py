@@ -578,6 +578,22 @@ def main():
             log.exception("Holiday fetch failed: %s", exc)
             errors.append(f"holidays: {exc}")
 
+    # ── 14a. Holes in the record that no fetch can fill, written down with their evidence ──
+    try:
+        from engines.absences import sync_known_absences
+        session = get_session()
+        try:
+            ka = sync_known_absences(session)
+            session.commit()
+        finally:
+            session.close()
+        for line in ka["recorded"]:
+            log.warning("Known absence recorded: %s", line)
+        errors.extend(ka["errors"])
+    except Exception as exc:
+        log.exception("Known absences failed: %s", exc)
+        errors.append(f"known_absences: {exc}")
+
     # ── 14b. BB circulars that close the banks ───────────────────────────────
     # The gazetted list does not carry everything: Sharadiya Durga Puja 2026 closed the banks on
     # 20-22 Oct by circular and the calendar only knew 20 and 21. One page, one request; a page that

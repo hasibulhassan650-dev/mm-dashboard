@@ -339,12 +339,18 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
         # missing day at the tail is just not-yet-published (results lag, more so
         # over the Fri–Sat weekend), not a genuine hole.
         max_omo = max(omo_dates) if omo_dates else None
+        # Days BB did not post an OMO release for, established from evidence (engines/absences.py).
+        try:
+            omo_absent = _dset("SELECT absent_date FROM data_absences WHERE dataset = 'omo'")
+        except Exception:
+            s.rollback()
+            omo_absent = set()
         d = _lo
         while d <= _hi:
             if max_omo is not None and d < max_omo and is_working_day(d, hol):  # Mon–Thu + Sun, minus known holidays
                 market_shut = d not in cm_dates and d not in rr_dates
                 if d not in omo_dates:
-                    if not market_shut:   # market traded but no OMO → real gap
+                    if not market_shut and d not in omo_absent:   # market traded but no OMO → real gap
                         add("omo", f"no OMO operation on working day {d} ({d:%a}) — BB operates "
                                    f"every working day and the money market WAS open (call money / "
                                    f"ref rates traded); a BB press release is likely missing or "
@@ -397,6 +403,12 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
                     # profit). Per-day matching is meaningless for it.
                     continue
                 ours = live.get((inst, d), 0.0)
+                # A shortfall that only a deal on a day BB never posted can explain (a 1-day repo dealt
+                # on the missing day matures the next; a 7-day one a week later, rolled past holidays)
+                # is BB's omission, already on record - not a tranche of ours that went missing.
+                if ours < bb and any(0 <= (d - a).days - tn <= 6 for a in omo_absent for tn in
+                                     (1, 2, 3, 7, 14, 28, 30, 91, 182, 364)):
+                    continue
                 if ours < bb and hist_start and d - datetime.timedelta(days=180) < hist_start:
                     continue                          # possibly pre-window — can't judge
                 if abs(ours - bb) > max(0.015 * bb, 10):
