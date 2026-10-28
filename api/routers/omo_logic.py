@@ -131,3 +131,52 @@ def injection_summary(session, as_of=None, window_days: int = 30) -> Dict:
         "note": ("Stock measured on the last day BB's operations were published "
                  f"({day}); later days are not yet known."),
     }
+
+
+# What each facility is, for the export's legend sheet. A facility BB introduces that is not described
+# here still gets its column and a row in the legend - saying so - rather than vanishing from the file.
+FACILITY_NOTES = {
+    "CB_REPO": ("Central Bank Repo", "BB lends cash to banks against securities (injection)."),
+    "AR": ("Assured Repo", "Term liquidity-support repo, usually longer-dated (injection)."),
+    "IBLF": ("Islamic Banks Liquidity Facility", "Short-term funds for Shariah-compliant banks (injection)."),
+    "SLF": ("Standing Lending Facility", "Overnight borrowing from BB at the corridor ceiling (injection)."),
+    "MLS": ("Mudaraba Liquidity Support", "Shariah (Mudaraba) liquidity support for Islamic banks (injection)."),
+    "SLS": ("Special Liquidity Support", "Ad-hoc special liquidity support beyond standing facilities (injection)."),
+    "SRF": ("Special Repo Facility", "Special repo outside the regular CB repo line (injection)."),
+    "CM_REPO": ("Capital Market Repo", "Repo supporting banks' capital-market liquidity (injection)."),
+    "SDF": ("Standing Deposit Facility", "Banks park surplus at BB at the corridor floor (mop-up)."),
+}
+
+
+def outstanding_by_day(txns, date_from: datetime.date, date_to: datetime.date) -> Dict:
+    """OMO outstanding per product per day, with what it means for market liquidity.
+
+    `txns` are deal lines (transaction_date, maturity_date, instrument, accepted_bdt_crore, direction).
+    A tranche is outstanding on day d when transaction_date <= d < maturity_date - the stock, as on the
+    OMO page, never a sum of what was dealt. Per day: each product, INJECTION (BB lends: adds liquidity),
+    MOP-UP (SDF: banks park cash at BB: drains it), NET (injection less mop-up), and TOTAL (gross). The
+    direction comes from the data, so a new facility is classified by what BB called it."""
+    def as_date(v):
+        return v if isinstance(v, datetime.date) else datetime.date.fromisoformat(str(v)[:10])
+
+    rows = [(as_date(t["transaction_date"]), as_date(t["maturity_date"]), t["instrument"],
+             float(t["accepted_bdt_crore"] or 0), (t.get("direction") or "").upper()) for t in txns]
+    direction: Dict[str, str] = {}
+    for _, _, inst, _, dr in rows:
+        direction.setdefault(inst, dr)
+    instruments = sorted(direction, key=lambda k: (list(FACILITY_NOTES).index(k) if k in FACILITY_NOTES else 99, k))
+    days = []
+    d = date_from
+    while d <= date_to:
+        by = {}
+        for a, m, inst, amt, _ in rows:
+            if a <= d < m:
+                by[inst] = by.get(inst, 0.0) + amt
+        if by:
+            inj = sum(v for k, v in by.items() if direction[k] != "ABSORPTION")
+            mop = sum(v for k, v in by.items() if direction[k] == "ABSORPTION")
+            days.append({"date": str(d), "by_instrument": {k: round(v, 2) for k, v in by.items()},
+                         "injection": round(inj, 2), "mop_up": round(mop, 2),
+                         "net": round(inj - mop, 2), "total": round(inj + mop, 2)})
+        d += datetime.timedelta(days=1)
+    return {"instruments": instruments, "direction": direction, "days": days}

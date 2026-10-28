@@ -143,6 +143,63 @@ def get_maturity_ladder(
         session.close()
 
 
+@router.get("/outstanding/export")
+def export_outstanding(days: int = Query(None, ge=1, le=800), date_from: str = Query(None), date_to: str = Query(None)):
+    """OMO outstanding by product and day as a workbook: every product, the liquidity it adds or drains,
+    the net, and a sheet saying what each facility is."""
+    from .export_logic import build_workbook, filename
+    from .omo_logic import FACILITY_NOTES, outstanding_by_day
+    try:
+        hi = datetime.date.fromisoformat(date_to) if date_to else datetime.date.today()
+        lo = datetime.date.fromisoformat(date_from) if date_from else hi - datetime.timedelta(days=(days or 90))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    if lo > hi:
+        raise HTTPException(status_code=422, detail="date_from is after date_to")
+    session = get_session()
+    try:
+        rows = session.execute(text("""
+            SELECT transaction_date, maturity_date, instrument, accepted_bdt_crore, direction
+            FROM omo_transactions
+            WHERE accepted_bdt_crore > 0 AND maturity_date > :lo AND transaction_date <= :hi
+            ORDER BY transaction_date
+        """), {"lo": str(lo), "hi": str(hi)}).fetchall()
+        p = outstanding_by_day([dict(r._mapping) for r in rows], lo, hi)
+    finally:
+        session.close()
+
+    inst = p["instruments"]
+    daily = []
+    for d in p["days"]:
+        row = {"Date": d["date"]}
+        for i in inst:
+            row[i] = d["by_instrument"].get(i)                       # no tranche = blank, not 0
+        row["Injection (BB lends - adds liquidity)"] = d["injection"]
+        row["Mop-up (SDF - drains liquidity)"] = d["mop_up"]
+        row["Net injected"] = d["net"]
+        row["Total outstanding (gross)"] = d["total"]
+        daily.append(row)
+    legend = [{"Facility": i,
+               "Name": FACILITY_NOTES.get(i, (i, ""))[0],
+               "Effect on market liquidity": "Drains (mop-up)" if p["direction"][i] == "ABSORPTION" else "Adds (injection)",
+               "What it is": FACILITY_NOTES.get(i, ("", "A facility BB has dealt that this legend does not describe yet."))[1]}
+              for i in inst]
+    body = build_workbook(
+        "Bangladesh Bank OMO Outstanding by Product and Day",
+        [("Outstanding by product", daily), ("What each facility means", legend)],
+        facts=[("Window", f"{lo} to {hi}"), ("Unit", "BDT crore"), ("Products", ", ".join(inst)),
+               ("Source", "Bangladesh Bank OMO press releases")],
+        caveats=[
+            "Outstanding is a STOCK: tranches dealt and not yet matured on that day. It is never a sum of what was dealt.",
+            "Injection adds liquidity to the banking system (repo, assured repo, IBLF, SLF, MLS, SLS, SRF, CM repo); "
+            "mop-up (SDF) drains it. Net injected = injection less mop-up.",
+            "A blank cell means no tranche of that product was outstanding that day. The most recent days may be "
+            "incomplete until BB publishes their operations.",
+        ])
+    return Response(content=body, media_type=XLSX_MEDIA, headers={
+        "Content-Disposition": f'attachment; filename="{filename("bd_omo_outstanding", lo, hi)}"'})
+
+
 @router.get("/maturity-ladder/export")
 def export_maturity_ladder(days: int = Query(None, ge=1, le=400),
                            date_from: str = Query(None), date_to: str = Query(None)):

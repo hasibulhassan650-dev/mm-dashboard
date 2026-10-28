@@ -134,3 +134,40 @@ def test_it_respects_the_api_deploy_boundary():
             for n in ast.walk(ast.parse(src)) if isinstance(n, (ast.Import, ast.ImportFrom))
             for a in (n.names if hasattr(n, "names") else [])}
     assert not mods & {"db", "engines", "fetchers", "config"}
+
+
+class TestTheOutstandingExport:
+    """OMO outstanding by product and day, as a file the desk can hand on."""
+
+    def _txns(self):
+        D = datetime.date
+        return [
+            {"transaction_date": D(2026, 10, 12), "maturity_date": D(2026, 10, 19), "instrument": "IBLF",
+             "accepted_bdt_crore": 7000.0, "direction": "INJECTION"},
+            {"transaction_date": D(2026, 10, 13), "maturity_date": D(2026, 10, 14), "instrument": "SDF",
+             "accepted_bdt_crore": 2800.0, "direction": "ABSORPTION"},
+            {"transaction_date": D(2026, 10, 13), "maturity_date": D(2026, 10, 20), "instrument": "NEWFAC",
+             "accepted_bdt_crore": 100.0, "direction": "INJECTION"},
+        ]
+
+    def test_outstanding_is_the_stock_and_splits_injection_from_mop_up(self):
+        from omo_logic import outstanding_by_day
+        D = datetime.date
+        p = outstanding_by_day(self._txns(), D(2026, 10, 12), D(2026, 10, 15))
+        day = {d["date"]: d for d in p["days"]}
+        assert day["2026-10-13"]["injection"] == 7100.0 and day["2026-10-13"]["mop_up"] == 2800.0
+        assert day["2026-10-13"]["net"] == 4300.0 and day["2026-10-13"]["total"] == 9900.0
+        assert day["2026-10-14"]["mop_up"] == 0.0          # the SDF matured: the stock, not what was dealt
+
+    def test_a_facility_the_legend_has_never_heard_of_still_gets_a_column(self):
+        """A new BB product must appear the day it is dealt, never vanish from the file."""
+        from omo_logic import outstanding_by_day
+        D = datetime.date
+        p = outstanding_by_day(self._txns(), D(2026, 10, 12), D(2026, 10, 15))
+        assert "NEWFAC" in p["instruments"] and p["days"][1]["by_instrument"]["NEWFAC"] == 100.0
+        assert p["instruments"].index("IBLF") < p["instruments"].index("SDF") < p["instruments"].index("NEWFAC")
+
+    def test_the_export_is_registered_with_a_date_range(self):
+        import export_registry as R
+        e = R.BY_KEY["omo_outstanding"]
+        assert "date_from" in e.args and e.table == "omo_transactions"

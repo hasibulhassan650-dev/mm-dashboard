@@ -108,6 +108,14 @@ EXPORTS: List[Export] = [
            ["days"],
            "liquidity_events", "event_date",
            sheets="Events · Monthly"),
+    Export("omo_outstanding", "OMO Outstanding by Product and Day",
+           "/api/omo/outstanding/export",
+           "What BB has outstanding in each OMO product on each day - every product BB deals, not a "
+           "subset - split into the liquidity it adds (repo, assured repo, IBLF, SLF, MLS, SLS, SRF, "
+           "CM repo) and the liquidity it drains (SDF), with the net and a sheet explaining each facility.",
+           ["days", "date_from", "date_to"],
+           "omo_transactions", "transaction_date",
+           sheets="Outstanding · Facility legend"),
     Export("omo_ladder", "OMO Maturity Ladder",
            "/api/omo/maturity-ladder/export",
            "Day-by-day OMO maturities with the product breakdown — every "
