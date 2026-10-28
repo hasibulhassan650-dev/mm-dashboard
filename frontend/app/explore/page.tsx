@@ -1,3 +1,4 @@
+import { tenorTitle } from "@/lib/tenor";
 import { api } from "@/lib/api";
 import ExploreTool, { type SeriesDef } from "@/components/ExploreTool";
 import RelatedLinks from "@/components/RelatedLinks";
@@ -45,6 +46,16 @@ export default async function ExplorePage() {
   for (const [d, v] of Object.entries(omoAgg)) omoNet[d] = v.inj - v.abs;
 
   const yTenor = (t: string) => mk(yh.filter((r) => r.tenor_label === t).map((r) => [r.auction_date, r.cutoff_yield_pct]));
+
+  // Every tenor that appears in the auction history gets a series - built from the data, never from a
+  // list. A fixed list dropped the 14-day bill (and would drop any tenor BB introduces). The older keys
+  // are kept for the tenors that had them so a saved selection still resolves.
+  const LEGACY_KEY: Record<string, string> = { "91D": "y91", "182D": "y182", "364D": "y364", "2Y": "y2y", "5Y": "y5y",
+    "10Y": "y10y", "15Y": "y15y", "20Y": "y20y", "3Y_FRTB": "yfrtb" };
+  const yieldSeries = [...new Map(yh.map((r) => [r.tenor_label, r])).values()]
+    .sort((a, b) => (a.tenor_years ?? 0) - (b.tenor_years ?? 0))
+    .map((r) => ({ key: LEGACY_KEY[r.tenor_label] ?? `y_${r.tenor_label}`, label: tenorTitle(r.tenor_label, r.security_type), group: "G-Sec Yields",
+                   unit: "%", points: yTenor(r.tenor_label) }));
 
   // Curve spreads. Tenors auction on different days, so a spread only exists if
   // both legs are carried forward from their own last print — taking only dates
@@ -108,15 +119,7 @@ export default async function ExplorePage() {
     { key: "dommr", label: "DOMMR O/N", group: "Rates", unit: "%", points: rrOn("DOMMR") },
     { key: "bofr", label: "BOFR O/N", group: "Rates", unit: "%", points: rrOn("BOFR") },
     // ── G-sec: every auctioned tenor, not a sample of four ──────────────
-    { key: "y91", label: "91D T-Bill", group: "G-Sec Yields", unit: "%", points: yTenor("91D") },
-    { key: "y182", label: "182D T-Bill", group: "G-Sec Yields", unit: "%", points: yTenor("182D") },
-    { key: "y364", label: "364D T-Bill", group: "G-Sec Yields", unit: "%", points: yTenor("364D") },
-    { key: "y2y", label: "2Y T-Bond", group: "G-Sec Yields", unit: "%", points: yTenor("2Y") },
-    { key: "y5y", label: "5Y T-Bond", group: "G-Sec Yields", unit: "%", points: yTenor("5Y") },
-    { key: "y10y", label: "10Y T-Bond", group: "G-Sec Yields", unit: "%", points: yTenor("10Y") },
-    { key: "y15y", label: "15Y T-Bond", group: "G-Sec Yields", unit: "%", points: yTenor("15Y") },
-    { key: "y20y", label: "20Y T-Bond", group: "G-Sec Yields", unit: "%", points: yTenor("20Y") },
-    { key: "yfrtb", label: "3Y FRTB", group: "G-Sec Yields", unit: "%", points: yTenor("3Y_FRTB") },
+    ...yieldSeries,
 
     // ── G-sec curve shape ───────────────────────────────────────────────
     { key: "s_2s10s", label: "2s10s (10Y−2Y)", group: "G-Sec Curve", unit: "pp", points: spread(yTenor("10Y"), yTenor("2Y")) },

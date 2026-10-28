@@ -72,20 +72,61 @@ def get_yield_range():
         session.close()
 
 
+# A tenor is on today's curve only if it has actually auctioned recently. Without this the "latest row
+# per tenor" kept a 14-day bill last auctioned in Sep-2025 (10.05%) and a 28-day bill from 2008 (7.5%)
+# on the curve, and the long-end KPI read a year-old number. Bonds can go two months between
+# auctions, so the limit is generous; a tenor BB starts auctioning again re-enters by itself.
+LIVE_TENOR_DAYS = 120
+
+
+def _latest_per_tenor(session):
+    """(live, dormant): each tenor's most recent cut-off, split by how long ago it last auctioned."""
+    rows = session.execute(text("""
+        SELECT p.tenor_label, p.tenor_years, p.security_type, p.cutoff_yield_pct, p.auction_date
+        FROM primary_yield_snapshots p
+        WHERE p.cutoff_yield_pct IS NOT NULL
+          AND p.auction_date = (SELECT MAX(q.auction_date) FROM primary_yield_snapshots q
+                                WHERE q.tenor_label = p.tenor_label AND q.cutoff_yield_pct IS NOT NULL)
+    """)).fetchall()
+    seen, latest = set(), []
+    for r in rows:                       # two same-day BB auctions of one tenor share a label: keep one
+        m = dict(r._mapping)
+        if m["tenor_label"] not in seen:
+            seen.add(m["tenor_label"])
+            latest.append(m)
+    if not latest:
+        return [], []
+    newest = max(_as_date(m["auction_date"]) for m in latest)
+    live, dormant = [], []
+    for m in latest:
+        m["age_days"] = (newest - _as_date(m["auction_date"])).days
+        (live if m["age_days"] <= LIVE_TENOR_DAYS else dormant).append(m)
+    key = lambda x: x["tenor_years"] or 0
+    return sorted(live, key=key), sorted(dormant, key=key)
+
+
+def _as_date(v):
+    import datetime
+    return v if isinstance(v, datetime.date) else datetime.date.fromisoformat(str(v)[:10])
+
+
 @router.get("/curve")
 def get_yield_curve():
-    """Latest yield curve — most recent auction per tenor."""
+    """Latest yield curve - the most recent auction per tenor, for tenors that auctioned recently."""
     session = get_session()
     try:
-        rows = session.execute(text("""
-            SELECT DISTINCT ON (tenor_label)
-                   tenor_label, tenor_years, security_type,
-                   cutoff_yield_pct, auction_date
-            FROM primary_yield_snapshots
-            WHERE cutoff_yield_pct IS NOT NULL
-            ORDER BY tenor_label, auction_date DESC
-        """)).fetchall()
-        return sorted([dict(r._mapping) for r in rows], key=lambda x: x["tenor_years"] or 0)
+        return _latest_per_tenor(session)[0]
+    finally:
+        session.close()
+
+
+@router.get("/curve/dormant")
+def get_dormant_tenors():
+    """Tenors in the history that have not auctioned for LIVE_TENOR_DAYS: kept out of the curve and the
+    KPIs (their last yield is history, not today's market) but listed, so nothing is dropped silently."""
+    session = get_session()
+    try:
+        return _latest_per_tenor(session)[1]
     finally:
         session.close()
 

@@ -130,7 +130,22 @@ class TestWhatItAccepts:
         curve as a real point."""
         with pytest.raises(Exception) as exc:
             _mark(tenor_label="9ID")
-        assert "unknown tenor" in str(exc.value)
+        assert "not a tenor label" in str(exc.value)
+
+    def test_a_well_formed_tenor_bb_never_auctioned_is_rejected_one_it_has_is_not(self, desk, monkeypatch):
+        """The list of tenors is the auction history, not a hand-kept set: the 14-day bill was refused by a
+        fixed list. A typo like 99Y is still refused because BB has never auctioned it."""
+        from fastapi import HTTPException
+        mod, eng, s = desk
+        monkeypatch.setenv("DESK_WRITE_SECRET", "k")
+        s.add(PrimaryYieldSnapshot(snapshot_date=TODAY, auction_date=TODAY, issue_date=TODAY, security_type="T_BILL",
+                                   tenor_label="14D", tenor_years=14 / 365, cutoff_yield_pct=10.05, source="BB"))
+        s.commit()
+        assert mod.put_mark(_mark(tenor_label="14D"), x_desk_secret="k")["ok"]
+        with pytest.raises(HTTPException) as exc:
+            mod.put_mark(_mark(tenor_label="99Y"), x_desk_secret="k")
+        assert exc.value.status_code == 422
+        assert "14D" in mod.get_marks(days=45)["tenors"]
 
     def test_a_future_auction_has_no_cutoff_to_know(self):
         with pytest.raises(Exception) as exc:

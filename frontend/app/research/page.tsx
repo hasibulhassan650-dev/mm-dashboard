@@ -1,3 +1,4 @@
+import { tenorYears } from "@/lib/tenor";
 import { api, BacktestRow, ForecastRow, ForecastModel } from "@/lib/api";
 import RelatedLinks from "@/components/RelatedLinks";
 import { Panel } from "@/components/terminal/ui";
@@ -17,9 +18,6 @@ const MODEL_LABEL: Record<ForecastModel, string> = {
   ecm: "ECM", blend: "Blend",
 };
 const MODEL_ORDER: ForecastModel[] = ["naive", "momentum", "curve", "ecm", "ols", "blend"];
-const TENOR_YEARS: Record<string, number> = {
-  "91D": 0.25, "182D": 0.5, "364D": 1, "2Y": 2, "5Y": 5, "10Y": 10, "15Y": 15, "20Y": 20,
-};
 const TRACK_TENOR = "91D";   // deepest series — the one worth eyeballing
 
 /** Section heading inside a prose panel. */
@@ -269,7 +267,7 @@ export default async function ResearchPage() {
                     // Cash on a 100 crore bid, held to maturity, UNDISCOUNTED.
                     // Not summed across tenors: a 91D and a 20Y commitment are
                     // not the same money and adding them would be meaningless.
-                    const yrs = TENOR_YEARS[tenor] ?? 1;
+                    const yrs = tenorYears(tenor) ?? 1;
                     const lakh = 100 * ((m.ev_pickup_bps ?? 0) / 10000) * yrs * 100;
                     return (
                       <tr key={tenor}>

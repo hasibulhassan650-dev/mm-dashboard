@@ -47,6 +47,7 @@ export const api = {
   },
   omoInjection: (window_days = 30) => get<OmoInjection>("/api/omo/injection", { window_days }),
   yieldCurve:      () => get<YieldRow[]>("/api/yields/curve"),
+  yieldDormant:    () => get<YieldRow[]>("/api/yields/curve/dormant"),
   yieldProvisional: () => get<ProvisionalYield[]>("/api/yields/curve/provisional"),
   yieldSecondary:  () => get<SecondaryYieldRow[]>("/api/yields/secondary"),
   yields:          (months = 12) => get<YieldRow[]>("/api/yields", { months }),
@@ -889,6 +890,8 @@ export interface YieldRow {
   /** Issue/settlement date BB prints (T+1 working day after the auction). */
   issue_date?: string | null;
   offered_bdt_crore?: number; accepted_bdt_crore?: number;
+  /** Days between this tenor's last auction and the newest auction of any tenor (curve endpoints only). */
+  age_days?: number;
 }
 /** A desk cut-off mark for an auction BB has not published yet. Never BB data. */
 export interface ProvisionalYield {

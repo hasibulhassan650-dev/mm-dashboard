@@ -1,4 +1,4 @@
-import { api } from "@/lib/api";
+import { api, type YieldRow } from "@/lib/api";
 import RelatedLinks from "@/components/RelatedLinks";
 import { buildCurve, deskOverlay } from "@/lib/terminal";
 import { bidToCover } from "@/lib/analytics";
@@ -18,7 +18,7 @@ import { DataWarning } from "@/components/DataWarning";
 export const revalidate = 300;
 
 export default async function YieldsPage() {
-  const [primary, secondary, history, slope, fresh, range, provisional] = await Promise.all([
+  const [primary, secondary, history, slope, fresh, range, provisional, dormant] = await Promise.all([
     api.yieldCurve().catch(() => []),
     api.yieldSecondary().catch(() => []),
     api.yields(12).catch(() => []),
@@ -26,15 +26,18 @@ export default async function YieldsPage() {
     api.freshness(),
     api.yieldDateRange(),
     api.yieldProvisional().catch(() => []),
+    api.yieldDormant().catch(() => []),
   ]);
   const cb = buildCurve(primary, history);
   const desk = deskOverlay(cb.tenors, cb.today, provisional);
 
   const tbills = primary.filter((r) => r.security_type === "T_BILL");
   const tbonds = primary.filter((r) => r.security_type !== "T_BILL");
-  const kpi = (label: string, vals: number[], tenorLabel: string, color: string, hi: boolean) => {
-    if (!vals.length) return null;
-    const v = hi ? Math.max(...vals) : Math.min(...vals);
+  // The end of the curve is the yield OF the shortest / longest tenor - the number and the caption must
+  // be the same tenor (this used to show the highest yield under the longest tenor's name).
+  const kpi = (label: string, row: YieldRow | undefined, color: string) => {
+    if (!row) return null;
+    const v = row.cutoff_yield_pct, tenorLabel = row.tenor_label;
     return (
       <div className="kpi" key={label}>
         <div className="kpi-top"><span className="kpi-label">{label}</span></div>
@@ -43,10 +46,11 @@ export default async function YieldsPage() {
       </div>
     );
   };
-  const tbShort = tbills.slice().sort((a, b) => (a.tenor_years ?? 0) - (b.tenor_years ?? 0))[0]?.tenor_label ?? "";
-  const tbLong = tbills.slice().sort((a, b) => (b.tenor_years ?? 0) - (a.tenor_years ?? 0))[0]?.tenor_label ?? "";
-  const bdShort = tbonds.slice().sort((a, b) => (a.tenor_years ?? 0) - (b.tenor_years ?? 0))[0]?.tenor_label ?? "";
-  const bdLong = tbonds.slice().sort((a, b) => (b.tenor_years ?? 0) - (a.tenor_years ?? 0))[0]?.tenor_label ?? "";
+  const ends = (rows: YieldRow[]) => {
+    const s = rows.slice().sort((a, b) => (a.tenor_years ?? 0) - (b.tenor_years ?? 0));
+    return { short: s[0], long: s[s.length - 1] };
+  };
+  const bill = ends(tbills), bond = ends(tbonds);
 
   return (
     <>
@@ -54,11 +58,19 @@ export default async function YieldsPage() {
       <div style={{ marginBottom: "var(--gap)" }}><Freshness updated={fresh.yields} /></div>
 
       <div className="kpi-strip" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
-        {kpi("T-Bill short end", tbills.map((r) => r.cutoff_yield_pct), tbShort, "var(--accent)", false)}
-        {kpi("T-Bill long end", tbills.map((r) => r.cutoff_yield_pct), tbLong, "var(--accent)", true)}
-        {kpi("T-Bond short end", tbonds.map((r) => r.cutoff_yield_pct), bdShort, "var(--info)", false)}
-        {kpi("T-Bond long end", tbonds.map((r) => r.cutoff_yield_pct), bdLong, "var(--info)", true)}
+        {kpi("T-Bill short end", bill.short, "var(--accent)")}
+        {kpi("T-Bill long end", bill.long, "var(--accent)")}
+        {kpi("T-Bond short end", bond.short, "var(--info)")}
+        {kpi("T-Bond long end", bond.long, "var(--info)")}
       </div>
+
+      {dormant.length > 0 && (
+        <div style={{ margin: "var(--gap) 0", fontSize: 12, color: "var(--fg-mute)" }}>
+          Not auctioning now, so not on the curve:{" "}
+          {dormant.map((r) => `${r.tenor_label} (last ${r.auction_date.slice(0, 10)}, ${r.cutoff_yield_pct.toFixed(2)}%)`).join(" · ")}.
+          They return automatically if BB auctions them again.
+        </div>
+      )}
 
       <div className="grid12">
         <YieldsView d={{ tenors: cb.tenors, today: cb.today, weekAgo: cb.weekAgo, monthAgo: cb.monthAgo, desk }} />

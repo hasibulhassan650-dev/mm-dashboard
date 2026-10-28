@@ -22,6 +22,7 @@ sees the secret: the page posts same-origin to the Next app, which holds it
 server-side and forwards. CORS stays GET-only and is not widened for this.
 """
 import datetime
+import re
 import hmac
 import os
 from typing import Optional
@@ -35,9 +36,23 @@ from db import get_session
 router = APIRouter()
 
 # Tenors BB actually auctions. A free-text label would let a typo create a
-# brand-new tenor that then appears on the curve as a real point.
+# brand-new tenor that then appears on the curve as a real point. The list is the tenors we know
+# BB can auction PLUS every tenor already in the auction history (see _known_tenors): a fixed list
+# rejected the 14-day bill, and would reject whatever BB introduces next.
 _TENORS = {"91D", "182D", "364D", "2Y", "5Y", "10Y", "15Y", "20Y",
            "3Y_FRTB", "5Y_FRTB", "10Y_FRTB"}
+_TENOR_SHAPE = re.compile(r"^\d{1,3}[DY](_FRTB)?$")
+
+
+def _tenor_order(label: str):
+    m = re.match(r"^(\d+)([DY])", label)
+    return ((int(m.group(1)) / 365 if m.group(2) == "D" else int(m.group(1))) if m else 1e9, label)
+
+
+def _known_tenors(session) -> set:
+    rows = session.execute(text(
+        "SELECT DISTINCT tenor_label FROM primary_yield_snapshots WHERE tenor_label IS NOT NULL")).fetchall()
+    return _TENORS | {r[0] for r in rows if _TENOR_SHAPE.match(str(r[0]))}
 
 
 class MarkIn(BaseModel):
@@ -53,8 +68,8 @@ class MarkIn(BaseModel):
     @classmethod
     def known_tenor(cls, v: str) -> str:
         v = (v or "").strip().upper()
-        if v not in _TENORS:
-            raise ValueError(f"unknown tenor '{v}' — one of {sorted(_TENORS)}")
+        if not _TENOR_SHAPE.match(v):          # whether BB has auctioned it is checked against the history
+            raise ValueError(f"'{v}' is not a tenor label (e.g. 91D, 2Y, 3Y_FRTB)")
         return v
 
     @field_validator("auction_date")
@@ -132,6 +147,10 @@ def put_mark(mark: MarkIn, x_desk_secret: Optional[str] = Header(default=None)):
     _authorise(x_desk_secret)
     session = get_session()
     try:
+        known = _known_tenors(session)
+        if mark.tenor_label not in known:
+            raise HTTPException(status_code=422, detail=f"unknown tenor '{mark.tenor_label}' - BB has never "
+                                                       f"auctioned it here; one of {sorted(known)}")
         now = datetime.datetime.utcnow()
         existing = session.execute(text(
             "SELECT id FROM desk_marks WHERE auction_date = :d AND tenor_label = :t"),
@@ -284,7 +303,7 @@ def get_marks(days: int = Query(45, ge=1, le=400)):
             "unconfirmed": len(unconfirmed),
             "worst_diff_bps": worst,
             "configured": bool(os.environ.get("DESK_WRITE_SECRET")),
-            "tenors": sorted(_TENORS),
+            "tenors": sorted(_known_tenors(session), key=_tenor_order),
             "marks": out,
             "buybacks": desk_buybacks(session, today - datetime.timedelta(days=days)),
         }

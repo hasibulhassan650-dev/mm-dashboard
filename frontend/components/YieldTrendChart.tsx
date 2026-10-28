@@ -2,8 +2,8 @@
 import { useState } from "react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from "recharts";
 import { YieldRow } from "@/lib/api";
+import { byTenor as compareTenor } from "@/lib/tenor";
 
-const TENOR_ORDER = ["14D","91D","182D","364D","2Y","3Y_FRTB","5Y","10Y","15Y","20Y"];
 const TENOR_COLORS: Record<string, string> = {
   "14D":     "var(--s-lime)",
   "91D":     "var(--s-teal)",
@@ -17,10 +17,14 @@ const TENOR_COLORS: Record<string, string> = {
   "20Y":     "var(--s-maroon)",
 };
 
+// A tenor with no assigned colour still gets a distinct one (28D, a future 5Y_FRTB ...), not the same grey.
+const FALLBACK = Object.values(TENOR_COLORS);
+const colorOf = (t: string) => TENOR_COLORS[t] ?? FALLBACK[[...t].reduce((s, c) => s + c.charCodeAt(0), 0) % FALLBACK.length];
+
 const N_OPTIONS = [6, 10, 20, 50, 0] as const;
 
 export default function YieldTrendChart({ data }: { data: YieldRow[] }) {
-  const available = TENOR_ORDER.filter(t => data.some(r => r.tenor_label === t));
+  const available = [...new Set(data.map(r => r.tenor_label))].sort(compareTenor);   // every tenor present, shortest first
   const [selected, setSelected] = useState<string[]>(available);
   const [nAuctions, setNAuctions] = useState<number>(6);
 
@@ -61,7 +65,7 @@ export default function YieldTrendChart({ data }: { data: YieldRow[] }) {
                   ? "border-transparent t-fg"
                   : "bd t-mute bg-transparent"
               }`}
-              style={selected.includes(t) ? { background: TENOR_COLORS[t] ?? "var(--fg-mute)" } : {}}
+              style={selected.includes(t) ? { background: colorOf(t) } : {}}
             >
               {t}
             </button>
@@ -97,8 +101,8 @@ export default function YieldTrendChart({ data }: { data: YieldRow[] }) {
           {selected.map(t => (
             <Line
               key={t} type="monotone" dataKey={t}
-              stroke={TENOR_COLORS[t] ?? "var(--fg-mute)"} strokeWidth={2}
-              dot={{ r: 4, fill: TENOR_COLORS[t] ?? "var(--fg-mute)", stroke: "var(--panel)", strokeWidth: 1 }}
+              stroke={colorOf(t)} strokeWidth={2}
+              dot={{ r: 4, fill: colorOf(t), stroke: "var(--panel)", strokeWidth: 1 }}
               connectNulls
             />
           ))}

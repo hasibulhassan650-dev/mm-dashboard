@@ -1,3 +1,4 @@
+import { byTenor } from "@/lib/tenor";
 import type { Metadata } from "next";
 import { IBM_Plex_Sans, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
@@ -46,9 +47,11 @@ async function buildTicker(): Promise<TickItem[]> {
       const rs = history.filter((r) => r.tenor_label === t).sort((a, b) => a.auction_date.localeCompare(b.auction_date));
       return rs.length >= 2 ? diff(rs[rs.length - 1].cutoff_yield_pct, rs[rs.length - 2].cutoff_yield_pct) : 0;
     };
-    for (const t of ["91D", "182D", "364D", "2Y", "5Y", "10Y", "20Y"]) {
-      const row = curve.find((r) => r.tenor_label === t);
-      if (row) ticks.push({ sym: t + " TB", val: row.cutoff_yield_pct.toFixed(2) + "%", d: tenorDelta(t) });
+    // every tenor on the live curve, shortest first - not a chosen few (a fixed list dropped 15Y and FRTB)
+    for (const row of [...curve].sort((a, b) => byTenor(a.tenor_label, b.tenor_label))) {
+      const t = row.tenor_label;
+      ticks.push({ sym: t.replace("_FRTB", " FRTB") + (row.security_type === "FRTB" ? "" : " TB"),
+                   val: row.cutoff_yield_pct.toFixed(2) + "%", d: tenorDelta(t) });
     }
 
     // reserves & remittance: latest month vs previous month

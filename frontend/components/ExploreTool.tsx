@@ -9,13 +9,31 @@ export interface SeriesDef {
 }
 
 // ── math helpers ──────────────────────────────────────────────────────────────
+const DAY = 86400000;
+const dayMs = (d: string) => Date.parse(d.slice(0, 10) + "T00:00:00Z");
+
+/** How long a print may be carried forward: four of the series' own typical gaps, within [10, 120] days.
+ *  A daily series is carried over a long holiday but not for a month; a monthly bond for a quarter. */
+export function carryDays(dates: string[]): number {
+  if (dates.length < 2) return 10;
+  const gaps: number[] = [];
+  for (let i = 1; i < dates.length; i++) gaps.push((dayMs(dates[i]) - dayMs(dates[i - 1])) / DAY);
+  gaps.sort((a, b) => a - b);
+  const median = gaps[Math.floor(gaps.length / 2)];
+  return Math.min(120, Math.max(10, Math.round(4 * median)));
+}
+
+/** The series on the grid, each point carried forward from its last real print - but only for as long as
+ *  the print is still news. A tenor that stopped auctioning (the 14-day bill last did in Sep-2025) used to
+ *  be carried flat across every later date, so its correlations measured a frozen number, not the market. */
 function fillOnGrid(points: Record<string, number>, grid: string[]): (number | null)[] {
   const entries = Object.entries(points).sort((a, b) => a[0].localeCompare(b[0]));
+  const limit = carryDays(entries.map((e) => e[0])) * DAY;
   const out: (number | null)[] = [];
-  let i = 0, last: number | null = null;
+  let i = 0, last: number | null = null, lastAt = 0;
   for (const d of grid) {
-    while (i < entries.length && entries[i][0] <= d) { last = entries[i][1]; i++; }
-    out.push(last);
+    while (i < entries.length && entries[i][0] <= d) { last = entries[i][1]; lastAt = dayMs(entries[i][0]); i++; }
+    out.push(last != null && dayMs(d) - lastAt <= limit ? last : null);
   }
   return out;
 }
@@ -119,7 +137,7 @@ export default function ExploreTool({ variables, min, max }: { variables: Series
             <span className="drc-dash">→</span>
             <input type="date" value={to} min={from} max={max} onChange={(e) => e.target.value && setTo(e.target.value)} />
           </div>
-          <span style={{ fontSize: 11.5, color: "var(--fg-mute)" }}>{grid.length} aligned days · sparse series forward-filled</span>
+          <span style={{ fontSize: 11.5, color: "var(--fg-mute)" }}>{grid.length} aligned days · a print is carried forward only while it is still current</span>
         </div>
       </Panel>
 
