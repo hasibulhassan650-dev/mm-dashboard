@@ -12,22 +12,32 @@ import CurveSlopeChart from "@/components/CurveSlopeChart";
 import BidCoverChart from "@/components/BidCoverChart";
 import DownloadButton from "@/components/DownloadButton";
 import Freshness from "@/components/Freshness";
+import DateRangeControl from "@/components/DateRangeControl";
+import { resolveRange, inRange } from "@/lib/daterange";
 import InfoTip from "@/components/InfoTip";
 import { DataWarning } from "@/components/DataWarning";
 
 export const revalidate = 300;
 
-export default async function YieldsPage() {
-  const [primary, secondary, history, slope, fresh, range, provisional, dormant] = await Promise.all([
+export default async function YieldsPage({ searchParams }: { searchParams: Promise<{ from?: string; to?: string }> }) {
+  const sp = await searchParams;
+  const [primary, secondary, history, slopeAll, fresh, range, provisional, dormant, histAll] = await Promise.all([
     api.yieldCurve().catch(() => []),
     api.yieldSecondary().catch(() => []),
     api.yields(12).catch(() => []),
-    api.yieldSlope(24).catch(() => []),
+    api.yieldSlope(120).catch(() => []),
     api.freshness(),
     api.yieldDateRange(),
     api.yieldProvisional().catch(() => []),
     api.yieldDormant().catch(() => []),
+    api.yields(120).catch(() => []),
   ]);
+
+  // The window the user chose for the history charts (slope, bid-to-cover, trend). The curve itself is a
+  // snapshot of today and the week/month comparison needs the last year, so those keep their own data.
+  const win = resolveRange(sp, histAll.map((r) => r.auction_date), 365);
+  const shown = histAll.filter((r) => inRange(r.auction_date, win.from, win.to));
+  const slope = slopeAll.filter((r) => inRange(r.date, win.from, win.to));
   const cb = buildCurve(primary, history);
   const desk = deskOverlay(cb.tenors, cb.today, provisional);
 
@@ -55,7 +65,10 @@ export default async function YieldsPage() {
   return (
     <>
       <DataWarning dataset={["yields", "auctions"]} />
-      <div style={{ marginBottom: "var(--gap)" }}><Freshness updated={fresh.yields} /></div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: "var(--gap)", flexWrap: "wrap" }}>
+        <Freshness updated={fresh.yields} />
+        <DateRangeControl min={win.min} max={win.max} from={win.from} to={win.to} />
+      </div>
 
       <div className="kpi-strip" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
         {kpi("T-Bill short end", bill.short, "var(--accent)")}
@@ -85,15 +98,15 @@ export default async function YieldsPage() {
           <YieldCurveChartFull primary={primary} secondary={secondary} />
         </Panel>
 
-        <Panel title="Curve Slope — Term Spreads" sub="2s10s & 10Y−91D (bps) · below 0 = inverted" span={6}>
+        <Panel title="Curve Slope — Term Spreads" sub={`2s10s & 10Y−91D (bps) · below 0 = inverted · ${win.from} to ${win.to}`} span={6}>
           <CurveSlopeChart data={slope} />
         </Panel>
-        <Panel title="Bid-to-Cover by Tenor" sub="amount bid ÷ accepted, latest auction" span={6}>
-          <BidCoverChart rows={history} />
+        <Panel title="Bid-to-Cover by Tenor" sub={`amount bid ÷ accepted · auctions ${win.from} to ${win.to}`} span={6}>
+          <BidCoverChart rows={shown} />
         </Panel>
 
-        <Panel title="Yield Trend — Auction History" sub={`${history.length} cut-off observations across ${new Set(history.map((r) => r.tenor_label)).size} tenors`} span={12}>
-          <YieldTrendChart data={history} />
+        <Panel title="Yield Trend — Auction History" sub={`${shown.length} cut-off observations across ${new Set(shown.map((r) => r.tenor_label)).size} tenors · ${win.from} to ${win.to}`} span={12}>
+          <YieldTrendChart data={shown} />
         </Panel>
 
         <Panel title="Secondary Market (GSOM MTM)" sub={`${secondary.length} securities`} span={6} pad={false}>
