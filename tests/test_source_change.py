@@ -223,6 +223,14 @@ class TestSkipsAreCounted:
         assert verdict == "degraded"
         assert any("skipped" in r or "less than half" in r for r in reasons), reasons
 
+    def test_a_snapshot_that_counted_nothing_is_not_a_baseline_for_skips(self):
+        """CI reads the press-release list through Chrome (no row counts); the PC reads it directly and
+        sees the page's other 120 releases. Comparing the two called a normal page 'worse than 0%'."""
+        chrome = SW.fingerprint("omo_press", selector="chrome-fallback", rows_seen=0, rows_parsed=78)
+        direct = SW.fingerprint("omo_press", selector="chrome-fallback", rows_seen=156, rows_parsed=78,
+                                skips={"not an OMO release": 82, "older than the window": 38})
+        assert SW.compare(chrome, direct)[0] == "ok"
+
     def test_the_reasons_travel_with_the_count(self):
         bad = _FULL.replace("<td>8.8685</td><td>8.75</td>", "<td></td><td></td>")
         meta = {}

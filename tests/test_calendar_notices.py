@@ -294,3 +294,46 @@ class TestAGeneralHolidayNamesOnlyTheDayAfterTheLetter:
                      is_workday=lambda d: True, is_closed=lambda d: False, activity=lambda d: 0,
                      last_observed=D(2026, 10, 25), published=D(2026, 10, 26))
         assert v["status"] == "APPLIED" and v["dates"] == [D(2026, 11, 7)]
+
+
+class TestAByElectionClosesOneSeatNotTheMarket:
+    """SDAD letter 19 of 28-Oct declared 29-Oct a general holiday - for the Thakurgaon-1 by-election. Its month
+    word is garbled in the PDF, so the reader parked it as PENDING and asked a human. Teaching it the missing
+    spelling would have been the wrong fix: it would then have closed the whole market on a day only one
+    constituency's branches are shut, and rolled every 29-Oct maturity to the 30th."""
+    TITLE = "SDAD Circular Letter No. 19: Declaration of a General Holiday on Thursday, 29 October 2026"
+    ROW = {"url": "https://x/oct282026sdadl19.pdf", "title": TITLE, "published_date": D(2026, 10, 28),
+           "department": "sdad"}
+
+    def test_it_is_settled_as_regional_with_no_calendar_change_and_no_defect(self):
+        eng, s = _world()
+        before = s.query(HolidayCalendar).count()
+        res = N.process(s, [self.ROW], lambda u: fixture("thakurgaon_byelection"), today=D(2026, 10, 28))
+        s.commit()
+        assert res["regional"] == 1 and res["pending"] == 0 and not res["changed_calendar"]
+        assert s.query(HolidayCalendar).count() == before
+        n = s.query(CalendarNotice).one()
+        assert n.status == "REGIONAL" and n.notified_utc is not None
+
+    def test_a_rerun_leaves_it_alone(self):
+        eng, s = _world()
+        N.process(s, [self.ROW], lambda u: fixture("thakurgaon_byelection"), today=D(2026, 10, 28)); s.commit()
+        calls = []
+        again = N.process(s, [self.ROW], lambda u: calls.append(u) or fixture("thakurgaon_byelection"),
+                          today=D(2026, 10, 28))
+        assert calls == [] and again.get("regional", 0) == 0
+
+    def test_the_april_by_election_is_recognised_too(self):
+        """Bogura-6 / Lalpur-3 of 9-Apr: same kind of letter, a different garbling of the same words."""
+        assert N.local_scope(fixture("election"), N.extract_segments(fixture("election"), D(2026, 4, 6)))
+
+    @pytest.mark.parametrize("name", ["puja", "eid", "nov7"])
+    def test_a_national_closure_is_never_called_local(self, name):
+        """A wrong 'local' would hide a real closure. These real letters mention port/airport 'areas' and
+        a Dhaka postcode, none of which is a seat."""
+        assert N.local_scope(fixture(name), N.extract_segments(fixture(name), TODAY)) is None
+
+    def test_a_run_of_days_is_national_even_if_a_seat_is_named(self):
+        text = "ঠাকুরগাঁও-১ আসনের উপনির্বাচন ... ২০ হতে ২২ অক্টোবর ২০২৬ ব্যাংক বন্ধ"
+        segs = N.extract_segments(text, TODAY)
+        assert any(s.kind == "range" for s in segs) and N.local_scope(text, segs) is None

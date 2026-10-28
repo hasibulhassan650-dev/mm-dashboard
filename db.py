@@ -592,7 +592,7 @@ class CalendarNotice(Base):
     kind           = Column(String(12))             # CLOSURE | OTHER
     dates_json     = Column(Text)                   # the dates the circular closes
     evidence_quote = Column(Text)
-    status         = Column(String(12))             # APPLIED | PENDING | REJECTED | HISTORICAL
+    status         = Column(String(12))             # APPLIED | PENDING | REJECTED | HISTORICAL | REGIONAL
     reason         = Column(Text)
     first_seen_utc = Column(DateTime)
     decided_utc    = Column(DateTime)

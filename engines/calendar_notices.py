@@ -58,6 +58,10 @@ for _n, _words in {
 RANGE_CONN = {"হতে", "থেকে", "হইতে", "঴নত", "-", "–", "—", "to", "till", "until", "through"}
 LIST_CONN = {",", "ও", "এবং", "and", "&"}
 GENERAL_HOLIDAY = re.compile(r"general holiday", re.I)
+# A by-election closes the bank branches of ONE parliamentary seat ("Bogura-6", "Thakurgaon-1"), not the
+# money market. The seat is a place name glued to a one- or two-digit number; "Dhaka-1000" (the postcode in
+# every letterhead) and "Ref-05.00.0000" (a memo number) are not, which the lookahead keeps out.
+CONSTITUENCY = re.compile(r"[ঀ-৿]{3,}-\d{1,2}(?![\d.])")
 
 
 class Segment:
@@ -141,6 +145,19 @@ def extract_segments(text: str, today: datetime.date) -> List[Segment]:
         except ValueError:
             out.append(Segment("unreadable", [], quote, "a day number that is not a date in that month"))
     return out
+
+
+def local_scope(text: str, segments: List[Segment]) -> Optional[str]:
+    """The sentence naming the seat when the circular closes branches of one constituency only, else None.
+
+    A run or a list of days is a national closure whatever else the letter mentions, so it is never local.
+    A wrong call here costs nothing the market does not repair: a day the whole market sat out is
+    inferred as a closure by the self-heal, so this can only be quiet, never silently wrong for long."""
+    if any(s.kind in ("range", "list") for s in segments):
+        return None
+    flat = (text or "").translate(_BN)
+    m = CONSTITUENCY.search(flat)
+    return flat[max(0, m.start() - 60):m.end() + 60].replace("\n", " ") if m else None
 
 
 def assess(title: str, segments: List[Segment], today: datetime.date, *, is_workday: Callable,
@@ -300,7 +317,7 @@ def process(session, rows: List[Dict], read_pdf: Callable[[str], Optional[str]],
     first_run = session.query(CalendarNotice).count() == 0
     for r in rows:
         n = session.query(CalendarNotice).filter_by(url=r["url"]).one_or_none()
-        if n is not None and n.status in ("APPLIED", "HISTORICAL", "REJECTED") and r["url"] not in by_decision:
+        if n is not None and n.status in ("APPLIED", "HISTORICAL", "REJECTED", "REGIONAL") and r["url"] not in by_decision:
             continue
         text_ = read_pdf(r["url"])
         if n is None:
@@ -325,17 +342,23 @@ def process(session, rows: List[Dict], read_pdf: Callable[[str], Optional[str]],
         else:
             segs = extract_segments(text_, today)
             seg_dates = [d for s in segs if s.kind in ("range", "list") for d in s.dates]
-            verdict = assess(r["title"], segs, today,
-                             is_workday=calendar_utils.is_working_day,
-                             is_closed=lambda d: d in calendar_utils.get_loaded_holidays(),
-                             activity=lambda d: _market_activity(session, d),
-                             last_observed=_last_observed(session), published=r["published_date"])
+            seat = local_scope(text_, segs)
+            if seat:
+                verdict = {"status": "REGIONAL", "dates": [], "quote": seat[:400],
+                           "reason": "closes the bank branches of one parliamentary constituency (a by-election), "
+                                     "not the market - the calendar is unchanged"}
+            else:
+                verdict = assess(r["title"], segs, today,
+                                 is_workday=calendar_utils.is_working_day,
+                                 is_closed=lambda d: d in calendar_utils.get_loaded_holidays(),
+                                 activity=lambda d: _market_activity(session, d),
+                                 last_observed=_last_observed(session), published=r["published_date"])
         before = n.status
         n.status, n.reason, n.evidence_quote = verdict["status"], verdict["reason"], verdict["quote"]
         n.dates_json = json.dumps([str(d) for d in verdict["dates"]])
         n.decided_utc = now
-        if verdict["status"] == "HISTORICAL" or (first_run and verdict["status"] != "PENDING"):
-            n.notified_utc = now                # the backlog is recorded, not announced
+        if verdict["status"] in ("HISTORICAL", "REGIONAL") or (first_run and verdict["status"] != "PENDING"):
+            n.notified_utc = now                # the backlog (and a local closure) is recorded, not announced
         elif before != verdict["status"]:
             n.notified_utc = None               # a change of state is news again
         if verdict["status"] == "APPLIED":

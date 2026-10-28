@@ -304,7 +304,10 @@ def compare(prev: Optional[dict], cur: dict) -> Tuple[str, List[str]]:
     elif pp >= 4 and cp < pp * 0.5:
         degraded.append(f"parsed {cp} rows, less than half the {pp} last seen")
     pr, cr = _skip_rate(prev), _skip_rate(cur)
-    if (cur.get("rows_seen") or 0) >= 5 and cr > 0.25 and cr > pr + 0.2:
+    # A snapshot that counted no rows (the Chrome fallback records only what it parsed) is not a baseline:
+    # reading it as "0% skipped" calls a page's normal non-data rows a deterioration. The press-release
+    # list is 77% other releases on every direct read, and read from the PC after a CI run it paged as 'worse'.
+    if (prev.get("rows_seen") or 0) > 0 and (cur.get("rows_seen") or 0) >= 5 and cr > 0.25 and cr > pr + 0.2:
         degraded.append(f"skipped {cr:.0%} of the page, up from {pr:.0%} — "
                         f"reasons: {cur.get('skip_reasons')}")
 
