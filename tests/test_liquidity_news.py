@@ -379,6 +379,16 @@ class TestTriage:
         T.triage_pending(s, FakeClaude(), NOW, fetch_body=lambda u: fetched.append(u) or LNG)
         assert fetched == ["https://x.example/a"]
 
+    def test_a_headline_that_names_no_actor_is_still_read_when_the_blurb_shows_the_signal(self):
+        """'National Bank starts repaying its depositors' named no actor; Bangladesh Bank, the Tk figure
+        and the support are in the body. Judging the headline alone dropped a deposit payout unread."""
+        s = _mem()
+        _article(s, url="https://x.example/nb", body=None, title="National Bank starts repaying its depositors",
+                 summary="Liquidity support has reached the bank; disbursement of Tk 500 crore began.")
+        fetched = []
+        T.triage_pending(s, FakeClaude(), NOW, fetch_body=lambda u: fetched.append(u) or LNG)
+        assert fetched == ["https://x.example/nb"]
+
     def test_running_out_of_body_budget_leaves_it_untriaged_not_skipped(self, monkeypatch):
         monkeypatch.setattr(T, "MAX_BODY_FETCHES", 0)
         s = _mem()

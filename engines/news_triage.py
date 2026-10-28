@@ -257,10 +257,10 @@ def triage_pending(session, client, now: datetime.datetime,
         # keyword filter and then the guards still apply.
         found_by_search = (a.source or "").startswith("search:")
         if not passes and not a.body_text and not found_by_search:
-            # the blurb is too short to judge a long article; the title carrying an
-            # actor and an action is the minimum worth a body fetch
-            tscore, tpass = L.keyword_score(a.title, "")
-            if tscore < 3:
+            # the blurb is too short to judge a long article; a headline-plus-blurb score of 3 is
+            # the minimum worth a body fetch. (Title alone skipped "National Bank starts repaying
+            # its depositors" - the actor, Bangladesh Bank, is only named in the body.)
+            if score < 3:
                 a.triage_status, a.keyword_score = "skipped", score
                 stats["skipped"] += 1
                 continue
