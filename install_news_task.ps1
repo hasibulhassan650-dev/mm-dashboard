@@ -24,7 +24,11 @@ New-Item -ItemType Directory -Force $logdir | Out-Null
 
 function Register-Job($name, $module, $moduleArgs, $minutes, $logName, $envSet = "", $limitMinutes = 20, $dailyAt = "") {
     $log = Join-Path $logdir $logName
-    $cmd = "Set-Location '$dir'; $envSet `$env:PYTHONIOENCODING='utf-8'; Add-Content '$log' ('--- ' + (Get-Date -Format s)); & '$py' -m $module $moduleArgs *>> '$log'"
+    # 2>&1 | ForEach-Object { [string]$_ } keeps Python's harmless INFO lines on stderr from being reported by
+    # Windows PowerShell as a failed run (exit 1) and from being wrapped in error decoration in the log;
+    # the exit code is Python's own.
+    if (Test-Path $log) { Remove-Item $log -Force }
+    $cmd = "Set-Location '$dir'; $envSet `$env:PYTHONIOENCODING='utf-8'; Add-Content -Encoding utf8 '$log' ('--- ' + (Get-Date -Format s)); & '$py' -m $module $moduleArgs 2>&1 | ForEach-Object { [string]`$_ } | Add-Content -Encoding utf8 '$log'; exit `$LASTEXITCODE"
     $action = New-ScheduledTaskAction -Execute "powershell.exe" -WorkingDirectory $dir `
         -Argument "-NoProfile -WindowStyle Hidden -Command `"$cmd`""
     if ($dailyAt) {

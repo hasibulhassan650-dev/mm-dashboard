@@ -452,3 +452,35 @@ class TestAGoodReadAfterABadOneSettlesTheAlarm:
     def test_a_degraded_read_after_a_clean_one_still_alarms(self, monkeypatch):
         rep = self._world(monkeypatch, [(5, "good", "ok"), (1, "blocked", "degraded")])
         assert [i for i in rep["issues"] if "sukuk_outstanding" in i and "page changed" in i]
+
+
+class TestOmoCountsAreComparableAcrossWindows:
+    """The hourly run reads 35 days of BB's press list and the full run 200. Compared raw, an unchanged page
+    looked 'less than half' as good - the alarm that paged the owner on 31-Oct. The counts that go to the
+    watch must not depend on how far back a run looked."""
+    TODAY = datetime.date(2026, 10, 31)
+
+    def _rows(self, n_recent, n_old):
+        d = datetime.date
+        return ([{"transaction_date": d(2026, 10, 20)}] * n_recent) + ([{"transaction_date": d(2026, 6, 1)}] * n_old)
+
+    def test_a_short_and_a_long_window_over_the_same_page_count_the_same(self):
+        from engines.pipeline import _omo_watch_counts
+        light = _omo_watch_counts(self._rows(77, 0), {"rows_seen": 196, "skipped_not_omo": 81, "skipped_too_old": 38},
+                                  self.TODAY)
+        full = _omo_watch_counts(self._rows(77, 142), {"rows_seen": 196, "skipped_not_omo": 81, "skipped_too_old": 0},
+                                 self.TODAY)
+        assert light["rows_parsed"] == full["rows_parsed"] == 77
+        before = SW.fingerprint("omo_press", selector="a", rows_seen=full["rows_seen"], rows_parsed=full["rows_parsed"],
+                                skips={"not an OMO release": full["not_omo"]})
+        after = SW.fingerprint("omo_press", selector="a", rows_seen=light["rows_seen"], rows_parsed=light["rows_parsed"],
+                               skips={"not an OMO release": light["not_omo"]})
+        assert SW.compare(before, after)[0] == "ok"
+
+    def test_a_parser_that_stops_reading_releases_is_still_caught(self):
+        from engines.pipeline import _omo_watch_counts
+        ok = _omo_watch_counts(self._rows(77, 0), {"rows_seen": 196, "skipped_not_omo": 81}, self.TODAY)
+        broken = _omo_watch_counts(self._rows(5, 0), {"rows_seen": 196, "skipped_not_omo": 81}, self.TODAY)
+        a = SW.fingerprint("omo_press", selector="a", rows_seen=ok["rows_seen"], rows_parsed=ok["rows_parsed"])
+        b = SW.fingerprint("omo_press", selector="a", rows_seen=broken["rows_seen"], rows_parsed=broken["rows_parsed"])
+        assert SW.compare(a, b)[0] == "degraded"

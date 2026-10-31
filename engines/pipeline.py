@@ -1192,6 +1192,24 @@ def run_sukuk_fetch() -> dict:
         session.close()
 
 
+COMPARABLE_OMO_DAYS = 30      # every run looks back at least 35 days, so this much is common to all of them
+
+
+def _omo_watch_counts(txns, meta: dict, today: datetime.date) -> dict:
+    """What the source watch should compare between two reads of BB's press-release list.
+
+    The hourly run looks back 35 days and the full run 200, so raw counts differ ~3x between runs of the same
+    unchanged page - 'parsed 77, less than half the 219 last seen' paged on exactly that. Only releases inside
+    the window every run shares are counted, and rows older than a run's own window are not 'skipped': the
+    window did that, not the parser."""
+    cutoff = today - datetime.timedelta(days=COMPARABLE_OMO_DAYS)
+    parsed = sum(1 for t in txns if isinstance(t.get("transaction_date"), datetime.date)
+                 and t["transaction_date"] >= cutoff)
+    old = meta.get("skipped_too_old") or 0
+    return {"rows_seen": max(0, (meta.get("rows_seen") or 0) - old), "rows_parsed": parsed,
+            "not_omo": meta.get("skipped_not_omo") or 0}
+
+
 def run_omo_fetch(days_back: int = 28, max_files: int = 20) -> dict:
     """Fetch last N OMO press release PDFs and store transactions to DB.
 
@@ -1234,11 +1252,11 @@ def run_omo_fetch(days_back: int = 28, max_files: int = 20) -> dict:
         # moved at once, eleven days before anyone noticed the data.
         from fetchers import source_watch as SW
         from fetchers.omo import BB_PRESS_URL as _OMO_URL
+        counts = _omo_watch_counts(txns, meta, datetime.date.today())
         watch = _register_source(session, SW.fingerprint(
             "omo_press", _OMO_URL, selector=meta.get("selector") or "",
-            rows_seen=meta.get("rows_seen") or 0, rows_parsed=len(txns),
-            skips={"not an OMO release": meta.get("skipped_not_omo") or 0,
-                   "older than the window": meta.get("skipped_too_old") or 0},
+            rows_seen=counts["rows_seen"], rows_parsed=counts["rows_parsed"],
+            skips={"not an OMO release": counts["not_omo"]},
             # Anchors are what tell the two apart: links were found and none
             # parsed (structural), versus the page never arrived (transport).
             error=((reason or "") if (not txns and meta.get("anchors_found")) else ""),
