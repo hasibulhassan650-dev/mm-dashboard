@@ -231,6 +231,15 @@ class TestSkipsAreCounted:
                                 skips={"not an OMO release": 82, "older than the window": 38})
         assert SW.compare(chrome, direct)[0] == "ok"
 
+    def test_a_news_feed_holding_fewer_items_is_not_a_layout_change_but_an_empty_one_is(self):
+        """Prothom Alo's feed carried 8 items one hour and 20 the next; paging on that taught the owner to
+        ignore the alarm. A feed that parses nothing is still a finding."""
+        full = SW.fingerprint("news:prothomalo_en", selector="rss item", rows_seen=20, rows_parsed=20)
+        thin = SW.fingerprint("news:prothomalo_en", selector="rss item", rows_seen=8, rows_parsed=8)
+        empty = SW.fingerprint("news:prothomalo_en", selector="rss item", rows_seen=0, rows_parsed=0)
+        assert SW.compare(full, thin)[0] == "ok"
+        assert SW.compare(full, empty)[0] == "degraded"
+
     def test_the_reasons_travel_with_the_count(self):
         bad = _FULL.replace("<td>8.8685</td><td>8.75</td>", "<td></td><td></td>")
         meta = {}

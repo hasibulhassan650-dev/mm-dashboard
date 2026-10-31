@@ -301,7 +301,9 @@ def compare(prev: Optional[dict], cur: dict) -> Tuple[str, List[str]]:
     pp, cp = prev.get("rows_parsed") or 0, cur.get("rows_parsed") or 0
     if pp >= 3 and cp == 0:
         degraded.append(f"parsed 0 rows where this source last parsed {pp}")
-    elif pp >= 4 and cp < pp * 0.5:
+    elif pp >= 4 and cp < pp * 0.5 and cur.get("selector") != "rss item":
+        # (a feed lists the latest N items, so its size swings with the newsroom's day; only a feed
+        # that parses NOTHING is evidence of a changed format, and the branch above still catches it)
         degraded.append(f"parsed {cp} rows, less than half the {pp} last seen")
     pr, cr = _skip_rate(prev), _skip_rate(cur)
     # A snapshot that counted no rows (the Chrome fallback records only what it parsed) is not a baseline:
