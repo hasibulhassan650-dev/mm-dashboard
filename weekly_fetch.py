@@ -58,7 +58,48 @@ def _cal_closure() -> str:
     return calendar_utils.CLOSURE_SQL
 
 
+LOCK_STALE_SECONDS = 3 * 3600      # a refresh never runs this long; a lock older than this is a crashed run's
+
+
+def acquire_lock(path: str = None, now: float = None) -> str:
+    """Take the one-refresh-at-a-time lock on this machine, or return None if another refresh holds it.
+
+    The PC's hourly and daily refresh tasks can start together; both drive Chrome and collided on its driver
+    file. The second one steps aside (the next hourly run does its work) instead of fighting for Chrome."""
+    import tempfile
+    import time
+    path = path or os.path.join(tempfile.gettempdir(), "mm_dashboard_refresh.lock")
+    now = time.time() if now is None else now
+    try:
+        if now - os.path.getmtime(path) > LOCK_STALE_SECONDS:
+            os.remove(path)
+    except OSError:
+        pass
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        return None
+    os.write(fd, str(os.getpid()).encode())
+    os.close(fd)
+    return path
+
+
 def main():
+    lock = acquire_lock()
+    if lock is None:
+        log.warning("Another refresh is already running on this machine - skipping this one "
+                    "(the next scheduled run does the work).")
+        return
+    try:
+        _run()
+    finally:
+        try:
+            os.remove(lock)
+        except OSError:
+            pass
+
+
+def _run():
     start = datetime.datetime.now()
     log.info("=" * 60)
     log.info("Weekly fetch started  %s", start.strftime("%Y-%m-%d %H:%M"))
