@@ -39,6 +39,8 @@ SEV_ORDER = {"defect": 0, "waiting": 1, None: 2}
 
 
 def _as_date(v) -> Optional[datetime.date]:
+    if isinstance(v, datetime.datetime):      # a timestamp column (Sukuk, news): a datetime is not a date
+        return v.date()
     if v is None or hasattr(v, "year"):
         return v
     t = str(v)[:10]

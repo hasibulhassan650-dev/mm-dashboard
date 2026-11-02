@@ -526,3 +526,12 @@ def test_call_money_store_follows_the_page_not_the_first_snapshot():
     assert s.query(CallMoneyRate).filter_by(trade_date=d15).count() == 1          # carry-over row gone
     assert s.query(CallMoneyRate).filter_by(trade_date=d15).one().average_rate_pct == 8.71
     assert s.query(CallMoneyRate).filter_by(trade_date=d10).one().amount_crore == 5739.49
+
+
+def test_a_timestamp_column_does_not_crash_the_sweep():
+    """audit.py subtracted a date from a datetime for every table dated by a timestamp (Sukuk, news) and died
+    before checking anything - the sweep that exists to find problems was itself broken."""
+    import datetime
+    import audit
+    assert audit._as_date(datetime.datetime(2026, 11, 2, 15, 12)) == datetime.date(2026, 11, 2)
+    assert audit._as_date("2026-11") == datetime.date(2026, 11, 1)

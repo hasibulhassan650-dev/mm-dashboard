@@ -44,3 +44,7 @@ daily_omo.py
 omo_report.py
 setup_callmoney.py
 digest.md
+
+# local-only state that was tracked by mistake
+.claude/settings.local.json
+*.pyc

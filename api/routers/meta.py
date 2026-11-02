@@ -177,13 +177,13 @@ def get_status():
         # ── Per-dataset freshness, cadence-aware ──────────────────────────────
         datasets = {}
         for key, (table, col, datecol, label) in _SOURCES.items():
-            ing = session.execute(text(f"SELECT MAX({col}) FROM {table}")).scalar()  # noqa: S608
-            n = session.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar()  # noqa: S608
-            latest = None
-            latest_d = None
-            if datecol:
-                latest_d = session.execute(text(f"SELECT MAX({datecol}) FROM {table}")).scalar()  # noqa: S608
-                latest = str(latest_d) if latest_d is not None else None
+            # One round trip per table, not three: the database is a network hop away, and 33 sequential
+            # queries made this endpoint (the header's "Updated" panel and the uptime sentinel) take ~9 s.
+            row = session.execute(text(  # noqa: S608
+                f"SELECT MAX({col}), COUNT(*)" + (f", MAX({datecol})" if datecol else "") + f" FROM {table}")).fetchone()
+            ing, n = row[0], row[1]
+            latest_d = row[2] if datecol else None
+            latest = str(latest_d) if latest_d is not None else None
 
             # "current" = up to date for what BB has actually published.
             if key in _DAILY_SERIES:
