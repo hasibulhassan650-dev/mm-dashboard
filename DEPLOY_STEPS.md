@@ -58,40 +58,23 @@ You can also trigger it manually: Actions tab → Daily Data Pipeline → Run wo
 
 ---
 
-### 5. Deploy to Streamlit Cloud (5 min)
+### 5. Deploy the site and the API (Vercel)
 
-1. Go to https://share.streamlit.io → Sign in with GitHub
-2. New app → Select your repo `mm-dashboard`
-3. Main file path: `streamlit_app.py`
-4. Click **Deploy**
+Two Vercel projects from the same repo: the site rooted at `frontend/` and the API rooted at `api/`.
+The API cannot import the root `config`, `db` or `engines`; its logic lives in `api/routers/*_logic.py`.
+Set the variables in the table below, then push: Vercel deploys on every push to `main`.
 
-**Add your Supabase secret:**
-- In the deploy screen → Advanced settings → Secrets
-- Paste this (replace with your real URL):
-```toml
-DATABASE_URL = "postgresql://postgres.abcdef:YOUR_PASSWORD@pooler.supabase.com:6543/postgres"
-```
+### 6. Where BB data is read
 
-Your app is now live at:
-`https://YOUR_USERNAME-mm-dashboard-streamlit-app-XXXX.streamlit.app`
+Bangladesh Bank's firewall CAPTCHAs GitHub's runners, so BB pages are read from the owner's PC by Windows
+scheduled tasks. Install them once, from the repo folder:
 
-Share this URL with your team.
-
----
-
-### 6. Running Chrome fetches from your local machine
-
-OMO data and Treasury yields need Chrome — run these from your local machine.
-Your local app will write to the same Supabase DB that the cloud app reads from.
-
-Set the env var locally so your local app uses Supabase too:
 ```cmd
-set DATABASE_URL=postgresql://postgres.abcdef:YOUR_PASSWORD@pooler.supabase.com:6543/postgres
-streamlit run streamlit_app.py --server.port 8505
+powershell -ExecutionPolicy Bypass -File .\install_news_task.ps1
 ```
 
-Then click "📥 Fetch OMO Data" and "📈 Fetch Yield History" as normal.
-The cloud dashboard will reflect the new data within seconds.
+GitHub's refresh jobs are a backup and report through the single `data-integrity` issue. A failed CI
+refresh is usually BB blocking the runner, not a bug.
 
 ---
 
@@ -99,26 +82,12 @@ The cloud dashboard will reflect the new data within seconds.
 
 | Task | Where | How often |
 |------|-------|-----------|
-| GSOM data (securities, yield curve) | GitHub Actions | Daily 9am auto |
-| Auction calendar | GitHub Actions | Daily 9am auto |
-| Daily cash flows | GitHub Actions | Daily 9am auto |
-| OMO press release PDFs | Your local machine | Manual (click button) |
-| Treasury primary yields | Your local machine | Manual (click button) |
-| Dashboard UI | Streamlit Cloud | Always on, free |
-| Database | Supabase | Always on, free |
-
----
-
-## Cost breakdown
-
-| Service | Free tier | Your usage |
-|---------|-----------|------------|
-| Supabase | 500MB, 2 projects | ~50MB ✓ |
-| Streamlit Cloud | 1 private app | 1 app ✓ |
-| GitHub Actions | 2000 min/month | ~5 min/day = 150 min/month ✓ |
-| Vercel (optional) | unlimited | if you add Next.js frontend |
-
-**Total: $0/month**
+| BB pages (OMO, treasury, GSOM, FX, call money, circulars) | Your PC (scheduled tasks) | Hourly light, daily full |
+| News / Liquidity Watch | GitHub Actions and your PC | Every 30 min / 5 min |
+| Integrity check and alert issue | GitHub Actions | After each refresh |
+| Site | Vercel | Always on |
+| API | Vercel | Always on |
+| Database | Supabase | Always on |
 
 ---
 

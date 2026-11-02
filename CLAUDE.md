@@ -25,9 +25,10 @@ Do NOT use for: routing, retries, deterministic transforms.
 If code can answer, code answers.
 
 ## Rule 6 — Token budgets are not advisory
-Per-task: 4,000 tokens. Per-session: 30,000 tokens.
-If approaching budget, summarize and start fresh.
-Surface the breach. Do not silently overrun.
+Per-task: 40,000 tokens for a small fix, 150,000 for a multi-file feature. Per-session: 500,000.
+(The old 4,000 / 30,000 was below the cost of reading three files, so it was breached by every task and meant nothing.)
+Searches go to a subagent so raw output stays out of the main context.
+If approaching budget, summarize and start fresh. Surface the breach. Do not silently overrun.
 
 ## Rule 7 — Surface conflicts, don't average them
 If two patterns contradict, pick one (more recent / more tested).
