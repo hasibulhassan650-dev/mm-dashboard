@@ -56,9 +56,14 @@ def get_freshness():
     session = get_session()
     out: dict = {}
     try:
-        for key, (table, col, _datecol, _label) in _SOURCES.items():
-            ts = session.execute(text(f"SELECT MAX({col}) FROM {table}")).scalar()  # noqa: S608
-            out[key] = ts.isoformat() if ts is not None else None
+        # ONE round trip, as get_status does: nearly every page asks for this, and eleven sequential
+        # queries to a database a network hop away made each of those pages wait ~3.6 s.
+        union = " UNION ALL ".join(
+            f"SELECT '{k}' AS k, CAST(MAX({c}) AS TEXT) AS ts FROM {t}"                # noqa: S608
+            for k, (t, c, _d, _l) in _SOURCES.items())
+        got = dict(session.execute(text(union)).fetchall())
+        for key in _SOURCES:
+            out[key] = datetime.datetime.fromisoformat(got[key]).isoformat() if got.get(key) else None
         return out
     finally:
         session.close()
