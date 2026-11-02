@@ -53,3 +53,33 @@ If you think a convention is harmful, surface it. Don't fork silently.
 "Completed" is wrong if anything was skipped silently.
 "Tests pass" is wrong if any were skipped.
 Default to surfacing uncertainty, not hiding it.
+
+---
+
+# This project (read before the rules above are applied)
+
+Bangladesh Taka money-market dashboard for an ALM / treasury desk. **Data accuracy outranks everything**: never
+lose accuracy, never miss a product, never fabricate. Build things so the owner never has to maintain them.
+
+## How it is wired
+- Frontend `frontend/` (Next.js, Vercel, password gate always on) -> API `api/` (FastAPI, Vercel) -> Supabase Postgres.
+  Fetchers/engines/parsers live at the repo root.
+- `api/` deploys rooted at `api/`: it **cannot import** root `config`/`db`/`engines`. New API logic goes in
+  `api/routers/*_logic.py` (tests enforce this with an AST guard).
+- **Bangladesh Bank's firewall CAPTCHAs GitHub's runners**, so BB data is read from the owner's PC (Windows scheduled
+  tasks from `install_news_task.ps1`). GitHub refresh jobs are a backup and report through the single
+  `data-integrity` issue. A failed CI refresh is usually BB blocking the runner, not a bug.
+- The repo is **PUBLIC**: never commit a secret. Keys live in `.env` (git-ignored) or GitHub secrets.
+
+## Data rules
+- Unsure means PENDING plus an evidence-backed record (`data/seeds/known_absences.yaml`,
+  `calendar_decisions.yaml`), never a guess. A gap BB cannot fill is recorded as such, not hidden.
+- No hardcoded lists of products: OMO instruments (`OMO_INSTRUMENTS` in `frontend/lib/terminal.ts`) and bond
+  tenors come from the data. Registries (nav, exports, expectations, theme tokens) are guarded by tests.
+- Desk entries are never BB data. News-derived events are shown, never summed into the ladder.
+- Explanations of past incidents and their lessons: the auto-memory index (`MEMORY.md`).
+
+## Checks (use these, not the whole suite, while iterating)
+- `set -o pipefail; python -m pytest tests -q` (pipefail, or a failing pytest looks green behind `| tail`)
+- `python validate.py` (integrity verdict as JSON), `python audit.py --window 180` (per-dataset sweep)
+- `cd frontend && npx tsc --noEmit`
