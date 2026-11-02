@@ -586,6 +586,56 @@ def _security_to_row(sec) -> dict:
 # GSOM fetch — exhaustive, all three pages
 # ══════════════════════════════════════════════════════════════════════════════
 
+SECONDARY_FILL_DAYS = 10      # how far back a missed working day is looked for and re-read from BB's picker
+
+
+def backfill_secondary_gaps(session, today: datetime.date = None, fetch_page=None) -> dict:
+    """Re-read from BB any recent WORKING day the secondary market (GSOM) has no snapshot for.
+
+    BB's date picker still serves past days, so a run that was blocked or never ran loses nothing. Only
+    days after the first snapshot we hold are considered (this fills holes, it does not extend history), and
+    a row is stored only when the page itself labels it with that day and its security is in the master:
+    BB's label decides the date, never the date we asked for. Returns {"filled": {date: rows}, "errors": []}."""
+    import calendar_utils
+    from sqlalchemy import func
+    from fetchers import gsom as G
+    from parsers.securities import parse_tbond_or_frtb, parse_tbill, validate_rows
+    today = today or datetime.date.today()
+    fetch_page = fetch_page or G.fetch_gsom_html_for
+    out = {"filled": {}, "errors": []}
+    first = session.query(func.min(MtmSnapshot.settlement_date)).scalar()
+    if first is None:
+        return out
+    held = {d for (d,) in session.query(MtmSnapshot.settlement_date).filter(
+        MtmSnapshot.settlement_date >= today - datetime.timedelta(days=SECONDARY_FILL_DAYS)).distinct()}
+    known = {i for (i,) in session.query(Security.isin).all()}
+    for back in range(1, SECONDARY_FILL_DAYS + 1):
+        d = today - datetime.timedelta(days=back)
+        if d <= first or d in held or not calendar_utils.is_working_day(d):
+            continue
+        n = 0
+        try:
+            for stype, is_bill in (("T_BOND", False), ("FRTB", False), ("T_BILL", True)):
+                html = fetch_page(stype, d)
+                if not html:
+                    continue
+                url = G._HTML_URLS[stype]
+                rows = validate_rows(parse_tbill(html, url) if is_bill else parse_tbond_or_frtb(html, url, stype))
+                for r in rows:
+                    if r.get("settlement_date") == d and r.get("isin") in known:
+                        _upsert_mtm_snapshot(session, r)
+                        n += 1
+            session.commit()
+        except Exception as exc:
+            session.rollback()
+            out["errors"].append(f"secondary {d}: {type(exc).__name__}: {str(exc)[:120]}")
+            continue
+        if n:
+            out["filled"][str(d)] = n
+            log.warning("Secondary market: %s was missing; %d snapshot(s) re-read from BB's date picker", d, n)
+    return out
+
+
 def _fetch_all_gsom_pages() -> list:
     """
     Fetch and parse all three GSOM MTM pages.

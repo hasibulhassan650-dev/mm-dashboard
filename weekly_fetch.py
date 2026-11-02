@@ -185,6 +185,22 @@ def main():
             log.exception("Pipeline failed: %s", exc)
             errors.append(f"pipeline: {exc}")
 
+        # A working day this run (or an earlier one) never saw is re-read from BB's date picker, which still
+        # serves past days; it was filled by hand on 31-Oct and must not need a person again.
+        try:
+            from engines.pipeline import backfill_secondary_gaps
+            _s = get_session()
+            try:
+                gap = backfill_secondary_gaps(_s)
+            finally:
+                _s.close()
+            if gap["filled"]:
+                log.info("Secondary gaps filled: %s", gap["filled"])
+            errors.extend(gap["errors"])
+        except Exception as exc:
+            log.exception("Secondary gap fill failed: %s", exc)
+            errors.append(f"secondary-gap-fill: {exc}")
+
     # ── 2. OMO fetch (last 200 days — covers AR 180D + all outstanding positions) ─
     # AR 180D transactions from ~6 months ago are still outstanding today.
     # 14 days misses them. 200 days ensures the full outstanding picture is

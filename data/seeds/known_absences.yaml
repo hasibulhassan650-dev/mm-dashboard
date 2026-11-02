@@ -29,3 +29,15 @@ absences:
     reason: >-
       Not read while BB's firewall blocked the scheduled runners; BB's page keeps only the latest day, so
       it cannot be re-read.
+  # Exchange rates for Thursday 29-Oct-2026. The page describes the previous business day and only ever
+  # shows its latest snapshot. Our reads: the 28-Oct snapshot was ingested on 31-Oct 17:43 UTC and the
+  # 1-Nov snapshot on 2-Nov 14:01 UTC; the page was describing 29-Oct only in between (it is published on
+  # the next business day, Sunday 1-Nov), when no read landed (BB blocks the scheduled runners and the PC
+  # tasks were installed late on 31-Oct).
+  - dataset: fxrates
+    date: 2026-10-29
+    kind: lost
+    source: https://www.bb.org.bd/en/index.php/econdata/exchangerate
+    reason: >-
+      Not read while the page described 29-Oct (held: 28-Oct read on 31-Oct, 1-Nov read on 2-Nov); BB's
+      page keeps only the latest day, so it cannot be re-read.

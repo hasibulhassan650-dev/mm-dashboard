@@ -137,3 +137,17 @@ def fetch_gsom_html(security_type: str, date: datetime.date = None) -> dict:
 
     log.info("Fetched %s: %d bytes", security_type, len(html))
     return {"html": html, "source_url": html_url, "method": "HTML"}
+
+
+def fetch_gsom_html_for(security_type: str, date: datetime.date) -> str:
+    """The GSOM page for ONE past settlement date (BB's date picker), or "" when BB has no table for it.
+
+    The page labels every row with the date it shows, and the caller checks that label, so a picker that
+    quietly returned another day's table cannot be stored under this date."""
+    url = _HTML_URLS[security_type]
+    session = get_session()
+    session.get(url, timeout=REQUEST_TIMEOUT).raise_for_status()      # the CSRF cookie rides on this session
+    resp = session.post(url, data={"picker_date": date.strftime("%d-%b-%y").upper(), "ci_csrf_token": ""},
+                        timeout=REQUEST_TIMEOUT)
+    resp.raise_for_status()
+    return resp.text if _has_isin_rows(resp.text) else ""
