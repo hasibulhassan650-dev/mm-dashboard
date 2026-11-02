@@ -95,6 +95,7 @@ jobs:
         if: always()
         uses: ./.github/actions/integrity-gate
         with:
+          fail-job: "false"   # the alert issue is the report; BB blocks this runner, the PC does the reading
           github-token: ${{ secrets.GITHUB_TOKEN }}
           context: "full refresh"
       - name: Summarise log

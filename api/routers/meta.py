@@ -176,13 +176,18 @@ def get_status():
 
         # ── Per-dataset freshness, cadence-aware ──────────────────────────────
         datasets = {}
+        # ONE round trip for every dataset (UNION ALL), not one each: the database is a network hop away and
+        # sequential queries made this endpoint take ~9 s. Values come back as text and are parsed here, so
+        # the output is the same as when each was read natively.
+        union = " UNION ALL ".join(
+            f"SELECT '{k}' AS k, CAST(MAX({c}) AS TEXT) AS ing, COUNT(*) AS n, "  # noqa: S608
+            f"CAST({'MAX(' + d + ')' if d else 'NULL'} AS TEXT) AS d FROM {t}"
+            for k, (t, c, d, _l) in _SOURCES.items())
+        got = {r[0]: r[1:] for r in session.execute(text(union)).fetchall()}
         for key, (table, col, datecol, label) in _SOURCES.items():
-            # One round trip per table, not three: the database is a network hop away, and 33 sequential
-            # queries made this endpoint (the header's "Updated" panel and the uptime sentinel) take ~9 s.
-            row = session.execute(text(  # noqa: S608
-                f"SELECT MAX({col}), COUNT(*)" + (f", MAX({datecol})" if datecol else "") + f" FROM {table}")).fetchone()
-            ing, n = row[0], row[1]
-            latest_d = row[2] if datecol else None
+            ing_t, n, d_t = got[key]
+            ing = datetime.datetime.fromisoformat(ing_t) if ing_t else None
+            latest_d = datetime.date.fromisoformat(d_t[:10]) if (datecol and d_t) else None
             latest = str(latest_d) if latest_d is not None else None
 
             # "current" = up to date for what BB has actually published.

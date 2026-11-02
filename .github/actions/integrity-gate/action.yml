@@ -13,6 +13,13 @@ inputs:
     description: "Short label for the calling job, shown in the issue body"
     required: false
     default: "refresh"
+  fail-job:
+    description: >
+      "false" lets a job whose BB reads can fail for reasons outside the repo (BB's firewall CAPTCHAs GitHub's
+      runners) report through the one alert issue without also failing, which emailed twice an hour for the same
+      unchanged problem. Everything that writes data and runs rarely keeps the default and still fails hard.
+    required: false
+    default: "true"
 
 runs:
   using: composite
@@ -22,6 +29,7 @@ runs:
       env:
         GH_TOKEN: ${{ inputs.github-token }}
         CONTEXT: ${{ inputs.context }}
+        FAIL_JOB: ${{ inputs.fail-job }}
       run: |
         set -o pipefail
         # validate.py must ALWAYS leave parseable JSON behind: when it crashes
@@ -89,14 +97,26 @@ runs:
         \`\`\`json
         $(cat integrity.json)
         \`\`\`"
+        # A new comment is an email: add one only when the set of problems changed, not every run.
+        sha=$(python -c "import json,hashlib;r=json.load(open('integrity.json'));print(hashlib.sha1('|'.join(sorted(r.get('issues') or [])).encode()).hexdigest()[:10])")
+        body="$body$(printf '\n\nissues-sha: %s' "$sha")"
         if [ -n "$n" ]; then
           # Keep the title current: a stale title describing a resolved problem
           # while a worse one is open is how an alert stops being read.
           gh issue edit "$n" --repo "$GITHUB_REPOSITORY" --title "$title" || true
-          gh issue comment "$n" --repo "$GITHUB_REPOSITORY" --body "$body"
+          last=$(gh issue view "$n" --repo "$GITHUB_REPOSITORY" --json body,comments --jq '(.comments[-1].body // .body)' || true)
+          if echo "$last" | grep -q "issues-sha: $sha"; then
+            echo "Same problems as the last report ($sha) - no new comment."
+          else
+            gh issue comment "$n" --repo "$GITHUB_REPOSITORY" --body "$body"
+          fi
         else
           gh issue create --repo "$GITHUB_REPOSITORY" \
             --title "$title" \
             --label data-integrity --body "$body"
         fi
-        exit 1
+        if [ "$FAIL_JOB" = "true" ]; then
+          exit 1
+        fi
+        echo "Integrity problems are reported in the alert issue; this job is configured not to fail on them."
+        exit 0
