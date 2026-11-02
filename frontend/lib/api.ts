@@ -106,10 +106,11 @@ export const api = {
     catch { return { as_of: "", days: [], unit: "BDT crore" }; }
   },
   /** Every auction in the desk's T-Bill / T-Bond spreadsheet layout. */
-  auctionSheet:    async (p: { from?: string; to?: string } = {}): Promise<AuctionSheet> => {
+  auctionSheet:    async (p: { from?: string; to?: string; limit?: number; offset?: number } = {}): Promise<AuctionSheet> => {
     const q: Record<string, string | number> = {};
     if (p.from) q.date_from = p.from;
     if (p.to) q.date_to = p.to;
+    if (p.limit) { q.limit = p.limit; q.offset = p.offset ?? 0; }
     try { return await get<AuctionSheet>("/api/securities/auction-sheet", q); }
     catch {
       return { from: "", to: "", unit: "BDT crore", as_of: "", count: 0, with_isin: 0,
@@ -667,6 +668,8 @@ export interface AuctionSheet {
   reissue_count: number;
   isins_auctioned_more_than_once: string[];
   rows: AuctionSheetRow[];
+  /** present only when the API was asked for one page of `rows`; every total above is the whole window's */
+  offset?: number; limit?: number; returned?: number;
 }
 
 export interface AuctionRollup {

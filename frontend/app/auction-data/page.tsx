@@ -5,8 +5,11 @@ import { DataWarning } from "@/components/DataWarning";
 import DateRangeControl from "@/components/DateRangeControl";
 import Freshness from "@/components/Freshness";
 import RelatedLinks from "@/components/RelatedLinks";
+import Link from "next/link";
 
 export const revalidate = 300;
+
+const PAGE_SIZE = 100;
 
 function iso(d: Date) { return d.toISOString().slice(0, 10); }
 function shift(from: string, days: number) {
@@ -17,15 +20,18 @@ const n2 = (v: number | null | undefined) =>
 
 export default async function AuctionDataPage({
   searchParams,
-}: { searchParams: Promise<{ from?: string; to?: string }> }) {
+}: { searchParams: Promise<{ from?: string; to?: string; page?: string }> }) {
   const sp = await searchParams;
   const today = iso(new Date());
   const from = sp.from ?? shift(today, -730);
   const to = sp.to ?? today;
+  const page = Math.max(1, parseInt(sp.page ?? "1", 10) || 1);
 
   const [sheet, fresh] = await Promise.all([
-    api.auctionSheet({ from, to }), api.freshness(),
+    api.auctionSheet({ from, to, limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE }), api.freshness(),
   ]);
+  const pages = Math.max(1, Math.ceil(sheet.count / PAGE_SIZE));
+  const href = (p: number) => `/auction-data?from=${from}&to=${to}&page=${p}`;
 
   if (!sheet.count) {
     return (
@@ -123,6 +129,17 @@ export default async function AuctionDataPage({
               </tbody>
             </table>
           </div>
+          {pages > 1 && (
+            <div style={{ display: "flex", gap: 12, alignItems: "center", padding: "8px 12px",
+                          fontSize: 12, borderTop: "1px solid var(--border)" }}>
+              {page > 1 ? <Link href={href(page - 1)} className="seg-b" style={{ textDecoration: "none" }}>← Newer</Link> : <span />}
+              <span style={{ color: "var(--fg-mute)" }}>
+                rows {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, sheet.count)} of {sheet.count} · page {page} of {pages}
+                · Download Excel has every row
+              </span>
+              {page < pages ? <Link href={href(page + 1)} className="seg-b" style={{ textDecoration: "none" }}>Older →</Link> : <span />}
+            </div>
+          )}
           <div style={{ padding: "8px 12px", fontSize: 11.5, color: "var(--fg-mute)",
                         borderTop: "1px solid var(--border)", lineHeight: 1.75 }}>
             <p style={{ margin: 0 }}>

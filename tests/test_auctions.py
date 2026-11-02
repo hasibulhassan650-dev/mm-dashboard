@@ -260,3 +260,32 @@ class TestTheDeploymentBoundary:
                 if node.module.split(".")[0] in forbidden:
                     bad.append(node.module)
         assert not bad, f"auction_logic cannot import from the repo root: {bad}"
+
+
+class TestAuctionSheetPaging:
+    """A page cuts the rows, never the totals: the desk reads 'N auctions, M with ISIN' off the whole window."""
+
+    def _sheet(self):
+        rows = [{"isin": f"BD{i:010d}"} for i in range(250)]
+        return {"count": 250, "with_isin": 250, "rows": rows}
+
+    def test_totals_stay_whole_window_and_pages_tile_exactly(self):
+        from auction_logic import page_of_sheet
+        s = self._sheet()
+        seen = []
+        for off in (0, 100, 200):
+            p = page_of_sheet(s, 100, off)
+            assert p["count"] == 250 and p["with_isin"] == 250
+            seen += [r["isin"] for r in p["rows"]]
+        assert seen == [r["isin"] for r in s["rows"]]          # no row lost, none repeated
+
+    def test_no_limit_means_every_row_for_the_export(self):
+        from auction_logic import page_of_sheet
+        s = self._sheet()
+        assert page_of_sheet(s)["rows"] is s["rows"]
+
+    def test_bad_paging_is_refused(self):
+        from auction_logic import page_of_sheet
+        for lim, off in ((0, 0), (10, -1)):
+            with pytest.raises(ValueError):
+                page_of_sheet(self._sheet(), lim, off)

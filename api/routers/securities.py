@@ -208,12 +208,14 @@ def get_next_auction(limit: int = Query(3, ge=1, le=10)):
 
 @router.get("/auction-sheet")
 def get_auction_sheet(date_from: str = Query(None, description="YYYY-MM-DD"),
-                      date_to: str = Query(None, description="YYYY-MM-DD")):
+                      date_to: str = Query(None, description="YYYY-MM-DD"),
+                      limit: int = Query(None, description="rows per page; omit for every row"),
+                      offset: int = Query(0)):
     """Every auction in the desk's own T-Bill / T-Bond spreadsheet layout."""
-    from .auction_logic import auction_format_sheet
+    from .auction_logic import auction_format_sheet, page_of_sheet
     session = get_session()
     try:
-        return auction_format_sheet(session, date_from=date_from, date_to=date_to)
+        return page_of_sheet(auction_format_sheet(session, date_from=date_from, date_to=date_to), limit, offset)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     finally:

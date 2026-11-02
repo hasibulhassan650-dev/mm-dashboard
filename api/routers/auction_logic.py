@@ -359,3 +359,14 @@ def auction_format_sheet(session, date_from: Optional[str] = None,
         "isins_auctioned_more_than_once": sorted(k for k, v in seen.items() if v > 1),
         "rows": out,
     }
+
+
+def page_of_sheet(sheet: dict, limit: Optional[int] = None, offset: int = 0) -> dict:
+    """One page of the sheet's rows. Every total (count, with_isin, ...) stays the whole window's: only
+    `rows` is cut, so a page can never make the window look smaller than it is. No limit = all rows."""
+    if limit is None:
+        return sheet
+    if limit < 1 or offset < 0:
+        raise ValueError("limit must be at least 1 and offset cannot be negative")
+    rows = sheet["rows"][offset:offset + limit]
+    return {**sheet, "rows": rows, "offset": offset, "limit": limit, "returned": len(rows)}

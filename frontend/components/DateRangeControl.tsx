@@ -25,7 +25,7 @@ export default function DateRangeControl({ min, max, from, to }: { min: string; 
 
   function apply(f: string, t: string) {
     const p = new URLSearchParams(searchParams.toString());
-    p.delete("days");
+    p.delete("days"); p.delete("page");     // a new window starts on its first page
     p.set("from", f); p.set("to", t);
     router.push(`${pathname}?${p.toString()}`);
   }
