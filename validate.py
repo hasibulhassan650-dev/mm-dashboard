@@ -377,6 +377,8 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
         _rhi = today - datetime.timedelta(days=2)
         _d = lambda v: datetime.date.fromisoformat(v[:10]) if isinstance(v, str) else v
         try:
+            from engines.absences import known_print_errors
+            _print_errors = known_print_errors()
             printed = {}
             for r in q("SELECT instrument, transaction_date, SUM(COALESCE(maturity_bdt_crore,0)) "
                        "FROM omo_transactions WHERE transaction_date BETWEEN :lo AND :hi "
@@ -412,6 +414,14 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
                 if ours < bb and hist_start and d - datetime.timedelta(days=180) < hist_start:
                     continue                          # possibly pre-window — can't judge
                 if abs(ours - bb) > max(0.015 * bb, 10):
+                    # BB's own releases contradict this maturity (recorded with the evidence): still
+                    # reported, as a dated notice, and only while the gap IS the omitted amount.
+                    pe = next((e for e in _print_errors if e["instrument"] == inst and e["date"] == d
+                               and ours > bb and abs((ours - bb) - e["omitted_crore"]) <= max(0.015 * e["omitted_crore"], 10)), None)
+                    if pe:
+                        add("omo-ledger", f"{d} {inst}: BB printed {bb:,.0f} cr, our tranches {ours:,.0f} cr - "
+                                          f"BB print error on record: {pe['reason']}", "notice")
+                        continue
                     kind = "missing/misdated injection" if ours < bb else "phantom tranche"
                     add("omo-ledger", f"{d} {inst}: tranches maturing {ours:,.0f} cr != BB printed "
                                       f"{bb:,.0f} cr — {kind}; outstanding is wrong until fixed")

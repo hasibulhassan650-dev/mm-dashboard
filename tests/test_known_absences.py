@@ -151,3 +151,61 @@ class TestWhatTheLedgerExplains:
         s.commit()
         issues = self._issues(monkeypatch, eng)
         assert any(f"no OMO operation on working day {other}" in i for i in issues), issues
+
+
+class TestABBPrintErrorIsReportedNotHidden:
+    """29-Oct-2026: BB's own 28-Oct release shows a 1-day AR tranche maturing 29-Oct that its 29-Oct release
+    leaves out. The ledger check would fail forever; an evidenced entry turns that one gap into a notice,
+    and nothing else - a different gap on the day, or a BB correction, is judged on its merits."""
+
+    D1 = TODAY - datetime.timedelta(days=5)
+
+    def _world(self, printed=1202.99):
+        eng, s = _mem()
+        old = TODAY - datetime.timedelta(days=300)
+        s.add(OMOTransaction(transaction_date=old, maturity_date=old, instrument="SDF", tenor_label="1D", tenor_days=1,
+                             accepted_bdt_crore=1.0, maturity_bdt_crore=0.0, rate_pct=7.5, direction="ABSORPTION"))
+        d0 = self.D1 - datetime.timedelta(days=1)
+        far = self.D1 - datetime.timedelta(days=14)
+        # the 14-day tranche BB did print, and the 1-day one it left out
+        s.add(OMOTransaction(transaction_date=far, maturity_date=self.D1, instrument="AR", tenor_label="14D", tenor_days=14,
+                             accepted_bdt_crore=1198.62, maturity_bdt_crore=0.0, rate_pct=9.5, direction="INJECTION"))
+        s.add(OMOTransaction(transaction_date=d0, maturity_date=self.D1, instrument="AR", tenor_label="1D", tenor_days=1,
+                             accepted_bdt_crore=309.88, maturity_bdt_crore=0.0, rate_pct=9.5, direction="INJECTION"))
+        s.add(OMOTransaction(transaction_date=self.D1, maturity_date=self.D1, instrument="AR", tenor_label="14D", tenor_days=14,
+                             accepted_bdt_crore=0.0, maturity_bdt_crore=printed, rate_pct=9.5, direction="INJECTION"))
+        s.commit()
+        return eng
+
+    def _report(self, monkeypatch, eng, entries):
+        import engines.absences as A
+        import validate
+        monkeypatch.setattr(A, "known_print_errors", lambda path=None: entries)
+        monkeypatch.setattr(validate, "get_session", lambda: sessionmaker(bind=eng)())
+        return validate.integrity_check(limit_per_rule=200)
+
+    def _entry(self, amount=309.96):
+        return [{"dataset": "omo", "instrument": "AR", "date": self.D1, "omitted_crore": amount, "reason": "BB omitted it"}]
+
+    def test_without_an_entry_it_is_a_defect(self, monkeypatch):
+        rep = self._report(monkeypatch, self._world(), [])
+        assert any("omo-ledger" in i and "phantom tranche" in i for i in rep["issues"]), rep["issues"]
+
+    def test_with_an_entry_it_is_a_visible_notice_not_a_defect(self, monkeypatch):
+        rep = self._report(monkeypatch, self._world(), self._entry())
+        assert not any("omo-ledger" in i for i in rep["issues"]), rep["issues"]
+        assert any("omo-ledger" in n and "BB print error on record" in n for n in rep["notices"]), rep["notices"]
+
+    def test_the_entry_covers_only_the_gap_it_describes(self, monkeypatch):
+        """A recorded 100 cr omission must not excuse a 310 cr gap."""
+        rep = self._report(monkeypatch, self._world(), self._entry(100.0))
+        assert any("omo-ledger" in i for i in rep["issues"]), rep["issues"]
+
+    def test_once_bb_corrects_its_print_nothing_is_reported(self, monkeypatch):
+        rep = self._report(monkeypatch, self._world(printed=1512.95), self._entry())
+        assert not any("omo-ledger" in x for x in rep["issues"] + rep["notices"]), (rep["issues"], rep["notices"])
+
+    def test_the_shipped_entry_is_complete(self):
+        from engines.absences import known_print_errors
+        e = [x for x in known_print_errors() if x["instrument"] == "AR"]
+        assert e and e[0]["date"] == datetime.date(2026, 10, 29) and e[0]["reason"]

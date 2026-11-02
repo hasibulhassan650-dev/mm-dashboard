@@ -258,6 +258,33 @@ def sync_known_absences(session, path: str = None, now: datetime.datetime = None
     return out
 
 
+def known_print_errors(path: str = None) -> list:
+    """BB maturities its own releases contradict, from known_absences.yaml `print_errors`.
+
+    Each is {dataset, instrument, date, omitted_crore, reason}. An entry without a reason, an amount or a
+    date is dropped (an exception nobody can audit is not an exception). Read by validate.py's omo-ledger
+    check, which still reports the day - as a notice - and only while the gap equals the omitted amount."""
+    import os
+
+    import yaml
+    path = path or KNOWN_ABSENCES_PATH
+    if not path or not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh) or {}
+    out = []
+    for e in doc.get("print_errors") or []:
+        day = _as_date(e.get("date"))
+        try:
+            amt = float(e.get("omitted_crore"))
+        except (TypeError, ValueError):
+            continue
+        if day and e.get("instrument") and amt > 0 and (e.get("reason") or "").strip():
+            out.append({"dataset": e.get("dataset") or "omo", "instrument": e["instrument"], "date": day,
+                        "omitted_crore": amt, "reason": e["reason"].strip()})
+    return out
+
+
 def summary(session, kind: Optional[str] = "bb_omission") -> dict:
     """What is on record, for the digest. Never a bare count: the newest one
     matters, because a cluster of fresh absences is a story about BB."""

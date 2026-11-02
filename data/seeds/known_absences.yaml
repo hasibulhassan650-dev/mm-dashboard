@@ -41,3 +41,21 @@ absences:
     reason: >-
       Not read while the page described 29-Oct (held: 28-Oct read on 31-Oct, 1-Nov read on 2-Nov); BB's
       page keeps only the latest day, so it cannot be re-read.
+
+# A maturity BB's own releases contradict. Not an absent day: the day IS held, and one row of it is
+# short. validate.py's omo-ledger check compares the tranches we hold maturing on a day with BB's printed
+# maturity; when BB's print omits a tranche that BB's own earlier release shows, the check would fail
+# forever. An entry here turns that ONE finding into a dated notice, and only while the gap equals the
+# omitted amount (within tolerance) - any other gap on that day, or a correction by BB, is judged normally.
+print_errors:
+  # 29-Oct-2026 Assured Repo. pr14357 (as on 28-Oct) records a 1-day AR deal of 309.88 cr maturing 29-Oct
+  # (309.96 with a day's profit at 9.50%). pr14359 (as on 29-Oct) prints AR maturing 1,202.99 cr, which is
+  # exactly the 14-day tranche of 1,198.62 cr dealt 15-Oct (1,202.99 with 14 days' profit); the 1-day
+  # tranche is missing from that print although BB's own 28-Oct release shows it.
+  - dataset: omo
+    instrument: AR
+    date: 2026-10-29
+    omitted_crore: 309.96
+    source: https://www.bb.org.bd/mediaroom/press_release/press/pr14359_20261101.pdf
+    reason: >-
+      BB's 29-Oct release omits the 1-day AR tranche (309.88 cr, pr14357) that matures that day.
