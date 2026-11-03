@@ -16,7 +16,7 @@ def test_every_desk_write_route_expires_the_cache_on_success():
     for rel in ("frontend/app/api/desk/mark/route.ts", "frontend/app/api/desk/buyback/route.ts"):
         src = _read(rel)
         assert 'revalidateTag("api", { expire: 0 })' in src, f"{rel} must expire the cache after a stored entry"
-        assert src.index("if (r.ok)") < src.index("revalidateTag"), f"{rel}: only a stored entry may expire it"
+        assert src.index("if (r.ok)") < src.index('revalidateTag("api"'), f"{rel}: only a stored entry may expire it"
 
 
 def test_api_reads_carry_the_tag_the_write_routes_expire():
