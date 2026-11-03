@@ -747,6 +747,9 @@ def _store_omo_txns(session, txns: list, now: datetime.datetime) -> tuple:
             maturity_bdt_crore = r.get("maturity_bdt_crore"),
             rate_pct           = r.get("rate_pct"),
             rate_range         = r.get("rate_range"),
+            offered_bdt_crore  = r.get("offered_bdt_crore"),
+            net_bdt_crore      = r.get("net_bdt_crore"),
+            printed_totals     = r.get("printed_totals"),
             direction          = r["direction"],
             source_pdf         = r.get("source_pdf"),
             source_pub_date    = r.get("source_pub_date"),
@@ -944,6 +947,12 @@ def _store_omo_txns(session, txns: list, now: datetime.datetime) -> tuple:
                         ex.maturity_bdt_crore = r["maturity_bdt_crore"]
                     if ex.rate_range is None and r.get("rate_range"):
                         ex.rate_range = r["rate_range"]
+                    if ex.offered_bdt_crore is None and r.get("offered_bdt_crore") is not None:
+                        ex.offered_bdt_crore = r["offered_bdt_crore"]
+                    if ex.net_bdt_crore is None and r.get("net_bdt_crore") is not None:
+                        ex.net_bdt_crore = r["net_bdt_crore"]
+                    if ex.printed_totals is None and r.get("printed_totals"):
+                        ex.printed_totals = r["printed_totals"]
                 else:
                     _insert(r); saved += 1
     return saved, superseded

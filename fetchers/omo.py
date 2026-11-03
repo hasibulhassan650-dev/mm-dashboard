@@ -128,6 +128,21 @@ def _extract_grand_total(text: str):
     return accepted, net
 
 
+def _extract_printed_totals(text: str) -> Optional[str]:
+    """BB's printed 'Sub-Total' and 'Grand Total' rows as JSON {label: [offered, accepted, maturity, net]}, signed as
+    printed, or None. BB adds UNROUNDED numbers, so any column of a total can be a cent away from the sum of the
+    rounded rows above it; the desk's sheet carries BB's figure. Used only by the OMO daily-sheet export."""
+    import json
+    out = {}
+    for label, rx in (("Sub-Total", r'sub[\s-]*total'), ("Grand Total", r'grand\s+total')):
+        m = re.search(rx + r'((?:\s+-?[\d,]+\.?\d*){4})(?!\s*[\d.])', text, re.I)
+        if m:
+            vals = [_clean_num(t) for t in m.group(1).split()]
+            if None not in vals:
+                out[label] = vals
+    return json.dumps(out) if out else None
+
+
 def _resolve_instrument(label: Optional[str], accepted_negative: bool):
     """
     → (name, direction, known:bool) or None when there is no label.
@@ -356,11 +371,13 @@ def parse_omo_pdf(pdf_bytes: bytes, hint_date: Optional[datetime.date], pdf_url:
                     "PROVISIONAL, expect a correction to supersede this", txn_date, pub_date, serial)
 
     gt_accepted, gt_net = _extract_grand_total(full_text)
+    printed_totals = _extract_printed_totals(full_text)
 
     def _annotate(rows: List[Dict]) -> List[Dict]:
         for r in rows:
             r["source_pub_date"] = pub_date
             r["source_serial"] = serial
+            r["printed_totals"] = printed_totals
         # Reconcile our parsed rows against BB's own printed Grand Total. Signed
         # accepted (injection +, absorption −) must equal BB's accepted total; a
         # mismatch means a dropped row, a wrong sign, or a mislabel — the exact
@@ -405,7 +422,9 @@ def parse_omo_pdf(pdf_bytes: bytes, hint_date: Optional[datetime.date], pdf_url:
 def _build_txn(instr: str, direction: str, tenor_days: int,
                accepted: float, maturity: float, rate: Optional[float],
                txn_date: datetime.date, pdf_url: str,
-               rate_range: Optional[str] = None) -> Optional[Dict]:
+               rate_range: Optional[str] = None,
+               offered: Optional[float] = None,
+               net: Optional[float] = None) -> Optional[Dict]:
     """Build a transaction dict.
 
     A NEW acceptance becomes a live tranche (accepted>0) that matures on the
@@ -437,6 +456,9 @@ def _build_txn(instr: str, direction: str, tenor_days: int,
         "maturity_bdt_crore": maturity,
         "rate_pct":           rate,
         "rate_range":         rate_range,
+        # as printed, for the desk's export only; nothing computes from it
+        "offered_bdt_crore":  abs(offered) if offered is not None else None,
+        "net_bdt_crore":      net,                # signed as printed
         "direction":          direction,
         "source_pdf":         pdf_url,
     }
@@ -482,6 +504,8 @@ def _parse_via_table(rows: List[List], txn_date: datetime.date, pdf_url: str) ->
 
         # Columns 2,3,4,5,6 = Offered, Accepted, Rate, Maturity, Net
         # We need at least Accepted (col 3) and Maturity (col 5)
+        offered   = _clean_num(cells[2]) if len(cells) > 2 else None
+        net       = _clean_num(cells[6]) if len(cells) > 6 else None
         accepted  = _clean_num(cells[3]) if len(cells) > 3 else None
         maturity  = _clean_num(cells[5]) if len(cells) > 5 else None
         rate_raw  = cells[4]             if len(cells) > 4 else ""
@@ -501,7 +525,7 @@ def _parse_via_table(rows: List[List], txn_date: datetime.date, pdf_url: str) ->
 
         txn = _build_txn(current_instrument, current_direction, tenor_days,
                          abs(accepted), mat_abs, rate, txn_date, pdf_url,
-                         rate_range=rate_range)
+                         rate_range=rate_range, offered=offered, net=net)
         if txn:
             transactions.append(txn)
 
@@ -597,7 +621,7 @@ def _parse_via_text(full_text: str, txn_date: datetime.date, pdf_url: str) -> Li
 
         maturity = abs(nums[-2])
         rate, rate_range = _resolve_rate(nums[2:-2])
-        cur["rows"].append({"tenor_days": tenor_days, "accepted": accepted,
+        cur["rows"].append({"tenor_days": tenor_days, "accepted": accepted, "offered": nums[0], "net": nums[-1],
                             "maturity": maturity, "rate": rate, "rate_range": rate_range})
         last_tenor = tenor_days
 
@@ -616,7 +640,7 @@ def _parse_via_text(full_text: str, txn_date: datetime.date, pdf_url: str) -> Li
         for r in b["rows"]:
             txn = _build_txn(name, direction, r["tenor_days"], abs(r["accepted"]),
                              r["maturity"], r["rate"], txn_date, pdf_url,
-                             rate_range=r.get("rate_range"))
+                             rate_range=r.get("rate_range"), offered=r.get("offered"), net=r.get("net"))
             if txn:
                 transactions.append(txn)
                 if txn["accepted_bdt_crore"] > 0:

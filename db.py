@@ -215,6 +215,11 @@ class OMOTransaction(Base):
     maturity_bdt_crore  = Column(Float)             # what matured today for this instrument/tenor (from PDF)
     rate_pct            = Column(Float)             # lower bound when a range
     rate_range          = Column(String(30))        # full range as published, e.g. "4.00-5.25"; NULL when a single rate
+    # The "Offered Amount" column as printed (absolute value; NULL = not read yet). Stored ONLY for the desk's
+    # OMO daily-sheet export, which reproduces BB's table. No analytic (outstanding, ladder, ledger) reads it.
+    offered_bdt_crore   = Column(Float)
+    net_bdt_crore       = Column(Float)             # the "Net injection(+)/absorption(-)" column as printed, signed; export only
+    printed_totals      = Column(Text)              # BB's printed Sub-Total / Grand Total rows as JSON (repeated on the day's rows); export only
     direction           = Column(String(20))        # INJECTION or ABSORPTION
     source_pdf          = Column(String(300))
     source_pub_date     = Column(Date)               # press-release publication date ("Date: DD-MM-YYYY")
@@ -1047,6 +1052,9 @@ def init_db():
     migrations = [
         "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS maturity_bdt_crore REAL",
         "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS rate_range VARCHAR(30)",
+        "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS offered_bdt_crore REAL",
+        "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS net_bdt_crore REAL",
+        "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS printed_totals TEXT",
         "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS source_pub_date DATE",
         "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS source_serial VARCHAR(40)",
         "ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS quality TEXT",
@@ -1064,6 +1072,9 @@ def init_db():
         "ALTER TABLE holiday_calendar ADD COLUMN IF NOT EXISTS evidence_quote TEXT",
         "ALTER TABLE holiday_calendar ADD COLUMN IF NOT EXISTS announced_date DATE",
         # SQLite has no IF NOT EXISTS for columns; errors harmlessly on Postgres.
+        "ALTER TABLE omo_transactions ADD COLUMN offered_bdt_crore REAL",
+        "ALTER TABLE omo_transactions ADD COLUMN net_bdt_crore REAL",
+        "ALTER TABLE omo_transactions ADD COLUMN printed_totals TEXT",
         "ALTER TABLE daily_net_flow ADD COLUMN sukuk_inflow_bdt_mill REAL DEFAULT 0",
         "ALTER TABLE holiday_calendar ADD COLUMN evidence_url VARCHAR(400)",
         "ALTER TABLE holiday_calendar ADD COLUMN evidence_quote TEXT",

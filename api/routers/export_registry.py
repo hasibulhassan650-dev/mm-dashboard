@@ -124,6 +124,15 @@ EXPORTS: List[Export] = [
            ["days", "date_from", "date_to"],
            "omo_transactions", "transaction_date",
            sheets="Ladder · By instrument"),
+    Export("omo_daily_sheet", "OMO Daily Sheet (your layout, paste-ready)",
+           "/api/omo/daily-sheet/export",
+           "Each OMO day laid out as the desk's own sheet: instruments and tenors as BB prints them, "
+           "offered, accepted/settlement, rate range, maturity and net injection(+)/absorption(-), with the "
+           "Sub-Total and Grand Total rows and the same signs and yellow colouring, so it can be copied "
+           "straight into another workbook. With no dates it gives the latest day BB published.",
+           ["date_from", "date_to"],
+           "omo_transactions", "transaction_date",
+           sheets="OMO daily"),
 ]
 
 BY_KEY: Dict[str, Export] = {e.key: e for e in EXPORTS}

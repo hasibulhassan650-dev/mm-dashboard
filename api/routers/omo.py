@@ -281,3 +281,47 @@ def export_maturity_ladder(days: int = Query(None, ge=1, le=400),
     )
     return Response(content=body, media_type=XLSX_MEDIA, headers={
         "Content-Disposition": f'attachment; filename="{filename("bd_omo_maturity_ladder", p["from"], p["to"])}"'})
+
+
+@router.get("/daily-sheet/export")
+def export_daily_sheet(date_from: str = Query(None), date_to: str = Query(None)):
+    """The desk's OMO daily sheet: one block per day in BB's own layout, ready to paste. No dates = the latest day
+    BB published; a range gives one block per day that has operations."""
+    from .omo_sheet_logic import build_daily_sheet, day_block
+    from .export_logic import filename
+    session = get_session()
+    try:
+        try:
+            hi = datetime.date.fromisoformat(date_to) if date_to else None
+            lo = datetime.date.fromisoformat(date_from) if date_from else None
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        if hi is None:
+            latest = session.execute(text("SELECT MAX(transaction_date) FROM omo_transactions")).scalar()
+            if latest is None:
+                raise HTTPException(status_code=404, detail="no OMO operations are stored")
+            hi = latest if isinstance(latest, datetime.date) else datetime.date.fromisoformat(str(latest)[:10])
+        lo = lo or hi
+        if lo > hi:
+            raise HTTPException(status_code=422, detail="date_from is after date_to")
+        if (hi - lo).days > 366:
+            raise HTTPException(status_code=422, detail="at most a year of days in one sheet")
+        rows = session.execute(text("""
+            SELECT id, transaction_date, instrument, tenor_days, offered_bdt_crore, accepted_bdt_crore,
+                   maturity_bdt_crore, net_bdt_crore, printed_totals, rate_pct, rate_range, direction
+            FROM omo_transactions WHERE transaction_date BETWEEN :lo AND :hi
+            ORDER BY transaction_date, id"""), {"lo": str(lo), "hi": str(hi)}).fetchall()
+    finally:
+        session.close()
+    by_day: dict = {}
+    for r in rows:
+        m = dict(r._mapping)
+        d = m["transaction_date"]
+        d = d if isinstance(d, datetime.date) else datetime.date.fromisoformat(str(d)[:10])
+        by_day.setdefault(d, []).append(m)
+    if not by_day:
+        raise HTTPException(status_code=404, detail=f"no OMO operations stored for {lo} to {hi} (a bank holiday, "
+                                                    "or BB has not published it yet)")
+    body = build_daily_sheet([day_block(v, d) for d, v in sorted(by_day.items())])
+    return Response(content=body, media_type=XLSX_MEDIA, headers={
+        "Content-Disposition": f'attachment; filename="{filename("bd_omo_daily_sheet", lo, hi)}"'})
