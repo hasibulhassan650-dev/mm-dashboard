@@ -1,4 +1,4 @@
-import { api } from "@/lib/api";
+import { api, exportUrl } from "@/lib/api";
 import { fmtDate } from "@/lib/format";
 import RelatedLinks from "@/components/RelatedLinks";
 import DateRangeControl from "@/components/DateRangeControl";
@@ -65,6 +65,13 @@ export default async function OmoPage({ searchParams }: { searchParams: Promise<
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: "var(--gap)", flexWrap: "wrap" }}>
         <Freshness updated={fresh.omo} />
         <DateRangeControl min={range.min} max={range.max} from={range.from} to={range.to} />
+      </div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: "var(--gap)", fontSize: 12 }}>
+        <span style={{ color: "var(--fg-mute)" }}>Daily sheet in your layout (Excel, paste-ready):</span>
+        <a href={exportUrl.omoDailySheet()} className="seg-b" style={{ textDecoration: "none" }}>Latest day</a>
+        <a href={exportUrl.omoDailySheet({ from: range.from, to: range.to })} className="seg-b" style={{ textDecoration: "none" }}>
+          {range.from} → {range.to}
+        </a>
       </div>
 
       {omoAlerts.length > 0 && (

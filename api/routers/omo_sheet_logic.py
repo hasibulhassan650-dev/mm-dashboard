@@ -101,7 +101,7 @@ def day_block(rows: List[Dict[str, Any]], day: datetime.date) -> Dict[str, Any]:
             "offered": None if offered is None else round(sign * offered, 2),
             "accepted": None if accepted is None else round(sign * accepted, 2),
             "rate": _rate_cell(grp),
-            "maturity": None if maturity is None else round(-sign * maturity, 2),
+            "maturity": None if maturity is None else round(-sign * maturity, 2) + 0.0,   # + 0.0: never -0.0
             "net": net,
         })
 

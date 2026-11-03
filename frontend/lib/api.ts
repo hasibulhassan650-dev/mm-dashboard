@@ -34,6 +34,11 @@ export const exportUrl = {
   schedule: (years: number) => `${BASE}/api/flows/by-product/export?years=${years}`,
   ladder:   (from: string, to: string) =>
     `${BASE}/api/flows/forecast/export?date_from=${from}&date_to=${to}`,
+  /** The desk's OMO daily sheet. No dates = the latest day BB published. */
+  omoDailySheet: (p: { from?: string; to?: string } = {}) =>
+    p.from || p.to
+      ? `${BASE}/api/omo/daily-sheet/export?date_from=${p.from ?? ""}&date_to=${p.to ?? ""}`
+      : `${BASE}/api/omo/daily-sheet/export`,
   omoLadder: (p: { days?: number; from?: string; to?: string }) =>
     p.from || p.to
       ? `${BASE}/api/omo/maturity-ladder/export?date_from=${p.from ?? ""}&date_to=${p.to ?? ""}`
