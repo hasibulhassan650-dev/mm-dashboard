@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { revalidateTag } from "next/cache";
 import { AUTH_COOKIE, authSecret, verifyToken } from "@/lib/auth";
 import { API_BASE } from "@/lib/api";
 
@@ -47,6 +48,8 @@ export async function POST(req: NextRequest) {
       cache: "no-store",
     });
     const text = await r.text();
+    // A stored entry must show on the curve, the overview and /desk now, not when the cache lapses.
+    if (r.ok) revalidateTag("api", { expire: 0 });
     // Pass the API's own status and message straight through: a validation
     // message that says which field is wrong is worth more than "failed".
     return new NextResponse(text, {

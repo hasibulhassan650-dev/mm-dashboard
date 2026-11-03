@@ -12,7 +12,9 @@ export const API_BASE = BASE;
 async function get<T>(path: string, params?: Record<string, string | number>): Promise<T> {
   const url = new URL(BASE + path);
   if (params) Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, String(v)));
-  const res = await fetch(url.toString(), { next: { revalidate: 300 } });
+  // Tagged so a desk write can expire everything at once (app/api/desk/*): without it a mark entered a
+  // second ago sat behind up to ten minutes of cached curve.
+  const res = await fetch(url.toString(), { next: { revalidate: 300, tags: ["api"] } });
   if (!res.ok) throw new Error(`API ${path} → ${res.status}`);
   return res.json();
 }
