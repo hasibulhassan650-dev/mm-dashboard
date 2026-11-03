@@ -9,12 +9,14 @@ const BASE = "https://mm-dashboard-vac3.vercel.app";
  *  the site went blank once already. */
 export const API_BASE = BASE;
 
-async function get<T>(path: string, params?: Record<string, string | number>): Promise<T> {
+/** `fresh` reads are never cached. Use it for anything the desk types in itself: it can be written from
+ *  another device or straight to the API, and no route handler of ours would see that write to expire a cache. */
+async function get<T>(path: string, params?: Record<string, string | number>, fresh = false): Promise<T> {
   const url = new URL(BASE + path);
   if (params) Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, String(v)));
   // Tagged so a desk write can expire everything at once (app/api/desk/*): without it a mark entered a
   // second ago sat behind up to ten minutes of cached curve.
-  const res = await fetch(url.toString(), { next: { revalidate: 300, tags: ["api"] } });
+  const res = await fetch(url.toString(), fresh ? { cache: "no-store" } : { next: { revalidate: 300, tags: ["api"] } });
   if (!res.ok) throw new Error(`API ${path} → ${res.status}`);
   return res.json();
 }
@@ -50,7 +52,7 @@ export const api = {
   omoInjection: (window_days = 30) => get<OmoInjection>("/api/omo/injection", { window_days }),
   yieldCurve:      () => get<YieldRow[]>("/api/yields/curve"),
   yieldDormant:    () => get<YieldRow[]>("/api/yields/curve/dormant"),
-  yieldProvisional: () => get<ProvisionalYield[]>("/api/yields/curve/provisional"),
+  yieldProvisional: () => get<ProvisionalYield[]>("/api/yields/curve/provisional", undefined, true),
   yieldSecondary:  () => get<SecondaryYieldRow[]>("/api/yields/secondary"),
   yields:          (months = 12) => get<YieldRow[]>("/api/yields", { months }),
   // Explicit date window (YYYY-MM-DD) — supports the full 2007→present range.
@@ -89,7 +91,7 @@ export const api = {
     catch { return { as_of: "", calendar_through: null, published: false, next: null, following: [] }; }
   },
   drilldown:       (date: string, cumFrom?: string) =>
-    get<DrilldownResult>(`/api/flows/drilldown`, cumFrom ? { date, cum_from: cumFrom } : { date }),
+    get<DrilldownResult>(`/api/flows/drilldown`, cumFrom ? { date, cum_from: cumFrom } : { date }, true),   // carries the desk's provisional buybacks
   // Forward schedule split by product. New endpoints — degrade to an empty
   // payload until the API project redeploys, same as flowsForecast below.
   // `schedule` must NOT be made to look empty-but-fine on failure in the UI:
@@ -201,7 +203,7 @@ export const api = {
     }
   },
   deskMarks:       async (days = 60): Promise<DeskMarks> => {
-    try { return await get<DeskMarks>(`/api/desk/marks?days=${days}`); }
+    try { return await get<DeskMarks>(`/api/desk/marks?days=${days}`, undefined, true); }
     catch {
       return { as_of: "", window_days: days, count: 0, unconfirmed: 0,
                worst_diff_bps: null, configured: false, tenors: [], marks: [] };

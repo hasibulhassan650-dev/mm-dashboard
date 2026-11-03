@@ -4,7 +4,7 @@ import StatCard from "@/components/StatCard";
 import DownloadButton from "@/components/DownloadButton";
 import Link from "next/link";
 
-export const revalidate = 60;
+export const revalidate = 0;   // lists the desk's provisional buybacks the moment they are saved
 
 function prevWorkday(date: string): string {
   const d = new Date(date);

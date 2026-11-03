@@ -17,7 +17,7 @@ import { resolveRange, inRange } from "@/lib/daterange";
 import InfoTip from "@/components/InfoTip";
 import { DataWarning } from "@/components/DataWarning";
 
-export const revalidate = 300;
+export const revalidate = 0;   // draws the desk's own marks, which must show the moment they are saved, from any device
 
 export default async function YieldsPage({ searchParams }: { searchParams: Promise<{ from?: string; to?: string }> }) {
   const sp = await searchParams;

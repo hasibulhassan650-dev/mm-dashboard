@@ -6,7 +6,7 @@ import OverviewView, { type OverviewData, type OmoAuctionRow, type SecAuctionRow
 import type { Kpi } from "@/components/terminal/ui";
 import Freshness from "@/components/Freshness";
 
-export const revalidate = 300;
+export const revalidate = 0;   // draws the desk's own marks, which must show the moment they are saved, from any device
 
 const INST_LABEL: Record<string, string> = Object.fromEntries(OMO_INSTRUMENTS.map((i) => [i.key, i.label]));
 

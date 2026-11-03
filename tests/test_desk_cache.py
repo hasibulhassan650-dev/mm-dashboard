@@ -21,3 +21,14 @@ def test_every_desk_write_route_expires_the_cache_on_success():
 
 def test_api_reads_carry_the_tag_the_write_routes_expire():
     assert 'tags: ["api"]' in _read("frontend/lib/api.ts")
+
+
+def test_what_the_desk_types_is_never_served_from_a_cache():
+    """Entries can arrive from another device or straight to the API, where no route handler of ours runs to
+    expire anything. So the reads of desk data are uncached and the pages that draw them render per request."""
+    api = _read("frontend/lib/api.ts")
+    for call in ('"/api/yields/curve/provisional", undefined, true', "/api/desk/marks?days=${days}`, undefined, true",
+                 "cum_from: cumFrom } : { date }, true"):
+        assert call in api, f"{call} must be a fresh (uncached) read"
+    for rel in ("frontend/app/yields/page.tsx", "frontend/app/page.tsx", "frontend/app/drilldown/page.tsx"):
+        assert "export const revalidate = 0;" in _read(rel), f"{rel} draws desk entries, so it cannot be a cached page"
