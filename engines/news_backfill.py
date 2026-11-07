@@ -156,7 +156,12 @@ def backfill(session, client, since: datetime.date, now: datetime.datetime = Non
 
 
 def mark_history(session, now: datetime.datetime) -> int:
-    """Events found by a backfill are history: never announce them."""
+    """Events found by THIS backfill are history: never announce them.
+
+    Only events first seen at or after the run's start (`now`, which every event of the run carries as its
+    first_seen_utc). It used to mark EVERY un-notified event, which silenced a live event that arrived while the
+    backfill ran."""
     from sqlalchemy import text
     return session.execute(text(
-        "UPDATE liquidity_events SET notified_utc = :n WHERE notified_utc IS NULL"), {"n": now}).rowcount
+        "UPDATE liquidity_events SET notified_utc = :n WHERE notified_utc IS NULL AND first_seen_utc >= :n"),
+        {"n": now}).rowcount

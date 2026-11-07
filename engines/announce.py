@@ -31,6 +31,8 @@ import logging
 import subprocess
 from typing import Callable, Dict, List, Optional, Sequence
 
+from engines.liquidity_news import CONFIRMED_SQL as _CONFIRMED   # rule-read leads are never announced
+
 log = logging.getLogger("announce")
 
 # Worth an email. OMO and the routine result categories are deliberately absent.
@@ -97,11 +99,12 @@ def _sources():
          "select": "('ev-' || CAST(id AS TEXT)) AS serial, COALESCE(event_date, announced_date) AS "
                    "published_date, NULL AS subject_date, "
                    "(kind || ': ' || COALESCE(summary, '')) AS title, '' AS url, kind AS category, "
-                   "(CASE WHEN verified_by = 'rules' THEN 'Liquidity news (rule-read)' "
-                   "ELSE 'Liquidity news' END) AS prefix",
-         "where": "matters IS TRUE AND redundant_with IS NULL AND notified_utc IS NULL "
-                  "AND first_seen_utc >= :since",
-         "order": "first_seen_utc, id"},
+                   "'Liquidity news' AS prefix",
+         # CONFIRMED only: a rule-read lead is not announced until an AI reader confirms it. The age window runs
+         # from CONFIRMATION, so an event confirmed on day 4 is still announced.
+         "where": "matters IS TRUE AND redundant_with IS NULL AND notified_utc IS NULL AND "
+                  + _CONFIRMED + " AND COALESCE(confirmed_utc, first_seen_utc) >= :since",
+         "order": "COALESCE(confirmed_utc, first_seen_utc), id"},
     )
 
 
@@ -195,8 +198,10 @@ def digest_lines(session, now: datetime.datetime = None, hours: int = 24):
     # Stored 2h+ ago, still un-announced: a failed send, or a re-categorised release.
     stuck = []
     for s in _sources():
-        where = s["where"].replace("first_seen_utc >= :since",
-                                   "first_seen_utc >= :a AND first_seen_utc < :b")
+        where = s["where"].replace("COALESCE(confirmed_utc, first_seen_utc) >= :since",
+                                   "COALESCE(confirmed_utc, first_seen_utc) >= :a "
+                                   "AND COALESCE(confirmed_utc, first_seen_utc) < :b") \
+                          .replace("first_seen_utc >= :since", "first_seen_utc >= :a AND first_seen_utc < :b")
         stuck += session.execute(text(
             f"SELECT {s['select']} FROM {s['table']} WHERE {where}"),
             {"a": now - datetime.timedelta(days=7),
@@ -217,14 +222,19 @@ def news_digest_lines(session, now: datetime.datetime = None, hours: int = 24):
     out = [f"**Liquidity news not in BB's data (last {hours}h):**"]
     rows = session.execute(text(
         "SELECT kind, direction, amount_crore, status, counterparty, summary FROM liquidity_events "
-        "WHERE first_seen_utc >= :s AND matters IS TRUE AND redundant_with IS NULL "
-        "ORDER BY first_seen_utc DESC"), {"s": now - datetime.timedelta(hours=hours)}).fetchall()
+        "WHERE COALESCE(confirmed_utc, first_seen_utc) >= :s AND matters IS TRUE AND redundant_with IS NULL "
+        "AND " + _CONFIRMED + " ORDER BY first_seen_utc DESC"), {"s": now - datetime.timedelta(hours=hours)}).fetchall()
     for kind, direction, amt, status, cp, summ in rows:
         amount = "amount not stated" if amt is None else f"{float(amt):,.0f} cr"
         out.append(f"- {kind.replace('_', ' ').title()} ({direction.lower()}) · {amount}"
                    f"{' · ' + status.lower() if status else ''} · {cp or 'counterparty not stated'} · {str(summ)[:110]}")
     if not rows:
         out.append("- nothing new")
+    leads = session.execute(text(
+        "SELECT COUNT(*) FROM liquidity_events WHERE verified_by = 'rules' AND superseded_utc IS NULL "
+        "AND matters IS TRUE AND redundant_with IS NULL")).scalar() or 0
+    if leads:
+        out.append(f"- {leads} rule-read lead(s) await an AI reader: shown on the page, not counted, not announced")
     last = session.execute(text("SELECT MAX(fetched_utc) FROM news_articles")).scalar()
     if last is None or (now - _as_dt(last)).total_seconds() > 6 * 3600:
         problems.append("the liquidity news watch has not run for 6h+")

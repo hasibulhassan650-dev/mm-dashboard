@@ -42,6 +42,12 @@ KINDS: Dict[str, str] = {
     "BUDGET_SUPPORT_FX": "NEUTRAL",      # IMF / World Bank / ADB money arriving in dollars
 }
 STATUSES = ("ANNOUNCED", "APPROVED", "DISBURSED", "COMPLETED")
+
+# Who read an event. An event read ONLY by the free rule reader is an unconfirmed lead: shown, never added to a total,
+# never announced, until a stronger reader reads the same article. The rule reader stored a 3,000 crore release as
+# 5,100 and a request as a payment, so it is not trusted to move a number on its own.
+READER_RANK = {"rules": 0, "llm": 1, "claude": 1, "research": 2, "human": 3}
+CONFIRMED_SQL = "COALESCE(verified_by, 'llm') <> 'rules' AND superseded_utc IS NULL"
 CHANNELS = ("CASH", "BONDS", "BB_CREDIT", "REGULATORY")
 
 # Of any size: a CRR change or BB lending to a bank matters whatever its amount.
@@ -87,10 +93,11 @@ def keyword_score(title: str, text: str = "") -> Tuple[int, bool]:
 # ── amounts, re-read by code ──────────────────────────────────────────────────
 _NUM = r"(\d[\d,]*(?:\.\d+)?)"
 _UNIT = r"(lakh\s+crore|crore|cr\b|trillion|billion|bn\b|million|mn\b|lakh)"
-_PRE = re.compile(rf"(?:tk\.?|bdt|taka)\s*{_NUM}\s*{_UNIT}?", re.I)
-_POST = re.compile(rf"{_NUM}\s*{_UNIT}\s*(?:taka|tk\b)", re.I)
+_PRE = re.compile(rf"(?:tk\.?|bdt|taka)\s*{_NUM}[\s-]*{_UNIT}?", re.I)
+_POST = re.compile(rf"{_NUM}[\s-]*{_UNIT}\s*(?:taka|tk\b)", re.I)
+# 1 lakh = 100,000 = 0.01 crore. (It was 0.1: "Tk 5,000 lakh" read as 500 crore, which is 50.)
 _TO_CRORE = {"lakh crore": 100000.0, "crore": 1.0, "cr": 1.0, "trillion": 100000.0,
-             "billion": 100.0, "bn": 100.0, "million": 0.1, "mn": 0.1, "lakh": 0.1}
+             "billion": 100.0, "bn": 100.0, "million": 0.1, "mn": 0.1, "lakh": 0.01}
 
 
 def amounts_crore(text: str) -> List[float]:
@@ -112,15 +119,29 @@ def amounts_crore(text: str) -> List[float]:
     return out
 
 
-def verify_amount(model_amount, quote: str) -> Tuple[Optional[float], bool]:
+def verify_amount(model_amount, quote: str, kind: str = None) -> Tuple[Optional[float], bool]:
     """(amount_crore, unverified). The quote decides, never the model.
 
     If the model gave an amount, it must match a figure in its own quote within 1%
     - and then the QUOTE's figure is what is stored. If it does not, the amount is
     dropped and flagged. If the model gave none but the quote states exactly one,
     that one is taken: it is read by code, not inferred.
+
+    When the quote states SEVERAL amounts ("released Tk 2,500 crore of the Tk 4,200 crore asked"), a figure merely
+    being in the quote is not enough: it must be the one attached to the act (news_rules._amount_for), or the amount
+    is dropped and flagged. Passing the kind turns this check on.
     """
     cands = amounts_crore(quote)
+    if kind and model_amount is not None and len(set(cands)) > 1:
+        from engines import news_rules as _R
+        attached = _R._amount_for(quote, kind)
+        try:
+            m = float(model_amount)
+        except (TypeError, ValueError):
+            return None, True
+        if attached is not None and attached and abs(attached - m) / attached <= 0.01:
+            return attached, False
+        return None, True
     if model_amount is None:
         return (cands[0], False) if len(set(cands)) == 1 else (None, False)
     try:
@@ -172,7 +193,7 @@ def validate_event(raw: Dict, article: Dict) -> Tuple[Optional[Dict], List[str]]
     # sentence that asks, estimates or plans, and contains no act of paying, is rejected.
     from engines import news_rules as _R
     done, future = _R._tense(quote)
-    if _R._REQUEST.search(quote) and not done and not (future and kind in ALWAYS_MATTERS):
+    if _R.is_request(quote) and not done and not (future and kind in ALWAYS_MATTERS):
         return None, ["the quote is a request, estimate or plan, not a payment"]
 
     # A running STOCK is not new cash: "as of June BB had provided Tk 76,000 crore" restates what
@@ -181,11 +202,13 @@ def validate_event(raw: Dict, article: Dict) -> Tuple[Optional[Dict], List[str]]
     if _R._STOCK.search(quote):
         return None, ["the quote restates a running total ('as of', 'so far', 'outstanding'), not a new payment"]
 
-    amount, unverified = verify_amount(raw.get("amount_crore"), quote)
+    amount, unverified = verify_amount(raw.get("amount_crore"), quote, kind)
     if unverified:
         why.append("amount does not match the quote; dropped")
 
-    pub = _date(article.get("published_utc"))
+    # With no publication date the window anchors on when WE fetched it, so an undated article cannot carry an
+    # event dated years away.
+    pub = _date(article.get("published_utc")) or _date(article.get("fetched_utc"))
 
     def near(v):
         d = _date(v)
@@ -197,10 +220,13 @@ def validate_event(raw: Dict, article: Dict) -> Tuple[Optional[Dict], List[str]]
     if future and not done:
         status = "ANNOUNCED"      # "will release": whatever the reader labelled it, no cash has moved
     channel = (raw.get("channel") or "").upper()
-    try:
-        conf = max(0.0, min(1.0, float(raw.get("confidence", 0.5))))
-    except (TypeError, ValueError):
-        conf = 0.5
+    if "confidence" in raw and raw["confidence"] is None:
+        conf = None                  # the rule reader states no probability: UNCONFIRMED, not "0.7"
+    else:
+        try:
+            conf = max(0.0, min(1.0, float(raw.get("confidence", 0.5))))
+        except (TypeError, ValueError):
+            conf = 0.5
     ev = {
         "kind": kind, "direction": KINDS[kind], "amount_crore": amount,
         "amount_unverified": unverified,
@@ -219,7 +245,8 @@ def validate_event(raw: Dict, article: Dict) -> Tuple[Optional[Dict], List[str]]
 
 def matters(ev: Dict) -> bool:
     """The user's rule: info which matters, not every mention."""
-    if (ev.get("confidence") or 0) < MATTERS_MIN_CONFIDENCE:
+    conf = ev.get("confidence")
+    if conf is not None and conf < MATTERS_MIN_CONFIDENCE:
         return False
     if ev["kind"] in ALWAYS_MATTERS:
         return True
@@ -239,12 +266,17 @@ def same_counterparty(a: Optional[str], b: Optional[str]) -> bool:
     return bool(a and b and (a == b or a in b or b in a))
 
 
-def dedupe_key(ev: Dict) -> str:
+def dedupe_key(ev: Dict, url: str = "") -> str:
+    """Exact identity of one reading. It carries the DAY and the first article, not the month: grouping by month made
+    two equal payments to the same party 11 days apart one event. Merging different articles is the job of
+    merge_or_create's tested predicate, never of this key."""
+    import hashlib
     d = ev.get("event_date") or ev.get("announced_date")
     amt = ev.get("amount_crore")
     # A running total and a single payment of the same size are different facts.
     return (f"{ev['kind']}|{_cp(ev.get('counterparty'))[:40]}|{round(amt) if amt else 'na'}|"
-            f"{d.strftime('%Y-%m') if d else 'na'}|{'cum' if ev.get('is_cumulative') else 'one'}")
+            f"{d.isoformat() if d else 'na'}|{'cum' if ev.get('is_cumulative') else 'one'}|"
+            f"{hashlib.sha1((url or '').encode()).hexdigest()[:10]}")
 
 
 _RANK = {s: i for i, s in enumerate(STATUSES)}
@@ -256,30 +288,56 @@ def _src(article: Dict) -> Dict:
             "published": pub.isoformat() if hasattr(pub, "isoformat") else pub}
 
 
+def _same_event(row, ev: Dict, url: str, anchor) -> bool:
+    """Is this stored row the same cash event as the new reading? Tested one rule at a time (Rule 9)."""
+    if bool(row.is_cumulative) != bool(ev.get("is_cumulative")):
+        return False
+    a, b = row.amount_crore, ev.get("amount_crore")
+    rd = row.event_date or row.announced_date
+    days = abs((rd - anchor).days) if (anchor and rd) else None
+    if days is not None and days > 10:
+        return False
+    both = a is not None and b is not None
+    if both and abs(a - b) / max(a, b) > 0.05:
+        return False
+    ca, cb = _cp(row.counterparty), _cp(ev.get("counterparty"))
+    shared_url = url in {s.get("url") for s in json.loads(row.sources_json or "[]")}
+    if both:
+        if ca and cb:
+            return same_counterparty(row.counterparty, ev.get("counterparty"))
+        if not ca and not cb:
+            return True
+        # one side names the counterparty and the other does not: the same event only when the figures agree
+        # tightly and the dates are close (the rule reader leaves it empty; the model names it)
+        return abs(a - b) / max(a, b) <= 0.01 and days is not None and days <= 3
+    # at least one amount is missing: an absent figure must not make two different events one
+    if (a is None) != (b is None) or (a is None and b is None):
+        if shared_url:
+            return True
+        return bool(ca and ca == cb) and days is not None and days <= 3
+    return False
+
+
 def merge_or_create(session, ev: Dict, article: Dict, now: datetime.datetime = None,
                     verified_by: str = "llm"):
-    """Fold a validated event into the stored ones. Returns (row, 'created'|'merged')."""
+    """Fold a validated event into the stored ones. Returns (row, 'created'|'merged').
+
+    A reading by a STRONGER reader that merges into a weaker one takes the row over (amount, status, quote,
+    counterparty, confidence, verified_by) and confirms it: an AI reading agreeing with a rule-read lead is the
+    same event, confirmed, not a second one."""
     from db import LiquidityEvent, LiquidityEventHistory
     now = now or datetime.datetime.utcnow()
     anchor = ev.get("event_date") or ev.get("announced_date")
+    url = article.get("url") or ""
     match = None
-    for row in session.query(LiquidityEvent).filter(LiquidityEvent.kind == ev["kind"]).all():
-        if bool(row.is_cumulative) != bool(ev.get("is_cumulative")):
-            continue
-        if not same_counterparty(row.counterparty, ev.get("counterparty")):
-            continue
-        a, b = row.amount_crore, ev.get("amount_crore")
-        if (a is None) != (b is None) or (a is not None and abs(a - b) / max(a, b) > 0.05):
-            if not (a is None or b is None):
-                continue
-        rd = row.event_date or row.announced_date
-        if anchor and rd and abs((rd - anchor).days) > 10:
-            continue
-        match = row
-        break
+    for row in session.query(LiquidityEvent).filter(LiquidityEvent.kind == ev["kind"],
+                                                     LiquidityEvent.superseded_utc.is_(None)).all():
+        if _same_event(row, ev, url, anchor):
+            match = row
+            break
 
     if match is None:
-        key = dedupe_key(ev)
+        key = dedupe_key(ev, url)
         row = session.query(LiquidityEvent).filter_by(dedupe_key=key).one_or_none()
         if row is not None:
             match = row
@@ -288,6 +346,17 @@ def merge_or_create(session, ev: Dict, article: Dict, now: datetime.datetime = N
         if article.get("url") not in {s.get("url") for s in srcs}:
             srcs.append(_src(article))
             match.sources_json = json.dumps(srcs)
+        if READER_RANK.get(verified_by, 1) > READER_RANK.get(match.verified_by or "llm", 1):
+            session.add(LiquidityEventHistory(event_id=match.id, changed_utc=now, field="verified_by",
+                                              old_value=match.verified_by, new_value=verified_by,
+                                              source_url=article.get("url")))
+            for f in ("amount_crore", "counterparty", "summary", "evidence_quote", "channel", "confidence"):
+                v = ev.get(f)
+                if v is not None and v != "":
+                    setattr(match, f, v)
+            match.amount_unverified = bool(ev.get("amount_unverified"))
+            match.is_cumulative = bool(ev.get("is_cumulative"))
+            match.verified_by, match.confirmed_utc = verified_by, now
         if ev.get("status") and (match.status is None or _RANK[ev["status"]] > _RANK.get(match.status, -1)):
             session.add(LiquidityEventHistory(event_id=match.id, changed_utc=now, field="status",
                                               old_value=match.status, new_value=ev["status"],
@@ -305,7 +374,7 @@ def merge_or_create(session, ev: Dict, article: Dict, now: datetime.datetime = N
         return match, "merged"
 
     row = LiquidityEvent(
-        dedupe_key=dedupe_key(ev), kind=ev["kind"], direction=ev["direction"],
+        dedupe_key=dedupe_key(ev, url), kind=ev["kind"], direction=ev["direction"],
         amount_crore=ev.get("amount_crore"), amount_unverified=ev.get("amount_unverified", False),
         is_cumulative=bool(ev.get("is_cumulative")),
         event_date=ev.get("event_date"), announced_date=ev.get("announced_date"),
@@ -316,6 +385,34 @@ def merge_or_create(session, ev: Dict, article: Dict, now: datetime.datetime = N
     session.add(row)
     session.flush()
     return row, "created"
+
+
+def supersede_rule_reads(session, url: str, kept_ids, now: datetime.datetime = None) -> int:
+    """After an AI reader has read `url`, retire the rule reader's leads from that article that it did not report.
+
+    By ARTICLE, not by merge: the rule reader's event often has the wrong kind (that was its failure), so it would
+    never merge with the model's and would live on beside it, announced and added up twice. A lead that cites other
+    articles too only loses this one as a source. Returns how many events were superseded."""
+    from db import LiquidityEvent
+    now = now or datetime.datetime.utcnow()
+    kept_ids = set(kept_ids or ())
+    n = 0
+    for row in session.query(LiquidityEvent).filter(LiquidityEvent.verified_by == "rules",
+                                                     LiquidityEvent.superseded_utc.is_(None)).all():
+        if row.id in kept_ids:
+            continue
+        srcs = json.loads(row.sources_json or "[]")
+        if url not in {x.get("url") for x in srcs}:
+            continue
+        rest = [x for x in srcs if x.get("url") != url]
+        if rest:
+            row.sources_json = json.dumps(rest)
+        else:
+            row.superseded_utc = now
+            row.superseded_reason = f"an AI reader read {url} and did not report this"
+            n += 1
+    session.flush()
+    return n
 
 
 # ── redundancy: do we already hold this fact in BB's own data? ────────────────
@@ -341,7 +438,8 @@ def redundancy(session, ev: Dict, article: Dict) -> Optional[str]:
     if ev["kind"] in ("BB_FX_BUY", "BB_FX_SELL"):
         lo, hi = within(3)
         n = session.execute(text("SELECT COUNT(*) FROM fx_auction_results WHERE auction_date "
-                                 "BETWEEN :a AND :b"), {"a": lo, "b": hi}).scalar()
+                                 "BETWEEN :a AND :b AND LOWER(auction_type) = :t"),
+                            {"a": lo, "b": hi, "t": "buy" if ev["kind"] == "BB_FX_BUY" else "sell"}).scalar()
         if n:
             return "fx_auction_results"
     if "buyback" in low or "buy-back" in low:

@@ -36,23 +36,40 @@ def load_llm_settings(path: str = _ENV, env=None) -> dict:
     return got
 
 
-def lift_rule_reads(session, now=None, days: int = 3) -> int:
+LIFT_MAX_ARTICLES = 30
+
+
+def lift_rule_reads(session, now=None, days: int = 3, max_articles: int = LIFT_MAX_ARTICLES) -> int:
     """Hand the articles the free rule reader read while this computer was off to the model.
 
     The workflow keeps reading in the background with rules when the PC is off; when it is on
-    again the better reader takes a second look at the recent ones. Events the rules already
-    found merge with what the model reports (same kind, counterparty and amount), so nothing is
-    counted twice. Bounded to `days`, because the daily call cap is a money cap."""
+    again the better reader takes a second look. A rule-read event is only a LEAD until then (never summed,
+    never announced), so every article behind an unconfirmed lead is queued however old it is - bounded by
+    COUNT, not age, because the daily call cap is a money cap - plus the rule-read articles of the last `days`.
+    The model's reading confirms an agreeing lead and retires the rest (liquidity_news.supersede_rule_reads)."""
     import datetime
+    import json
 
     from sqlalchemy import text
 
+    from db import LiquidityEvent, NewsArticle
     from engines import news_rules
     now = now or datetime.datetime.utcnow()
-    return session.execute(text(
-        "UPDATE news_articles SET triage_status = 'untriaged' WHERE triage_model = :m "
-        "AND body_text IS NOT NULL AND fetched_utc >= :s"),
-        {"m": news_rules.RULES_MODEL, "s": now - datetime.timedelta(days=days)}).rowcount
+    urls = []
+    for ev in session.query(LiquidityEvent).filter(LiquidityEvent.verified_by == "rules",
+                                                   LiquidityEvent.superseded_utc.is_(None)).all():
+        urls += [x.get("url") for x in json.loads(ev.sources_json or "[]") if x.get("url")]
+    recent = [u for (u,) in session.query(NewsArticle.url).filter(
+        NewsArticle.triage_model == news_rules.RULES_MODEL, NewsArticle.body_text.isnot(None),
+        NewsArticle.fetched_utc >= now - datetime.timedelta(days=days)).all()]
+    todo = list(dict.fromkeys(urls + recent))[:max_articles]
+    n = 0
+    for a in session.query(NewsArticle).filter(NewsArticle.url.in_(todo)).all() if todo else []:
+        if a.triage_status != "untriaged":
+            a.triage_status = "untriaged"
+            n += 1
+    session.flush()
+    return n
 
 
 def main(argv=None) -> int:

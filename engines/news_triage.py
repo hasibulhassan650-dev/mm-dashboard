@@ -174,7 +174,7 @@ def extract(client, article: Dict) -> List[Dict]:
 # ── the run ───────────────────────────────────────────────────────────────────
 def _article_dict(a) -> Dict:
     return {"url": a.url, "source": a.source, "title": a.title, "summary": a.summary,
-            "body_text": a.body_text, "published_utc": a.published_utc}
+            "body_text": a.body_text, "published_utc": a.published_utc, "fetched_utc": a.fetched_utc}
 
 
 def ingest_items(session, source_key: str, items: List[Dict], now: datetime.datetime,
@@ -213,9 +213,14 @@ def calls_today(session, now: datetime.datetime) -> int:
 
 
 def _store_events(session, raw_events, art: Dict, now: datetime.datetime, stats: Dict,
-                  verified_by: str, url: str) -> None:
+                  verified_by: str, url: str) -> List[int]:
     """Validate what a reader reported and store what survives. Shared by the Claude reader and
-    the rule reader, so both are held to exactly the same checks."""
+    the rule reader, so both are held to exactly the same checks.
+
+    Returns the ids of the events that article produced. After an AI reader, the rule reader's other leads from the
+    same article are superseded (L.supersede_rule_reads): the stronger reading replaces them rather than sitting
+    beside them."""
+    kept: List[int] = []
     for raw in raw_events:
         ev, why = L.validate_event(raw, art)
         if ev is None:
@@ -226,7 +231,12 @@ def _store_events(session, raw_events, art: Dict, now: datetime.datetime, stats:
         row, how = L.merge_or_create(session, ev, art, now, verified_by=verified_by)
         if red and not row.redundant_with:
             row.redundant_with = red
+        kept.append(row.id)
         stats["events_created" if how == "created" else "events_merged"] += 1
+    if verified_by != "rules":
+        stats["rule_leads_superseded"] = stats.get("rule_leads_superseded", 0) + \
+            L.supersede_rule_reads(session, url, kept, now)
+    return kept
 
 
 def triage_pending(session, client, now: datetime.datetime,

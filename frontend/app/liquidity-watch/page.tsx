@@ -166,6 +166,38 @@ export default async function LiquidityWatchPage({
           </div>
         </Panel>
 
+        {(feed.unconfirmed ?? []).length > 0 && (
+          <Panel title="Unconfirmed leads"
+                 sub={`${feed.unconfirmed!.length} read only by the free rule reader · not counted, not announced`}
+                 span={12} pad={false}>
+            <div className="table-wrap" style={{ maxHeight: 320, overflowY: "auto" }}>
+              <table className="dt">
+                <thead><tr><th>Date</th><th>Event</th><th className="r">Amount (cr)</th><th>Who</th><th>What the article says</th><th>Source</th></tr></thead>
+                <tbody>
+                  {feed.unconfirmed!.map((e) => (
+                    <tr key={e.id} style={{ opacity: 0.85 }}>
+                      <td className="mono">{e.when ?? "—"}</td>
+                      <td>{KIND_LABEL[e.kind] ?? e.kind}<div style={{ fontSize: 10, color: "var(--warn)" }}>lead — unconfirmed</div></td>
+                      <td className="r mono">{e.amount_crore == null ? <span style={{ color: "var(--fg-mute)" }}>not stated</span> : fmt(e.amount_crore)}</td>
+                      <td style={{ whiteSpace: "normal", maxWidth: 150, padding: "6px var(--pad)" }}>{e.counterparty ?? "—"}</td>
+                      <td style={{ whiteSpace: "normal", maxWidth: 480, padding: "6px var(--pad)", lineHeight: 1.5, fontStyle: "italic" }}>“{e.evidence_quote}”</td>
+                      <td style={{ whiteSpace: "normal", padding: "6px var(--pad)" }}>
+                        {e.sources.slice(0, 2).map((s, i) => (
+                          <div key={i}><a href={s.url} target="_blank" rel="noreferrer"
+                            style={{ fontSize: 11, textDecoration: "none", color: "var(--info)" }}>{s.source}</a></div>
+                        ))}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ padding: "8px 12px", fontSize: 11.5, color: "var(--fg-mute)", borderTop: "1px solid var(--border)", lineHeight: 1.75 }}>
+              {feed.unconfirmed_note} Each becomes a confirmed event, or disappears, the next time the AI reader on your PC reads its article.
+            </div>
+          </Panel>
+        )}
+
         <Panel title="By month" sub="events that matter, with a stated amount · BDT crore" span={6} pad={false}>
           <div className="table-wrap">
             <table className="dt">

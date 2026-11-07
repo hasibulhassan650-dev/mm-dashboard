@@ -731,7 +731,12 @@ class LiquidityEvent(Base):
     first_seen_utc  = Column(DateTime)
     updated_utc     = Column(DateTime)
     notified_utc    = Column(DateTime)
-    verified_by     = Column(String(12), default="llm")             # llm | research | human
+    verified_by     = Column(String(12), default="llm")             # rules | llm | claude | research | human
+    # An event read only by the rule reader is an UNCONFIRMED lead until an AI reader reads the same article
+    # (engines/liquidity_news.py CONFIRMED_SQL). Superseded = a stronger reader read the article and did not report it.
+    confirmed_utc   = Column(DateTime)
+    superseded_utc  = Column(DateTime)
+    superseded_reason = Column(Text)
 
 
 class LiquidityEventHistory(Base):
@@ -1055,6 +1060,9 @@ def init_db():
         "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS offered_bdt_crore REAL",
         "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS net_bdt_crore REAL",
         "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS printed_totals TEXT",
+        "ALTER TABLE liquidity_events ADD COLUMN IF NOT EXISTS confirmed_utc TIMESTAMP",
+        "ALTER TABLE liquidity_events ADD COLUMN IF NOT EXISTS superseded_utc TIMESTAMP",
+        "ALTER TABLE liquidity_events ADD COLUMN IF NOT EXISTS superseded_reason TEXT",
         "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS source_pub_date DATE",
         "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS source_serial VARCHAR(40)",
         "ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS quality TEXT",
@@ -1075,6 +1083,9 @@ def init_db():
         "ALTER TABLE omo_transactions ADD COLUMN offered_bdt_crore REAL",
         "ALTER TABLE omo_transactions ADD COLUMN net_bdt_crore REAL",
         "ALTER TABLE omo_transactions ADD COLUMN printed_totals TEXT",
+        "ALTER TABLE liquidity_events ADD COLUMN confirmed_utc TIMESTAMP",
+        "ALTER TABLE liquidity_events ADD COLUMN superseded_utc TIMESTAMP",
+        "ALTER TABLE liquidity_events ADD COLUMN superseded_reason TEXT",
         "ALTER TABLE daily_net_flow ADD COLUMN sukuk_inflow_bdt_mill REAL DEFAULT 0",
         "ALTER TABLE holiday_calendar ADD COLUMN evidence_url VARCHAR(400)",
         "ALTER TABLE holiday_calendar ADD COLUMN evidence_quote TEXT",

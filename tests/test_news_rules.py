@@ -179,10 +179,13 @@ class TestNoKeyMeansNoBillNotNoReading:
         T.triage_pending(s, None, NOW, fetch_body=lambda u: None)
         assert T.calls_today(s, NOW) == 0, "rule reads must not count against the paid daily ceiling"
 
-    def test_a_rule_read_event_is_announced_with_a_label_saying_so(self):
+    def test_a_rule_read_event_is_never_announced_or_summed_until_an_ai_reader_confirms_it(self):
+        """Decision of 3-Nov-2026: the rule reader stored a 3,000 crore release as 5,100 and a request as a payment,
+        so what ONLY it read is a lead on the page - not an email, not a total."""
         s = _mem()
         _article(s)
         T.triage_pending(s, None, NOW, fetch_body=lambda u: None)
+        assert s.query(LiquidityEvent).count() >= 1, "the lead is still found and kept"
 
         class Run:
             def __init__(self):
@@ -196,8 +199,10 @@ class TestNoKeyMeansNoBillNotNoReading:
                 return R_()
         r = Run()
         A.publish(s, runner=r, now=NOW)
-        title = [c[c.index("--title") + 1] for c in r.calls if c[1:3] == ["issue", "create"]][0]
-        assert title.startswith("Liquidity news (rule-read):")
+        assert [c for c in r.calls if c[1:3] == ["issue", "create"]] == [], "a lead must not open an issue"
+        blk = NL.news_block(s, today=TODAY)
+        assert blk["totals"]["month_inject_crore"] == 0 and blk["totals"]["fy_inject_crore"] == 0
+        assert blk["events"] == [] and len(blk["unconfirmed"]) >= 1, "listed apart, never counted"
 
     def test_a_key_arriving_later_makes_claude_reread_what_the_rules_read(self):
         from engines import news_backfill as B

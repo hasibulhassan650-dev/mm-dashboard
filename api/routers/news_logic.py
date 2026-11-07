@@ -16,6 +16,11 @@ _COLS = ("id, kind, direction, amount_crore, amount_unverified, is_cumulative, e
          "channel, counterparty, summary, evidence_quote, sources_json, confidence, matters, "
          "redundant_with, first_seen_utc, verified_by")
 
+# An event read ONLY by the free rule reader is an unconfirmed lead: listed apart, never added to a total, never
+# announced, until an AI reader confirms it. api/ cannot import engines/, so this is a copy of
+# engines/liquidity_news.CONFIRMED_SQL; tests/test_news_unconfirmed.py fails if the two ever differ.
+CONFIRMED_SQL = "COALESCE(verified_by, 'llm') <> 'rules' AND superseded_utc IS NULL"
+
 
 def _d(v) -> Optional[datetime.date]:
     if v is None:
@@ -54,10 +59,14 @@ def news_block(session, today: datetime.date = None, days: int = 120,
                show_redundant: bool = False, show_minor: bool = False, limit: int = 300) -> Dict:
     today = today or datetime.date.today()
     since = today - datetime.timedelta(days=days)
-    rows = [_row(r) for r in session.execute(text(
-        f"SELECT {_COLS} FROM liquidity_events ORDER BY COALESCE(event_date, announced_date) DESC, id DESC"
+    allrows = [_row(r) for r in session.execute(text(
+        f"SELECT {_COLS} FROM liquidity_events WHERE superseded_utc IS NULL "
+        "ORDER BY COALESCE(event_date, announced_date) DESC, id DESC"
     )).fetchall()]
-    rows = [r for r in rows if r["when"] and r["when"] >= str(since)]
+    allrows = [r for r in allrows if r["when"] and r["when"] >= str(since)]
+    # Rule-read leads are shown in their own list and take no part in any figure below.
+    unconfirmed = [r for r in allrows if r["verified_by"] == "rules" and not r["redundant_with"]]
+    rows = [r for r in allrows if r["verified_by"] != "rules"]
 
     counted = [r for r in rows if r["matters"] and not r["redundant_with"]
                and r["direction"] in ("INJECT", "ABSORB")]
@@ -109,6 +118,7 @@ def news_block(session, today: datetime.date = None, days: int = 120,
             # events that matter but state no taka amount: counted as events, never as zero
             "events_without_amount": sum(1 for r in counted if r["amount_crore"] is None),
             "events_cumulative": sum(1 for r in counted if r["is_cumulative"]),
+            "events_unconfirmed": len(unconfirmed),
         },
         "monthly": [monthly[k] for k in sorted(monthly)],
         "hidden": {"redundant": sum(1 for r in rows if r["redundant_with"]),
@@ -121,6 +131,10 @@ def news_block(session, today: datetime.date = None, days: int = 120,
         },
         "count": len(shown),
         "events": shown[:limit],
+        "unconfirmed": unconfirmed[:50],
+        "unconfirmed_note": ("Read only by the free rule reader: leads, not figures. They are not counted, not "
+                             "announced and not in any total until an AI reader reads the same article and "
+                             "confirms them."),
         "note": ("Read from the press by a language model, then checked by code: the quote must be in "
                  "the article and the amount is re-read from it. NOT Bangladesh Bank data and NOT "
                  "included in any ladder, cumulative or model total."),
@@ -132,4 +146,4 @@ def events_on(session, day) -> List[Dict]:
     d = str(_d(day))
     return [_row(r) for r in session.execute(text(
         f"SELECT {_COLS} FROM liquidity_events WHERE matters IS TRUE AND redundant_with IS NULL "
-        "AND COALESCE(event_date, announced_date) = :d ORDER BY id"), {"d": d}).fetchall()]
+        f"AND {CONFIRMED_SQL} AND COALESCE(event_date, announced_date) = :d ORDER BY id"), {"d": d}).fetchall()]
