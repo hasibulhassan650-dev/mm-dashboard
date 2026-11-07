@@ -371,8 +371,9 @@ def run(session, client=None, now: datetime.datetime = None, sources: Optional[L
     now = now or datetime.datetime.utcnow()
     fetch_listing = fetch_listing or N.fetch_listing
     fetch_body = fetch_body or N.fetch_body
+    from db import NewsSourceRun
     out = {"sources": {}, "new_articles": 0, "problems": []}
-    for src in (sources if sources is not None else N.NEWS_SOURCES):
+    for src in (sources if sources is not None else N.active_sources()):
         res = fetch_listing(src)
         if res.get("meta"):
             try:
@@ -382,7 +383,16 @@ def run(session, client=None, now: datetime.datetime = None, sources: Optional[L
         if res.get("error") and not res["items"]:
             out["problems"].append(f"{src['key']}: {res['error']}")
         out["sources"][src["key"]] = len(res["items"])
-        out["new_articles"] += ingest_items(session, src["key"], res["items"], now, since)
+        new = ingest_items(session, src["key"], res["items"], now, since)
+        out["new_articles"] += new
+        # The outcome of EVERY source on EVERY run, unreachable ones included: this is what the alarms read.
+        newest = max((i["published_utc"] for i in res["items"] if i.get("published_utc")), default=None)
+        session.add(NewsSourceRun(source=src["key"], machine=N.machine(), run_utc=now, ok=bool(res["items"]),
+                                  items=len(res["items"]), new_items=new, newest_utc=newest,
+                                  error=(res.get("error") or None)))
+        session.commit()                       # a run killed later still keeps what it read
+    # a month of history is plenty for the alarms; the table must not grow for ever
+    session.query(NewsSourceRun).filter(NewsSourceRun.run_utc < now - datetime.timedelta(days=30)).delete()
     out["triage"] = triage_pending(session, client, now, fetch_body)
     session.commit()
     return out

@@ -1191,14 +1191,23 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
         # if the watch stops, no event arrives and the page looks calm. So the page
         # of events is judged by the watch's own heartbeat, not by what it found.
         try:
-            last = q("SELECT MAX(fetched_utc) FROM news_articles")
-            last = last[0][0] if last else None
+            # The heartbeat is the last RUN, not the newest article: a quiet newsroom is not a dead watch, and a
+            # watch that ran and found nothing new is alive. (Runs are recorded per source; before the first
+            # recorded run the newest article stands in.)
+            try:
+                last = q("SELECT MAX(run_utc) FROM news_source_runs")[0][0]
+            except Exception:
+                s.rollback()
+                last = None
+            if last is None:
+                last = q("SELECT MAX(fetched_utc) FROM news_articles")
+                last = last[0][0] if last else None
             if last is not None:
                 if not hasattr(last, "year"):
                     last = datetime.datetime.fromisoformat(str(last)[:19])
                 age_h = (datetime.datetime.utcnow() - last).total_seconds() / 3600.0
                 if age_h > 6:
-                    add("news-watch", f"the liquidity news watch has not read an article for "
+                    add("news-watch", f"the liquidity news watch has not run for "
                                       f"{age_h:.0f}h - events in the press are not being caught")
             else:
                 add("news-watch", "the liquidity news watch has never run", "notice")
@@ -1208,6 +1217,38 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
             if backlog and backlog[0][0] and backlog[0][0] > 20:
                 add("news-watch", f"{backlog[0][0]} news articles have waited over 2h for Claude to "
                                   f"read them - ANTHROPIC_API_KEY is missing or the calls are failing")
+        except Exception:
+            s.rollback()
+
+        # ── every news source must be read by SOMEONE, and must still be moving ──
+        # The fingerprint cannot see a source that could not be reached (transport failures are never stored
+        # there) and a feed that freezes and serves the same items for ever looks "ok". news_source_runs records
+        # every source on every run from both machines, so: not read by ANY machine for 24h is a defect (a site
+        # that blocks GitHub's address but not the PC is fine while the PC reads it); no new item for 72h is a
+        # notice (72, not 24, so a Friday-Saturday weekend is not a frozen feed).
+        try:
+            from fetchers.news import active_sources
+            _now = datetime.datetime.utcnow()
+            _has_runs = q("SELECT COUNT(*) FROM news_source_runs")[0][0]
+            for _src in (active_sources() if _has_runs else []):
+                _k = _src["key"]
+                _ok = q("SELECT MAX(run_utc), MAX(newest_utc) FROM news_source_runs WHERE source = :k AND ok", k=_k)[0]
+                _first = q("SELECT MIN(run_utc) FROM news_source_runs WHERE source = :k", k=_k)[0][0]
+                _err = q("SELECT error FROM news_source_runs WHERE source = :k AND NOT ok "
+                         "ORDER BY run_utc DESC LIMIT 1", k=_k)
+                _asdt = lambda v: v if (v is None or hasattr(v, "year")) else datetime.datetime.fromisoformat(str(v)[:19])
+                _last_ok, _newest, _first = _asdt(_ok[0]), _asdt(_ok[1]), _asdt(_first)
+                if _first is None:
+                    continue
+                _why = f" (last error: {_err[0][0]})" if _err and _err[0][0] else ""
+                if _last_ok is None:
+                    if (_now - _first).total_seconds() > 24 * 3600:
+                        add("news-source", f"{_k}: never read by any machine in {(_now - _first).total_seconds() / 3600:.0f}h{_why}")
+                elif (_now - _last_ok).total_seconds() > 24 * 3600:
+                    add("news-source", f"{_k}: no machine has read it for {(_now - _last_ok).total_seconds() / 3600:.0f}h{_why}")
+                elif _newest is not None and (_now - _newest).total_seconds() > 72 * 3600:
+                    add("news-source", f"{_k}: still answering but its newest item is {(_now - _newest).total_seconds() / 3600:.0f}h old "
+                                       f"- the feed may be frozen", "notice")
         except Exception:
             s.rollback()
 

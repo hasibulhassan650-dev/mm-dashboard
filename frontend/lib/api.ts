@@ -476,7 +476,10 @@ export interface NewsFeed {
   monthly: { month: string; inject_crore: number; absorb_crore: number; events: number }[];
   hidden: { redundant: number; minor: number };
   health: { last_fetch_utc: string | null; articles_waiting_for_claude: number;
-            articles_by_status: Record<string, number>; reader?: "rules" | "claude" | "llm" | "none yet" };
+            articles_by_status: Record<string, number>; reader?: "rules" | "claude" | "llm" | "none yet";
+            /** the latest run of every source, from both machines (older APIs omit it) */
+            sources?: { source: string; last_run_utc: string; machine: string | null; ok: boolean; items: number;
+                        error: string | null; last_ok_utc: string | null; newest_item_utc: string | null }[] };
   events: NewsEvent[];
   /** read only by the free rule reader: leads, never counted, announced or summed. Older APIs omit it. */
   unconfirmed?: NewsEvent[]; unconfirmed_note?: string;

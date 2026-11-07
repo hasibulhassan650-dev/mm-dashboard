@@ -308,7 +308,7 @@ def compare(prev: Optional[dict], cur: dict) -> Tuple[str, List[str]]:
     pp, cp = prev.get("rows_parsed") or 0, cur.get("rows_parsed") or 0
     if pp >= 3 and cp == 0:
         degraded.append(f"parsed 0 rows where this source last parsed {pp}")
-    elif (pp >= 4 and cp < pp * 0.5 and cur.get("selector") != "rss item"
+    elif (pp >= 4 and cp < pp * 0.5 and cur.get("selector") not in ("rss item", "news sitemap url")
           and cur.get("source") not in COUNT_IS_VOLUME):
         # (a feed lists the latest N items, so its size swings with the newsroom's day; only a feed
         # that parses NOTHING is evidence of a changed format, and the branch above still catches it)

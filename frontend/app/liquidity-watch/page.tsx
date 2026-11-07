@@ -228,10 +228,28 @@ export default async function LiquidityWatchPage({
               Reader: {h.reader === "claude" ? "Claude (verified by code)" : h.reader === "llm"
                 ? "a free-tier language model (verified by the same code; the rule reader covers any call that fails)" : h.reader === "rules"
                 ? "free rule reader (verified by the same code; Claude reads more when a key is added)" : "none yet"}.{" "}
-              Last read: {lastIso ? lastIso.replace("T", " ").replace("Z", "") : "never"} (UTC). Sources: The Daily Star, The Business Standard,
-              Prothom Alo English, Dhaka Tribune, The Daily Observer. Bangladesh Bank&apos;s own releases are on the
-              Press Releases page.
+              Last run: {lastIso ? lastIso.replace("T", " ").replace("Z", "") : "never"} (UTC). Bangladesh Bank&apos;s own
+              releases are on the Press Releases page.
             </div>
+            {(h.sources ?? []).length > 0 && (
+              <div style={{ marginTop: 10, fontSize: 11.5 }}>
+                <div style={{ color: "var(--fg-mute)", marginBottom: 4 }}>
+                  Every source, as of its latest run. A source nobody has read for a day is reported as a defect.
+                </div>
+                {h.sources!.map((s) => (
+                  <div key={s.source} style={{ display: "flex", gap: 8, justifyContent: "space-between", padding: "2px 0" }}>
+                    <span className="mono" style={{ color: s.ok ? "var(--fg)" : "var(--warn)" }}>
+                      {s.ok ? "●" : "○"} {s.source}
+                    </span>
+                    <span style={{ color: "var(--fg-mute)", textAlign: "right" }}>
+                      {s.ok ? `${s.items} items · newest ${(s.newest_item_utc ?? "").slice(0, 16).replace("T", " ") || "—"}`
+                            : `${s.error ?? "not read"}${s.last_ok_utc ? ` · last read ${s.last_ok_utc.slice(0, 16)}` : " · never read"}`}
+                      {s.machine ? ` · ${s.machine}` : ""}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </Panel>
       </div>

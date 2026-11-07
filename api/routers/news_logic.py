@@ -95,7 +95,26 @@ def news_block(session, today: datetime.date = None, days: int = 120,
 
     shown = [r for r in rows if (show_minor or r["matters"]) and (show_redundant or not r["redundant_with"])]
 
-    last = session.execute(text("SELECT MAX(fetched_utc) FROM news_articles")).scalar()
+    # the heartbeat is the last RUN (recorded per source), falling back to the newest article before the first one
+    sources = []
+    try:
+        last = session.execute(text("SELECT MAX(run_utc) FROM news_source_runs")).scalar()
+        for src, run_utc, machine, ok, items, err in session.execute(text(
+                "SELECT r.source, r.run_utc, r.machine, r.ok, r.items, r.error FROM news_source_runs r "
+                "JOIN (SELECT source, MAX(run_utc) AS m FROM news_source_runs GROUP BY source) x "
+                "ON x.source = r.source AND x.m = r.run_utc ORDER BY r.source")).fetchall():
+            ok_row = session.execute(text(
+                "SELECT MAX(run_utc), MAX(newest_utc) FROM news_source_runs WHERE source = :s AND ok"),
+                {"s": src}).fetchone()
+            sources.append({"source": src, "last_run_utc": str(run_utc), "machine": machine, "ok": bool(ok),
+                            "items": items, "error": err,
+                            "last_ok_utc": str(ok_row[0]) if ok_row and ok_row[0] else None,
+                            "newest_item_utc": str(ok_row[1]) if ok_row and ok_row[1] else None})
+    except Exception:
+        session.rollback()
+        last = None
+    if last is None:
+        last = session.execute(text("SELECT MAX(fetched_utc) FROM news_articles")).scalar()
     waiting = session.execute(text(
         "SELECT COUNT(*) FROM news_articles WHERE triage_status IN ('untriaged', 'error')")).scalar() or 0
     counts = {k: n for k, n in session.execute(text(
@@ -125,6 +144,7 @@ def news_block(session, today: datetime.date = None, days: int = 120,
                    "minor": sum(1 for r in rows if not r["matters"] and not r["redundant_with"])},
         "health": {
             "last_fetch_utc": str(last) if last else None,
+            "sources": sources,
             "reader": reader,
             "articles_waiting_for_claude": int(waiting),
             "articles_by_status": counts,

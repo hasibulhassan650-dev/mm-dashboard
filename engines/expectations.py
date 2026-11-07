@@ -232,6 +232,8 @@ NOT_WATCHED: Dict[str, str] = {
                   "auction day; not a BB feed, so it cannot go stale",
     "news_articles": "every article the Liquidity Watch read, stored with its filter "
                      "score; freshness is checked by a dedicated heartbeat, not a cadence",
+    "news_source_runs": "the Liquidity Watch's own per-source heartbeat; judged by dedicated "
+                        "news-source checks in validate.py, not by a cadence",
     "liquidity_events": "events reported in the news that BB's data does not hold; "
                         "an event feed, so silence is normal",
     "liquidity_event_history": "append-only record of how a news event changed",

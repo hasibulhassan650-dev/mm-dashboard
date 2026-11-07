@@ -235,7 +235,13 @@ def news_digest_lines(session, now: datetime.datetime = None, hours: int = 24):
         "AND matters IS TRUE AND redundant_with IS NULL")).scalar() or 0
     if leads:
         out.append(f"- {leads} rule-read lead(s) await an AI reader: shown on the page, not counted, not announced")
-    last = session.execute(text("SELECT MAX(fetched_utc) FROM news_articles")).scalar()
+    try:
+        last = session.execute(text("SELECT MAX(run_utc) FROM news_source_runs")).scalar()
+    except Exception:
+        session.rollback()
+        last = None
+    if last is None:                       # before the first recorded run the newest article stands in
+        last = session.execute(text("SELECT MAX(fetched_utc) FROM news_articles")).scalar()
     if last is None or (now - _as_dt(last)).total_seconds() > 6 * 3600:
         problems.append("the liquidity news watch has not run for 6h+")
         out.append("**The news watch has not read anything for 6h or more.**")

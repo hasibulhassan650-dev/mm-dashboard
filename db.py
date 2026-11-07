@@ -698,6 +698,25 @@ class NewsArticle(Base):
     triage_json    = Column(Text)                                  # what the model returned, verbatim
 
 
+class NewsSourceRun(Base):
+    """One source, one run, one outcome - including the sources that could NOT be reached.
+
+    source_watch fingerprints a page's layout, but a transport failure is deliberately never stored there, so a feed
+    that returned 403 to one machine for a week left no trace. This table is the Liquidity Watch's own heartbeat:
+    the alarms read it (a source no machine has read for 24h, a feed that has frozen, a run that never finished)
+    rather than inferring the watch's health from how many articles it happened to find."""
+    __tablename__ = "news_source_runs"
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    source     = Column(String(60), nullable=False, index=True)
+    machine    = Column(String(12))                       # pc | github
+    run_utc    = Column(DateTime, nullable=False, index=True)
+    ok         = Column(Boolean, default=False)           # the listing was read and held items
+    items      = Column(Integer, default=0)
+    new_items  = Column(Integer, default=0)
+    newest_utc = Column(DateTime)                         # the newest item's publication time
+    error      = Column(Text)
+
+
 class LiquidityEvent(Base):
     """A liquidity event reported in the news that BB's own data does not hold.
 

@@ -46,7 +46,7 @@ def _article(s, hours_ago, status="extracted", url="u"):
 class TestNewsHeartbeat:
     def test_a_watch_that_stopped_is_a_defect(self, monkeypatch):
         rep = _check(monkeypatch, lambda s: _article(s, 9))
-        assert any("has not read an article for" in i for i in _mine(rep, "news-watch"))
+        assert any("has not run for" in i for i in _mine(rep, "news-watch"))
 
     def test_a_running_watch_is_clean(self, monkeypatch):
         rep = _check(monkeypatch, lambda s: _article(s, 1))
