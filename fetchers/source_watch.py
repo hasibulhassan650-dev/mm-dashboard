@@ -253,6 +253,13 @@ def _skip_rate(snap: dict) -> float:
     return (snap.get("rows_skipped") or 0) / seen if seen else 0.0
 
 
+# Sources whose page is ONE MONTH of auctions: rows_seen is how many auctions that month had (3 to 19), and a
+# refresh reads several months, so two snapshots are rarely the same month. "Less than half the rows last seen"
+# paged on exactly that - 5 auctions in 1-7 November against a busy October's 19, the layout byte-for-byte
+# unchanged. Their format is judged by the layout hash, the skip rate and parsing nothing at all.
+COUNT_IS_VOLUME = {"treasury"}
+
+
 def compare(prev: Optional[dict], cur: dict) -> Tuple[str, List[str]]:
     """Two tiers, deliberately.
 
@@ -301,7 +308,8 @@ def compare(prev: Optional[dict], cur: dict) -> Tuple[str, List[str]]:
     pp, cp = prev.get("rows_parsed") or 0, cur.get("rows_parsed") or 0
     if pp >= 3 and cp == 0:
         degraded.append(f"parsed 0 rows where this source last parsed {pp}")
-    elif pp >= 4 and cp < pp * 0.5 and cur.get("selector") != "rss item":
+    elif (pp >= 4 and cp < pp * 0.5 and cur.get("selector") != "rss item"
+          and cur.get("source") not in COUNT_IS_VOLUME):
         # (a feed lists the latest N items, so its size swings with the newsroom's day; only a feed
         # that parses NOTHING is evidence of a changed format, and the branch above still catches it)
         degraded.append(f"parsed {cp} rows, less than half the {pp} last seen")

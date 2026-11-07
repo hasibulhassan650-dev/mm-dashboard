@@ -484,3 +484,25 @@ class TestOmoCountsAreComparableAcrossWindows:
         a = SW.fingerprint("omo_press", selector="a", rows_seen=ok["rows_seen"], rows_parsed=ok["rows_parsed"])
         b = SW.fingerprint("omo_press", selector="a", rows_seen=broken["rows_seen"], rows_parsed=broken["rows_parsed"])
         assert SW.compare(a, b)[0] == "degraded"
+
+
+class TestAThinMonthIsNotAFormatChange:
+    """7-Nov-2026 paged 'treasury: BB's page changed AND the parse got worse - parsed 5 rows, less than half the 19
+    last seen' for days. The layout hash had not moved since 15-Oct, nothing was skipped: 5 is simply the auctions
+    held in 1-7 November, read after a busy month's 19."""
+
+    def test_fewer_auctions_on_an_unchanged_layout_is_ok(self):
+        busy = SW.fingerprint("treasury", rows_seen=19, rows_parsed=19)
+        thin = SW.fingerprint("treasury", rows_seen=5, rows_parsed=5)
+        assert SW.compare(busy, thin) == ("ok", [])
+
+    def test_parsing_nothing_from_a_page_that_used_to_parse_is_still_a_finding(self):
+        busy = SW.fingerprint("treasury", rows_seen=19, rows_parsed=19)
+        dead = SW.fingerprint("treasury", rows_seen=19, rows_parsed=0)
+        assert SW.compare(busy, dead)[0] == "degraded"
+
+    def test_other_sources_keep_the_half_rows_rule(self):
+        """Only a one-month-per-page source is exempt; a source with a fixed window dropping rows is still a finding."""
+        before = SW.fingerprint("callmoney", rows_seen=40, rows_parsed=40)
+        after = SW.fingerprint("callmoney", rows_seen=40, rows_parsed=6, skips={"bad": 34})
+        assert SW.compare(before, after)[0] == "degraded"
