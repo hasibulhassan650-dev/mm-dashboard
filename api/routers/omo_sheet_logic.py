@@ -21,6 +21,7 @@ Self-contained: the deployed API is rooted at api/ and cannot import anything ab
 import datetime
 import io
 import json
+import re
 from typing import Any, Dict, List, Optional
 
 from openpyxl import Workbook
@@ -45,6 +46,13 @@ def tenor_label(days: Optional[int]) -> str:
     if days is None:
         return ""
     return f"{days}-Day" if days == 1 else f"{days}-Days"
+
+
+def _printed_days(r: Dict[str, Any]) -> Optional[int]:
+    """The tenor as BB PRINTED it ('7D' -> 7). A stored tenor_days can differ when BB's own later maturity print proved
+    the printed tenor wrong (known_absences.yaml `tenor_corrections`); the desk's sheet shows what BB printed."""
+    m = re.match(r"^(\d+)D$", str(r.get("tenor_label") or ""))
+    return int(m.group(1)) if m else r.get("tenor_days")
 
 
 def _rate_cell(rows: List[Dict[str, Any]]):
@@ -80,7 +88,7 @@ def day_block(rows: List[Dict[str, Any]], day: datetime.date) -> Dict[str, Any]:
     offered_bdt_crore, accepted_bdt_crore, maturity_bdt_crore, net_bdt_crore, rate_pct, rate_range, direction."""
     order: Dict[Any, List[Dict[str, Any]]] = {}
     for r in sorted(rows, key=lambda x: x.get("id") or 0):          # insertion order is BB's print order
-        order.setdefault((r["instrument"], r.get("tenor_days")), []).append(r)
+        order.setdefault((r["instrument"], _printed_days(r)), []).append(r)
 
     lines, unread = [], False
     for (inst, tenor), grp in order.items():

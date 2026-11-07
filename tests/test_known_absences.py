@@ -209,3 +209,73 @@ class TestABBPrintErrorIsReportedNotHidden:
         from engines.absences import known_print_errors
         e = [x for x in known_print_errors() if x["instrument"] == "AR"]
         assert e and e[0]["date"] == datetime.date(2026, 10, 29) and e[0]["reason"]
+
+
+class TestATenorBBsOwnMaturityPrintContradicts:
+    """25-Oct-2026: BB printed "CB Repo 7-Days 15,861.75", then printed that same tranche maturing two days later
+    (15,870.00 = principal + 2 days' profit at 9.50%). Stored as 7 days it was counted as outstanding for five days
+    it no longer existed, and the ledger blamed the wrong day. The correction is arithmetic on BB's own figures."""
+
+    DEAL = TODAY - datetime.timedelta(days=12)
+    TRUE = TODAY - datetime.timedelta(days=10)
+    STORED = TODAY - datetime.timedelta(days=5)
+
+    def _world(self):
+        eng, s = _mem()
+        old = TODAY - datetime.timedelta(days=300)
+        s.add(OMOTransaction(transaction_date=old, maturity_date=old, instrument="SDF", tenor_label="1D", tenor_days=1,
+                             accepted_bdt_crore=1.0, maturity_bdt_crore=0.0, rate_pct=7.5, direction="ABSORPTION"))
+        s.add(OMOTransaction(transaction_date=self.DEAL, maturity_date=self.STORED, instrument="CB_REPO", tenor_label="7D",
+                             tenor_days=7, accepted_bdt_crore=15861.75, maturity_bdt_crore=0.0, rate_pct=9.5,
+                             direction="INJECTION"))
+        # BB's later print of what matured: principal plus TWO days' profit
+        s.add(OMOTransaction(transaction_date=self.TRUE, maturity_date=self.TRUE, instrument="CB_REPO", tenor_label="7D",
+                             tenor_days=7, accepted_bdt_crore=0.0, maturity_bdt_crore=15870.00, rate_pct=9.5,
+                             direction="INJECTION"))
+        s.commit()
+        return eng, s
+
+    def _entries(self):
+        return [{"dataset": "omo", "instrument": "CB_REPO", "deal_date": self.DEAL, "accepted_crore": 15861.75,
+                 "true_maturity": self.TRUE, "reason": "BB printed its maturity two days later"}]
+
+    def _issues(self, monkeypatch, eng):
+        import validate
+        monkeypatch.setattr(validate, "get_session", lambda: sessionmaker(bind=eng)())
+        return [i for i in validate.integrity_check(limit_per_rule=200)["issues"] if i.startswith("omo-ledger")]
+
+    def test_uncorrected_the_ledger_fails(self, monkeypatch):
+        eng, s = self._world()
+        assert self._issues(monkeypatch, eng), "stored as 7 days it disagrees with BB's own maturity print"
+
+    def test_corrected_the_ledger_agrees_with_bb_on_both_days(self, monkeypatch):
+        import engines.absences as A
+        eng, s = self._world()
+        monkeypatch.setattr(A, "known_tenor_corrections", lambda path=None: self._entries())
+        done = A.sync_tenor_corrections(s)
+        s.commit()
+        assert len(done["corrected"]) == 1
+        row = s.query(OMOTransaction).filter_by(instrument="CB_REPO", accepted_bdt_crore=15861.75).one()
+        assert row.maturity_date == self.TRUE and row.tenor_days == 2
+        assert row.tenor_label == "7D", "the tenor BB PRINTED stays what BB printed"
+        assert self._issues(monkeypatch, eng) == []
+
+    def test_a_reread_of_the_pdf_cannot_bring_the_printed_tenor_back(self):
+        import engines.absences as A
+        txn = {"instrument": "CB_REPO", "transaction_date": self.DEAL, "accepted_bdt_crore": 15861.75,
+               "tenor_days": 7, "maturity_date": self.STORED, "tenor_label": "7D"}
+        assert A.apply_tenor_correction(txn, self._entries()) is True
+        assert txn["tenor_days"] == 2 and txn["maturity_date"] == self.TRUE
+        assert A.apply_tenor_correction(txn, self._entries()) is False, "already corrected: nothing to do"
+
+    def test_it_matches_one_tranche_not_every_deal_of_the_instrument(self):
+        import engines.absences as A
+        other = {"instrument": "CB_REPO", "transaction_date": self.DEAL, "accepted_bdt_crore": 9000.0,
+                 "tenor_days": 7, "maturity_date": self.STORED}
+        assert A.apply_tenor_correction(other, self._entries()) is False and other["tenor_days"] == 7
+
+    def test_the_shipped_correction_is_complete_and_the_arithmetic_holds(self):
+        from engines.absences import known_tenor_corrections
+        e = [x for x in known_tenor_corrections() if x["instrument"] == "CB_REPO"]
+        assert e and e[0]["deal_date"] == datetime.date(2026, 10, 25) and e[0]["true_maturity"] == datetime.date(2026, 10, 27)
+        assert abs(e[0]["accepted_crore"] * (1 + 0.095 * 2 / 365) - 15870.00) < 0.05, "BB's printed maturity is 2 days' profit"

@@ -115,3 +115,11 @@ def test_a_printed_total_that_disagrees_with_the_lines_is_flagged_not_trusted():
     sub = next(r for r in b["rows"] if r["instrument"] == "Sub-Total")
     assert sub["accepted"] == 2262.57 and b["mismatch"] == ["Sub-Total offered", "Sub-Total accepted"]
     assert sub["net"] == 2207.43, "the columns that do agree still carry BB's figure"
+
+
+def test_the_sheet_shows_the_tenor_bb_printed_even_when_the_stored_tenor_was_corrected():
+    """25-Oct CB Repo: BB printed 7-Days; its own later maturity print proved 2 days, so tenor_days is 2. The desk's sheet is
+    BB's table, so it still reads 7-Days."""
+    row = dict(R(1, "CB_REPO", 2, 15861.75, 15861.75, 9.5, 10009.01, 5852.73, "INJECTION"), tenor_label="7D")
+    b = day_block([row], datetime.date(2026, 10, 25))
+    assert b["rows"][0]["tenor"] == "7-Days"

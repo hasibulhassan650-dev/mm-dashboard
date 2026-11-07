@@ -733,6 +733,18 @@ def _store_omo_txns(session, txns: list, now: datetime.datetime) -> tuple:
     from collections import defaultdict
     from sqlalchemy import text
 
+    # A tranche whose printed tenor BB's own later maturity print contradicts (data/seeds/known_absences.yaml
+    # `tenor_corrections`): fix the stored row FIRST, then the incoming one, so re-reading the PDF never stores
+    # the printed tenor beside the corrected row. A broken seed must not stop BB's data being stored.
+    try:
+        from engines.absences import apply_tenor_correction, known_tenor_corrections, sync_tenor_corrections
+        sync_tenor_corrections(session)
+        _tc = known_tenor_corrections()
+        for _r in txns:
+            apply_tenor_correction(_r, _tc)
+    except Exception as exc:
+        log.warning("OMO tenor corrections not applied: %s", exc)
+
     def _pub(x) -> datetime.date:
         return x.get("source_pub_date") or datetime.date.min
 

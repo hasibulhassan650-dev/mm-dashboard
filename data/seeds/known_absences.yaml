@@ -59,3 +59,22 @@ print_errors:
     source: https://www.bb.org.bd/mediaroom/press_release/press/pr14359_20261101.pdf
     reason: >-
       BB's 29-Oct release omits the 1-day AR tranche (309.88 cr, pr14357) that matures that day.
+
+# A tranche whose PRINTED tenor BB's own later maturity print contradicts. Not an absent day and not a missing
+# maturity: the deal is stored once, with the maturity date BB's figures prove. Applied to stored rows and to every
+# re-read of the PDF (engines/absences.py), so the printed tenor cannot come back. The printed tenor_label stays.
+tenor_corrections:
+  # pr14340 (as on 25-Oct, a Sunday) prints "CB Repo 7-Days 15,861.75". pr14346 (as on 27-Oct) prints a CB Repo
+  # maturity of 15,870.00 = 15,861.75 + 2 days' profit at 9.50% (15,870.01), and pr14362 (as on 1-Nov), the
+  # date a 7-day tranche would mature, prints only the 1-day Thursday tranche (4,695.51). So it matured 27-Oct.
+  # Left uncorrected it was counted as 15.9k cr of CB Repo outstanding from 27-Oct to 1-Nov (the omo-ledger's
+  # 1-Nov phantom), and the shortfall on 27-Oct was being excused by the 17-Oct absence window.
+  - dataset: omo
+    instrument: CB_REPO
+    deal_date: 2026-10-25
+    accepted_crore: 15861.75
+    true_maturity: 2026-10-27
+    source: https://www.bb.org.bd/mediaroom/press_release/press/pr14340_20261026.pdf
+    reason: >-
+      BB's 27-Oct release prints this tranche maturing 15,870.00 (principal plus 2 days' profit at 9.50%), so it
+      was a 2-day operation although the 25-Oct release prints "7-Days".

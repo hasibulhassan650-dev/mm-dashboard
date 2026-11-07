@@ -285,6 +285,65 @@ def known_print_errors(path: str = None) -> list:
     return out
 
 
+def known_tenor_corrections(path: str = None) -> list:
+    """Tranches whose printed tenor BB's OWN later maturity print contradicts, from known_absences.yaml
+    `tenor_corrections`: {dataset, instrument, deal_date, accepted_crore, true_maturity, reason}.
+
+    The proof is arithmetic on BB's figures, never a guess: the 25-Oct "CB Repo 7-Days 15,861.75" is printed as
+    maturing 15,870.00 on 27-Oct, which is principal plus exactly 2 days' profit at 9.50%. An entry without a
+    reason, a date or an amount, or whose maturity is not after the deal, is dropped."""
+    import os
+
+    import yaml
+    path = path or KNOWN_ABSENCES_PATH
+    if not path or not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh) or {}
+    out = []
+    for e in doc.get("tenor_corrections") or []:
+        deal, mat = _as_date(e.get("deal_date")), _as_date(e.get("true_maturity"))
+        try:
+            amt = float(e.get("accepted_crore"))
+        except (TypeError, ValueError):
+            continue
+        if deal and mat and mat > deal and e.get("instrument") and amt > 0 and (e.get("reason") or "").strip():
+            out.append({"dataset": e.get("dataset") or "omo", "instrument": e["instrument"], "deal_date": deal,
+                        "accepted_crore": amt, "true_maturity": mat, "reason": e["reason"].strip()})
+    return out
+
+
+def apply_tenor_correction(txn: dict, corrections: list) -> bool:
+    """Correct an incoming parsed row in place (so a re-read of BB's PDF cannot resurrect the printed tenor).
+    The printed tenor_label stays as BB wrote it; tenor_days and maturity_date become what BB's own maturity
+    print proves, because the profit, the outstanding and the ladder all key on them."""
+    for c in corrections:
+        if (txn.get("instrument") == c["instrument"] and txn.get("transaction_date") == c["deal_date"]
+                and abs((txn.get("accepted_bdt_crore") or 0) - c["accepted_crore"]) < 0.01):
+            days = (c["true_maturity"] - c["deal_date"]).days
+            if txn.get("maturity_date") == c["true_maturity"] and txn.get("tenor_days") == days:
+                return False
+            txn["maturity_date"], txn["tenor_days"] = c["true_maturity"], days
+            return True
+    return False
+
+
+def sync_tenor_corrections(session, path: str = None) -> dict:
+    """Apply the corrections to rows already stored. Returns {"corrected": [...]}; safe to run every time."""
+    from db import OMOTransaction
+    out = {"corrected": []}
+    for c in known_tenor_corrections(path):
+        days = (c["true_maturity"] - c["deal_date"]).days
+        for row in session.query(OMOTransaction).filter(
+                OMOTransaction.transaction_date == c["deal_date"], OMOTransaction.instrument == c["instrument"]).all():
+            if abs((row.accepted_bdt_crore or 0) - c["accepted_crore"]) >= 0.01:
+                continue
+            if row.maturity_date != c["true_maturity"] or row.tenor_days != days:
+                row.maturity_date, row.tenor_days = c["true_maturity"], days
+                out["corrected"].append(f"{c['instrument']} {c['deal_date']} -> matures {c['true_maturity']}")
+    return out
+
+
 def summary(session, kind: Optional[str] = "bb_omission") -> dict:
     """What is on record, for the digest. Never a bare count: the newest one
     matters, because a cluster of fresh absences is a story about BB."""

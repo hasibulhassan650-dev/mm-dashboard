@@ -307,7 +307,7 @@ def export_daily_sheet(date_from: str = Query(None), date_to: str = Query(None))
         if (hi - lo).days > 366:
             raise HTTPException(status_code=422, detail="at most a year of days in one sheet")
         rows = session.execute(text("""
-            SELECT id, transaction_date, instrument, tenor_days, offered_bdt_crore, accepted_bdt_crore,
+            SELECT id, transaction_date, instrument, tenor_days, tenor_label, offered_bdt_crore, accepted_bdt_crore,
                    maturity_bdt_crore, net_bdt_crore, printed_totals, rate_pct, rate_range, direction
             FROM omo_transactions WHERE transaction_date BETWEEN :lo AND :hi
             ORDER BY transaction_date, id"""), {"lo": str(lo), "hi": str(hi)}).fetchall()

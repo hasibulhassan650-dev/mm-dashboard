@@ -637,10 +637,12 @@ def _run():
 
     # ── 14a. Holes in the record that no fetch can fill, written down with their evidence ──
     try:
-        from engines.absences import sync_known_absences
+        from engines.absences import sync_known_absences, sync_tenor_corrections
         session = get_session()
         try:
             ka = sync_known_absences(session)
+            for line in sync_tenor_corrections(session)["corrected"]:
+                log.warning("OMO tenor corrected from BB's own maturity print: %s", line)
             session.commit()
         finally:
             session.close()
