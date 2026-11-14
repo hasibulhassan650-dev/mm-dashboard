@@ -42,6 +42,28 @@ absences:
       Not read while the page described 29-Oct (held: 28-Oct read on 31-Oct, 1-Nov read on 2-Nov); BB's
       page keeps only the latest day, so it cannot be re-read.
 
+  # Exchange rates for Thursday 5-Nov-2026. The page only ever shows its latest snapshot and describes the
+  # previous business day. Our reads: the 4-Nov snapshot was ingested on 7-Nov 14:50 UTC and the 8-Nov
+  # snapshot on 9-Nov 12:46 UTC; the page described 5-Nov only in between (published the next business day,
+  # Sunday 8-Nov), when no read landed.
+  - dataset: fxrates
+    date: 2026-11-05
+    kind: lost
+    source: https://www.bb.org.bd/en/index.php/econdata/exchangerate
+    reason: >-
+      Not read while the page described 5-Nov (held: 4-Nov read on 7-Nov, 8-Nov read on 9-Nov); BB's page
+      keeps only the latest day, so it cannot be re-read.
+  # Exchange rates for Tuesday 10-Nov-2026. Our reads: the 9-Nov snapshot was ingested on 10-Nov 13:31 UTC and
+  # the 11-Nov snapshot on 12-Nov 15:05 UTC; the page described 10-Nov only in between (published the next
+  # business day, Wednesday 11-Nov), when no read landed.
+  - dataset: fxrates
+    date: 2026-11-10
+    kind: lost
+    source: https://www.bb.org.bd/en/index.php/econdata/exchangerate
+    reason: >-
+      Not read while the page described 10-Nov (held: 9-Nov read on 10-Nov, 11-Nov read on 12-Nov); BB's
+      page keeps only the latest day, so it cannot be re-read.
+
 # A maturity BB's own releases contradict. Not an absent day: the day IS held, and one row of it is
 # short. validate.py's omo-ledger check compares the tranches we hold maturing on a day with BB's printed
 # maturity; when BB's print omits a tranche that BB's own earlier release shows, the check would fail

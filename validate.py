@@ -95,6 +95,10 @@ def _empty_fetches(session) -> dict:
     return out
 
 
+# How long a BGIIB result BB has listed but we hold no figures for may wait on BB before it counts as OUR defect.
+BGIIB_GRACE_DAYS = 5
+
+
 def integrity_check(limit_per_rule: int = 8) -> dict:
     s = s_ = get_session()
     issues: list[str] = []
@@ -1077,9 +1081,20 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
                         lo=held - datetime.timedelta(days=2),
                         hi=held + datetime.timedelta(days=2))
                 if not got or not got[0][0]:
-                    add("bgiib", f"{serial} published {pub} reports a BGIIB auction held "
-                                 f"{held} and no figures are stored for it — the Islamic "
-                                 f"window is missing a week")
+                    # BB sometimes lists a release before its PDF is served: on 12-Nov-2026 five releases (OMO, T-Bond
+                    # result, BGIIB, ...) were listed and every one answered "Request Rejected", exactly as a file that
+                    # does not exist does, while older PDFs still downloaded. That is BB not having published the
+                    # figures yet, not a hole in OUR data, so for the first BGIIB_GRACE_DAYS it is waiting (visible,
+                    # aged, never failing the build); after that it is a defect again - nothing waits for ever.
+                    _pub = pub if hasattr(pub, "year") else datetime.date.fromisoformat(str(pub)[:10])
+                    _age = (today - _pub).days
+                    _msg = (f"{serial} published {pub} reports a BGIIB auction held {held} and no figures are stored "
+                            f"for it — the Islamic window is missing a week")
+                    if _age <= BGIIB_GRACE_DAYS:
+                        add("bgiib", _msg + f" (BB lists the release; the PDF is retried every run - {_age}d so far)",
+                            "waiting")
+                    else:
+                        add("bgiib", "ESCALATED — " + _msg + f" ({_age}d: BB has not served the PDF, or it cannot be parsed)")
         except Exception as exc:
             s.rollback()
             add("press", f"the announcement-vs-event check could not run ({exc})")

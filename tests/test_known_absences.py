@@ -279,3 +279,43 @@ class TestATenorBBsOwnMaturityPrintContradicts:
         e = [x for x in known_tenor_corrections() if x["instrument"] == "CB_REPO"]
         assert e and e[0]["deal_date"] == datetime.date(2026, 10, 25) and e[0]["true_maturity"] == datetime.date(2026, 10, 27)
         assert abs(e[0]["accepted_crore"] * (1 + 0.095 * 2 / 365) - 15870.00) < 0.05, "BB's printed maturity is 2 days' profit"
+
+
+class TestABgiibResultBBListsButDoesNotServe:
+    """12-Nov-2026: BB listed five releases and every PDF answered 'Request Rejected' (as a file that does not exist does),
+    while older PDFs still downloaded. The BGIIB check called that a defect in OUR data and failed the build for days."""
+
+    def _report(self, monkeypatch, published_days_ago):
+        import validate
+        eng, s = _mem()
+        old = TODAY - datetime.timedelta(days=300)
+        s.add(OMOTransaction(transaction_date=old, maturity_date=old, instrument="SDF", tenor_label="1D", tenor_days=1,
+                             accepted_bdt_crore=1.0, maturity_bdt_crore=0.0, rate_pct=7.5, direction="ABSORPTION"))
+        pub = TODAY - datetime.timedelta(days=published_days_ago)
+        s.add(dbmod.PressRelease(serial="pr14381", published_date=pub, subject_date=pub - datetime.timedelta(days=2),
+                                 title="BGIIB Auction Result held on 10 November 2026", url="https://example.invalid/x.pdf",
+                                 category="BGIIB"))
+        s.commit()
+        monkeypatch.setattr(validate, "get_session", lambda: sessionmaker(bind=eng)())
+        rep = validate.integrity_check(limit_per_rule=200)
+        return ([i for i in rep["issues"] if i.startswith("bgiib")], [w for w in rep["waiting"] if w.startswith("bgiib")])
+
+    def test_a_fresh_release_with_no_figures_is_waiting_on_bb_and_does_not_fail_the_build(self, monkeypatch):
+        issues, waiting = self._report(monkeypatch, 2)
+        assert issues == [] and len(waiting) == 1 and "retried every run" in waiting[0]
+
+    def test_after_the_grace_period_it_is_our_defect_again(self, monkeypatch):
+        """Nothing waits for ever: a release still unread after BGIIB_GRACE_DAYS is escalated."""
+        import validate
+        issues, waiting = self._report(monkeypatch, validate.BGIIB_GRACE_DAYS + 2)
+        assert waiting == [] and len(issues) == 1 and "ESCALATED" in issues[0]
+
+
+class TestTwoMoreExchangeRateDaysNobodyCouldRead:
+    def test_5_and_10_nov_are_recorded_as_lost_with_their_evidence(self):
+        from engines.absences import KNOWN_ABSENCES_PATH
+        import yaml
+        doc = yaml.safe_load(open(KNOWN_ABSENCES_PATH, encoding="utf-8"))
+        got = {str(e["date"]): e for e in doc["absences"] if e["dataset"] == "fxrates"}
+        for day in ("2026-11-05", "2026-11-10"):
+            assert got[day]["kind"] == "lost" and "cannot be re-read" in got[day]["reason"]
