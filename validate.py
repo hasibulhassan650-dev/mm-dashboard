@@ -1257,6 +1257,26 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
         except Exception:
             s.rollback()
 
+        # ── the Doctor must itself be alive ─────────────────────────────────────
+        # It runs at the end of every refresh and writes a 'doctor' row to step_runs. A repair system that has silently stopped
+        # looks exactly like a healthy one, so its heartbeat is checked here, by a rule that does not depend on it. (Judged only
+        # once the ledger holds refresh rows, so the first runs after deployment are not a false alarm.)
+        try:
+            if q("SELECT COUNT(*) FROM step_runs WHERE step <> 'doctor'")[0][0]:
+                last_doc = q("SELECT MAX(run_utc) FROM step_runs WHERE step = 'doctor'")[0][0]
+                if last_doc is not None and not hasattr(last_doc, "year"):
+                    last_doc = datetime.datetime.fromisoformat(str(last_doc)[:19])
+                if last_doc is None:
+                    first_row = q("SELECT MIN(run_utc) FROM step_runs")[0][0]
+                    first_row = first_row if hasattr(first_row, "year") else datetime.datetime.fromisoformat(str(first_row)[:19])
+                    if (datetime.datetime.utcnow() - first_row).total_seconds() > 6 * 3600:
+                        add("doctor", "the Doctor has never run although refreshes have been recorded for 6h+", "notice")
+                elif (datetime.datetime.utcnow() - last_doc).total_seconds() > 6 * 3600:
+                    add("doctor", f"the Doctor has not run for {(datetime.datetime.utcnow() - last_doc).total_seconds() / 3600:.0f}h "
+                                  f"- automatic repairs are not happening", "notice")
+        except Exception:
+            s.rollback()
+
         # ── every news source must be read by SOMEONE, and must still be moving ──
         # The fingerprint cannot see a source that could not be reached (transport failures are never stored
         # there) and a feed that freezes and serves the same items for ever looks "ok". news_source_runs records

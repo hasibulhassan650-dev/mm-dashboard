@@ -231,6 +231,20 @@ def build() -> tuple:
             q = json.loads(quality) if quality else {}
         except Exception:
             q = {}
+        try:
+            # The Doctor's repairs (engines/doctor.py), each with its proof, plus rows the database refused even after blanking.
+            from sqlalchemy import text as _t
+            since = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
+            rep = s.execute(_t("SELECT change_class, COUNT(*) FROM data_changes WHERE changed_utc >= :s AND change_class IN "
+                                     "('tenor_autoheal', 'lost_day') GROUP BY change_class"), {"s": since}).fetchall()
+            quar = s.execute(_t("SELECT COUNT(*) FROM quarantined_rows WHERE first_seen >= :s"), {"s": since}).scalar() or 0
+            if rep or quar:
+                parts = [f"{n} {c.replace('_', ' ')}" for c, n in rep]
+                if quar:
+                    parts.append(f"{quar} BB row(s) quarantined (refused by a database rule even after blanking its fields)")
+                lines.append("**Doctor (last 24h):** " + "; ".join(parts) + ". Each repair carries its proof on the Guardian page.\n")
+        except Exception:
+            s.rollback()
         if q.get("repaired"):
             fixed = ", ".join(f"{k}={v}" for k, v in q["repaired"].items())
             lines.append(f"**Self-heal (last run):** repaired {fixed}.\n")

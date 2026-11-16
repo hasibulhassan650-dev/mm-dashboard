@@ -255,6 +255,7 @@ def get_guardian(limit: int = 40):
     "Bangladesh Bank is a day late" from "Bangladesh Bank has stopped
     publishing", and a fault that keeps coming back from one that happened once.
     """
+    from .doctor_logic import doctor_sentence
     session = get_session()
     now = datetime.datetime.utcnow()
     try:
@@ -292,8 +293,8 @@ def get_guardian(limit: int = 40):
 
         repairs = [{
             "changed_utc": r[0].isoformat() if r[0] else None,
-            "change_class": r[1], "detail": r[2],
-        } for r in _rows("SELECT changed_utc, change_class, detail FROM data_changes "
+            "change_class": r[1], "detail": doctor_sentence(r[1], r[2], r[3]),
+        } for r in _rows("SELECT changed_utc, change_class, detail, id FROM data_changes "
                          "ORDER BY changed_utc DESC LIMIT :n", n=limit)]
 
         return {
