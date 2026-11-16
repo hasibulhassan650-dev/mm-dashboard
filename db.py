@@ -5,6 +5,7 @@ All tables derived from the canonical schema in the blueprint.
 import logging
 import os
 from pathlib import Path
+from typing import Dict, Tuple
 from sqlalchemy import (
     create_engine, Column, String, Date, DateTime, Integer,
     Float, Boolean, Text, UniqueConstraint, event, text
@@ -698,6 +699,46 @@ class NewsArticle(Base):
     triage_json    = Column(Text)                                  # what the model returned, verbatim
 
 
+class StepRun(Base):
+    """One refresh STEP, one run, one machine, one outcome - the ledger the Doctor reads (engines/failures.py, doctor.py).
+
+    pipeline_runs holds one row per RUN with its errors as free text, written alternately by the PC and by GitHub's runner,
+    and the freshness rule judged a step from the single newest row. On 12-16 Nov 2026 GitHub's blocked run (0 rows read,
+    logged 'OK') overwrote the PC's failing one, so a CheckViolation recorded 32 times was never seen and the verdict said
+    'our fetch reports success'. This table keeps every machine's every step, with the class of failure and the counts, so
+    health is judged per step across BOTH machines and an error text is classified once, by code, not re-read by a person."""
+    __tablename__ = "step_runs"
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    run_utc       = Column(DateTime, nullable=False, index=True)
+    machine       = Column(String(12))                 # pc | github
+    step          = Column(String(40), nullable=False, index=True)
+    status        = Column(String(10), nullable=False)  # ok | failed | empty | blocked
+    error_class   = Column(String(24))                 # engines/failures.py classes
+    rows_fetched  = Column(Integer)
+    rows_stored   = Column(Integer)
+    rows_rejected = Column(Integer)
+    error         = Column(Text)
+    evidence_json = Column(Text)
+
+
+class TenorOverride(Base):
+    """A tranche tenor corrected from BB's OWN later maturity print, written by the Doctor (engines/doctor.py).
+
+    Persisted (not just applied to the row) because the OMO fetch re-reads the last 35 days of PDFs every hour and the upsert keys on
+    (date, instrument, tenor_days, accepted): without this the printed tenor would be stored again beside the corrected row. It is
+    consulted exactly like a `tenor_corrections` entry in data/seeds/known_absences.yaml (engines/absences.py). `evidence` holds the
+    arithmetic; the matching data_changes row holds the old values for a revert."""
+    __tablename__ = "tenor_overrides"
+    id             = Column(Integer, primary_key=True, autoincrement=True)
+    deal_date      = Column(Date, nullable=False)
+    instrument     = Column(String(30), nullable=False)
+    accepted_crore = Column(Float, nullable=False)
+    true_maturity  = Column(Date, nullable=False)
+    source         = Column(String(20), default="doctor")
+    created_utc    = Column(DateTime)
+    evidence       = Column(Text)
+
+
 class NewsSourceRun(Base):
     """One source, one run, one outcome - including the sources that could NOT be reached.
 
@@ -715,6 +756,22 @@ class NewsSourceRun(Base):
     new_items  = Column(Integer, default=0)
     newest_utc = Column(DateTime)                         # the newest item's publication time
     error      = Column(Text)
+
+
+class QuarantinedRow(Base):
+    """A BB row the database refused and that could not be stored even with its offending fields blanked.
+
+    A row is never dropped silently: engines.pipeline.store_rows_isolated first tries the row with exactly the fields its
+    violated CHECK constraint names set to NULL (CONSTRAINT_FIELDS); when that also fails, or the constraint is not one we
+    know, the raw row lands here so the Doctor can diagnose it and a person can read what BB actually printed."""
+    __tablename__ = "quarantined_rows"
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    step        = Column(String(40), nullable=False, index=True)
+    table_name  = Column(String(60), nullable=False)
+    raw_json    = Column(Text, nullable=False)           # the row as parsed, dates as ISO strings
+    constraint  = Column(String(80))                     # the violated constraint, when the error named one
+    error       = Column(Text)
+    first_seen  = Column(DateTime, nullable=False)
 
 
 class LiquidityEvent(Base):
@@ -1065,6 +1122,24 @@ def fix_all_sequences():
         except Exception as exc:
             log.warning("sequence fix skipped for %s: %s", tname, exc)
     log.info("id sequences re-synced (%d tables)", len(id_tables))
+
+
+# Every CHECK constraint this file creates -> the columns it constrains. When BB prints a row that breaks one, the row is
+# stored with exactly these fields blank (NULL) instead of costing its whole day or month (engines.pipeline.
+# store_rows_isolated). A constraint that holds a relation between two fields cannot say which of them is wrong, so both
+# are blanked; where one side is the row's KEY (a trade/auction date) only the dependent field is named, because a blank
+# key would store a row nobody can find. tests/test_store_isolated.py scans this file and fails the build for a
+# constraint that has no entry here.
+CONSTRAINT_FIELDS: Dict[str, Tuple[str, ...]] = {
+    "ck_desk_cutoff_band":        ("cutoff_yield_pct",),
+    "ck_pys_issue_date_present":  ("issue_date",),
+    "ck_pys_issue_after_auction": ("issue_date",),
+    "ck_omo_maturity_after_txn":  ("maturity_date",),
+    "ck_cm_rate_band":            ("lowest_rate_pct", "average_rate_pct", "highest_rate_pct"),
+    "ck_repo_rate_band":          ("rate_min_pct", "rate_max_pct", "war_pct"),
+    "ck_fx_bid_le_ask":           ("bid_rate", "ask_rate"),
+    "ck_ibfx_rate_band":          ("low_rate", "war_rate", "high_rate"),
+}
 
 
 def init_db():

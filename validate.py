@@ -796,7 +796,28 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
         except Exception:
             pass
 
+        def _ledger_state(step: str):
+            """(known, healthy, last_failure) from step_runs, judged across BOTH machines (engines/step_ledger.py)."""
+            try:
+                from engines.step_ledger import step_health
+                return step_health(s, step)
+            except Exception:
+                s.rollback()
+                return False, False, None
+
+        def _diagnosis(step: str) -> str:
+            """The class and first words of the step's last failure, so an escalation carries its cause (the repo incident said
+            'our fetch reports success' while a CheckViolation had been recorded 32 times)."""
+            known, _healthy, bad = _ledger_state(step)
+            if not known or bad is None:
+                return ""
+            from engines import failures as _F
+            return " [" + _F.diagnosis(step, bad.error_class or _F.UNKNOWN, bad.machine, bad.run_utc, bad.error) + "]"
+
         def _fetch_is_healthy(step: str) -> bool:
+            known, healthy, _bad = _ledger_state(step)
+            if known:
+                return healthy                    # judged from every machine's step rows, not one latest run
             if not _run or _run[0] is None:
                 return False
             ran = _run[0]
@@ -925,10 +946,11 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
                         f"{ds.label} is published {ds.cadence.replace('_', ' ')} by {ds.source}, "
                         f"so a gap beyond {tol} days is ours, not BB's"
                         + (" (our fetch reports success, which means it is succeeding at "
-                           "fetching nothing)" if fetched else ""))
+                           "fetching nothing)" if fetched else "")
+                        + (_diagnosis(src_table) if src_table else ""))
                 else:
                     add("freshness", f"{name}: latest={mx} (need ≥{min_ok}) and OUR fetch is not "
-                                     f"current either — {desc}")
+                                     f"current either — {desc}" + (_diagnosis(src_table) if src_table else ""))
 
         # ── BB's website itself ─────────────────────────────────────────────
         # One line that says the thing plainly, so the per-dataset lines are not

@@ -232,6 +232,12 @@ NOT_WATCHED: Dict[str, str] = {
                   "auction day; not a BB feed, so it cannot go stale",
     "news_articles": "every article the Liquidity Watch read, stored with its filter "
                      "score; freshness is checked by a dedicated heartbeat, not a cadence",
+    "tenor_overrides": "tranche tenors the Doctor corrected from BB's own later maturity print; an event table "
+                       "(its rows mean a repair happened), so silence is the healthy state",
+    "step_runs": "one row per refresh step per machine per run (the Doctor's ledger); judged by "
+                 "step_health and the freshness rules, not by a cadence",
+    "quarantined_rows": "BB rows a database rule refused even after blanking the constrained fields, kept raw "
+                        "for a person; an event table, so silence is the healthy state",
     "news_source_runs": "the Liquidity Watch's own per-source heartbeat; judged by dedicated "
                         "news-source checks in validate.py, not by a cadence",
     "liquidity_events": "events reported in the news that BB's data does not hold; "

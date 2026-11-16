@@ -13,8 +13,12 @@ Every run:
   8. Aggregate into daily_net_flow and persist
 """
 import datetime
+import json
 import logging
-from typing import List
+import re
+from typing import Callable, List, Optional
+
+from sqlalchemy.exc import IntegrityError
 
 import calendar_utils
 from config import GSOM_TBOND_URL, GSOM_FRTB_URL, GSOM_TBILL_URL
@@ -24,6 +28,7 @@ from db import (
     BgiibAuction, SukukOutstanding, SukukDocument,
     AuctionEvent, HolidayCalendar, DailyNetFlow, MtmSnapshot,
     PrimaryYieldSnapshot, OMOTransaction,
+    QuarantinedRow, CONSTRAINT_FIELDS,
 )
 from fetchers.gsom import fetch_gsom_html
 from fetchers.auction_live import fetch_live_auction_rows as fetch_auction_rows
@@ -222,8 +227,134 @@ def _upsert_auction(session, event: dict):
                "rd":rd,"rr":rr,"src":src,"dq":dq})
 
 
+_CHECK_NAME_PATTERNS = (
+    re.compile(r'violates check constraint "([^"]+)"'),          # psycopg2 / Postgres
+    re.compile(r'CHECK constraint failed:\s*([A-Za-z0-9_]+)'),   # sqlite3
+)
+
+
+def constraint_name(exc) -> Optional[str]:
+    """The name of the CHECK constraint a database error says was violated, or None.
+
+    Pure text work over the driver's message (Postgres: 'violates check constraint "ck_repo_rate_band"', SQLite:
+    'CHECK constraint failed: ck_repo_rate_band'), so a new driver wording yields None and the row is quarantined
+    rather than blanked on a guess."""
+    text = str(getattr(exc, "orig", None) or exc)
+    for pat in _CHECK_NAME_PATTERNS:
+        m = pat.search(text)
+        if m:
+            return m.group(1)
+    return None
+
+
+def _json_default(o):
+    if isinstance(o, (datetime.date, datetime.datetime)):
+        return o.isoformat()
+    return str(o)
+
+
+def _jsonable(row: dict) -> dict:
+    """The row as plain JSON values (dates as ISO strings), so it can be stored and compared."""
+    return json.loads(json.dumps(row, default=_json_default))
+
+
+def _write_isolated(session, model, row: dict, write: Callable[[dict], str]) -> dict:
+    """Write ONE row inside its own savepoint; on a violated CHECK constraint retry once with exactly its fields blank.
+
+    `write(row)` performs the insert or update and returns a label for what it did. The outcome is one of
+      {"outcome": "stored", "kind": label}
+      {"outcome": "blanked", "kind": label, "constraint": name, "fields": [...], "original": {...}, "row": {...}}
+      {"outcome": "quarantined", "constraint": name or None, "error": text, "raw": {...}}
+    The caller decides what to do with a quarantined row (store_rows_isolated persists it at once; replace_daily_rows
+    persists it after the day's own savepoint is settled). Only IntegrityError is handled here: a lost connection or a
+    type error is not a row problem and must keep propagating."""
+    try:
+        with session.begin_nested():
+            kind = write(row)
+            session.flush()
+        return {"outcome": "stored", "kind": kind}
+    except IntegrityError as exc:
+        first = exc
+    name = constraint_name(first)
+    # Blank ONLY what the constraint names, and only what the row actually carries. A constraint we do not know, or one
+    # whose fields the row does not even hold, proves nothing about which number is wrong: quarantine, do not guess.
+    fields = [f for f in CONSTRAINT_FIELDS.get(name, ()) if f in row] if name else []
+    err = str(getattr(first, "orig", None) or first)[:500]
+    if fields:
+        blanked = dict(row)
+        for f in fields:
+            blanked[f] = None
+        try:
+            with session.begin_nested():
+                kind = write(blanked)
+                session.flush()
+            return {"outcome": "blanked", "kind": kind, "constraint": name, "fields": fields,
+                    "original": _jsonable({f: row[f] for f in fields}), "row": _jsonable(row)}
+        except IntegrityError as exc2:
+            name = constraint_name(exc2) or name
+            err = str(getattr(exc2, "orig", None) or exc2)[:500]
+    return {"outcome": "quarantined", "constraint": name, "error": err, "raw": _jsonable(row)}
+
+
+def _quarantine(session, model, step: str, info: dict, now: datetime.datetime) -> None:
+    """Persist a quarantined row once: the same unchanged row, re-read every hour, must not pile up as 32 copies."""
+    table = model.__tablename__
+    volatile = ("ingested_utc",)
+    raw = {k: v for k, v in info["raw"].items() if k not in volatile}
+    for q in session.query(QuarantinedRow).filter_by(step=step, table_name=table).all():
+        try:
+            held = {k: v for k, v in json.loads(q.raw_json).items() if k not in volatile}
+        except ValueError:
+            continue
+        if held == raw:
+            return
+    session.add(QuarantinedRow(step=step, table_name=table, raw_json=json.dumps(info["raw"], sort_keys=True),
+                               constraint=info["constraint"], error=info["error"], first_seen=now))
+    session.flush()
+
+
+def store_rows_isolated(session, model, rows: list, step: str, now: Optional[datetime.datetime] = None,
+                        write: Optional[Callable[[dict], str]] = None) -> dict:
+    """Store every row on its own, so one row BB prints against itself costs that row's bad fields and nothing else.
+
+    On 11-Nov-2026 BB printed a repo row whose weighted average lay outside its own range; the database CHECK refused it
+    and one flush for the whole month threw away three good days with it. Here each row is written in its own savepoint.
+    A row that breaks a CHECK constraint is retried ONCE with exactly the fields that constraint names set to NULL
+    (CONSTRAINT_FIELDS): blank, never a guessed value, and every other field (num_deals, amount) is kept. If that also
+    fails, or the constraint is unknown, the raw row goes to quarantined_rows. A row is never dropped silently.
+
+    `write(row) -> label` overrides the plain insert (a caller with its own upsert); the labels are counted in "kinds".
+    Returns {"stored": n, "blanked": [...], "quarantined": [...], "kinds": {...}}; "stored" includes the blanked rows
+    (they are stored), so stored + len(quarantined) == len(rows).
+    """
+    now = now or datetime.datetime.utcnow()
+
+    def _insert(r: dict) -> str:
+        session.add(model(**r))
+        return "inserted"
+
+    out = {"stored": 0, "blanked": [], "quarantined": [], "kinds": {}}
+    for r in rows:
+        res = _write_isolated(session, model, r, write or _insert)
+        if res["outcome"] == "quarantined":
+            _quarantine(session, model, step, res, now)
+            out["quarantined"].append({k: res[k] for k in ("constraint", "error", "raw")})
+            log.error("%s: row quarantined (%s): %s", step, res["constraint"], res["error"][:200])
+            continue
+        out["stored"] += 1
+        out["kinds"][res["kind"]] = out["kinds"].get(res["kind"], 0) + 1
+        if res["outcome"] == "blanked":
+            out["blanked"].append({k: res[k] for k in ("constraint", "fields", "original", "row")})
+            log.warning("%s: row stored with %s blank (breaks %s)", step, ", ".join(res["fields"]), res["constraint"])
+    return out
+
+
+class _DayRefused(Exception):
+    """A day holds a row the database refuses even with its offending fields blank."""
+
+
 def replace_daily_rows(session, model, rows: list, key_fields: tuple,
-                       date_field: str = "trade_date") -> dict:
+                       date_field: str = "trade_date", step: Optional[str] = None) -> dict:
     """Make the DB match BB's page for every date the page returned.
 
     BB's call-money page is a RUNNING intraday table: the first hourly fetch of
@@ -236,6 +367,8 @@ def replace_daily_rows(session, model, rows: list, key_fields: tuple,
     response must never wipe history — and a date is only touched when the page
     holds at least one row for it.
     """
+    step = step or model.__tablename__
+    now = datetime.datetime.utcnow()
     by_date: dict = {}
     for r in rows:
         by_date.setdefault(r[date_field], []).append(r)
@@ -243,24 +376,47 @@ def replace_daily_rows(session, model, rows: list, key_fields: tuple,
     for d, page_rows in by_date.items():
         if not page_rows:
             continue
-        # ONE BAD DAY MUST NOT LOSE THE OTHERS. A single BB row that broke a database rule (a repo row whose weighted
-        # average lay outside its own range) aborted the one flush for the whole month, so 10, 12 and 15 Nov never reached
-        # the table for four days. Each date is written inside its own savepoint; a day the database refuses is skipped,
-        # named in stats["rejected"] and reported by the caller, and every other day is kept.
+        # ONE BAD ROW MUST NOT LOSE ITS DAY, AND ONE BAD DAY MUST NOT LOSE THE OTHERS. A single BB row that broke a database
+        # rule (a repo row whose weighted average lay outside its own range) aborted the one flush for the whole month, so
+        # 10, 12 and 15 Nov never reached the table for four days. Each date is written inside its own savepoint, and each
+        # row inside that: a row that breaks a CHECK constraint is stored with exactly that constraint's fields blank
+        # (stats["blanked"]), costing the day nothing else. A day that still holds a row the database refuses is skipped,
+        # named in stats["rejected"] and reported by the caller, its raw rows go to quarantined_rows (stats["quarantined"]),
+        # and every other day is kept.
+        day = {"updated": 0, "inserted": 0, "deleted": 0, "unchanged": 0}
+        blanked: list = []
+        quarantined: list = []
         try:
             with session.begin_nested():
-                _replace_one_day(session, model, d, page_rows, key_fields, date_field, stats)
+                _replace_one_day(session, model, d, page_rows, key_fields, date_field, day, blanked, quarantined)
                 session.flush()
+                if quarantined:
+                    raise _DayRefused(f"{len(quarantined)} row(s) refused even with their offending fields blank")
         except Exception as exc:
             session.expire_all()
             log.error("replace_daily_rows %s %s rejected by the database: %s", model.__name__, d, str(exc)[:200])
             stats.setdefault("rejected", []).append(str(d))
+            blanked = []          # that day was rolled back: nothing on it was stored, blanked or otherwise
+        else:
+            for k, v in day.items():
+                stats[k] += v
+        for info in quarantined:
+            _quarantine(session, model, step, info, now)
+        if blanked:
+            stats.setdefault("blanked", []).extend(blanked)
+        if quarantined:
+            stats.setdefault("quarantined", []).extend(
+                {k: info[k] for k in ("constraint", "error", "raw")} for info in quarantined)
     session.flush()
     return stats
 
 
-def _replace_one_day(session, model, d, page_rows: list, key_fields: tuple, date_field: str, stats: dict) -> None:
-    """One date's rows: update what changed, insert what is new, delete what the page no longer has."""
+def _replace_one_day(session, model, d, page_rows: list, key_fields: tuple, date_field: str, stats: dict,
+                     blanked: list, quarantined: list) -> None:
+    """One date's rows: update what changed, insert what is new, delete what the page no longer has.
+
+    Each row goes through _write_isolated, so a row that breaks a CHECK constraint is retried with the constraint's
+    own fields blank (appended to `blanked`) or, failing that, appended to `quarantined` for the caller to settle."""
     existing = session.query(model).filter(getattr(model, date_field) == d).all()
     ex_by_key = {tuple(getattr(e, k) for k in key_fields): e for e in existing}
     seen = set()
@@ -268,21 +424,30 @@ def _replace_one_day(session, model, d, page_rows: list, key_fields: tuple, date
         key = tuple(r.get(k) for k in key_fields)
         seen.add(key)
         e = ex_by_key.get(key)
-        if e is None:
-            session.add(model(**r)); stats["inserted"] += 1
+
+        def write(row, e=e) -> str:
+            if e is None:
+                session.add(model(**row))
+                return "inserted"
+            changed = False
+            for f, v in row.items():
+                if f in ("ingested_utc", "id") or not hasattr(e, f):
+                    continue
+                if getattr(e, f) != v:
+                    setattr(e, f, v); changed = True
+            if not changed:
+                return "unchanged"
+            if hasattr(e, "ingested_utc") and "ingested_utc" in row:
+                e.ingested_utc = row["ingested_utc"]
+            return "updated"
+
+        res = _write_isolated(session, model, r, write)
+        if res["outcome"] == "quarantined":
+            quarantined.append(res)
             continue
-        changed = False
-        for f, v in r.items():
-            if f in ("ingested_utc", "id") or not hasattr(e, f):
-                continue
-            if getattr(e, f) != v:
-                setattr(e, f, v); changed = True
-        if changed:
-            if hasattr(e, "ingested_utc") and "ingested_utc" in r:
-                e.ingested_utc = r["ingested_utc"]
-            stats["updated"] += 1
-        else:
-            stats["unchanged"] += 1
+        stats[res["kind"]] += 1
+        if res["outcome"] == "blanked":
+            blanked.append({k: res[k] for k in ("constraint", "fields", "original", "row")})
     for key, e in ex_by_key.items():
         if key not in seen:
             session.delete(e); stats["deleted"] += 1
@@ -755,7 +920,7 @@ def _store_omo_txns(session, txns: list, now: datetime.datetime) -> tuple:
     try:
         from engines.absences import apply_tenor_correction, known_tenor_corrections, sync_tenor_corrections
         sync_tenor_corrections(session)
-        _tc = known_tenor_corrections()
+        _tc = known_tenor_corrections(session=session)
         for _r in txns:
             apply_tenor_correction(_r, _tc)
     except Exception as exc:
@@ -1192,24 +1357,32 @@ def run_bgiib_fetch(limit: int = 12) -> dict:
                     "errors": [f"bgiib: {msg}"] if out["refused"] else []}
 
         now = datetime.datetime.utcnow()
-        added = updated = 0
-        for r in rows:
+
+        def _upsert(r: dict) -> str:
             existing = session.query(BgiibAuction).filter_by(
                 auction_date=r["auction_date"], tenor_label=r["tenor_label"]).one_or_none()
             if existing is None:
                 session.add(BgiibAuction(ingested_utc=now, **r))
-                added += 1
-            else:
-                for k, v in r.items():
-                    setattr(existing, k, v)
-                existing.ingested_utc = now
-                updated += 1
+                return "added"
+            for k, v in r.items():
+                setattr(existing, k, v)
+            existing.ingested_utc = now
+            return "updated"
+
+        # One auction the database refuses must not roll back the others in the batch (see store_rows_isolated).
+        res = store_rows_isolated(session, BgiibAuction, rows, "bgiib", now, write=_upsert)
+        added, updated = res["kinds"].get("added", 0), res["kinds"].get("updated", 0)
         session.commit()
         log.info("BGIIB: %d release(s) read, %d row(s) added, %d updated",
                  out["releases"], added, updated)
-        return {"rows": len(rows), "releases": out["releases"], "added": added,
-                "updated": updated, "refused": out["refused"],
-                "errors": [f"bgiib: refused {out['refused']}"] if out["refused"] else []}
+        errs = [f"bgiib: refused {out['refused']}"] if out["refused"] else []
+        if res["quarantined"]:
+            errs.append(f"bgiib: {len(res['quarantined'])} auction row(s) refused by the database and quarantined: "
+                        + "; ".join(f"{q['raw'].get('tenor_label')} {q['raw'].get('auction_date')} "
+                                    f"({q['constraint'] or q['error'][:80]})" for q in res["quarantined"][:5]))
+        return {"rows": res["stored"], "releases": out["releases"], "added": added,
+                "updated": updated, "refused": out["refused"], "errors": errs,
+                "blanked": len(res["blanked"]), "quarantined": len(res["quarantined"])}
     except Exception as exc:
         session.rollback()
         log.exception("BGIIB fetch failed")
@@ -1399,22 +1572,32 @@ def run_primary_yield_history(months_back: int = 8) -> dict:
     try:
         _load_holidays(session)   # auction_date = previous working day of the printed issue date
         rows = fetch_primary_yields_history(months_back=months_back)
-        for r in rows:
-            upsert_primary_yield(session, r)
+        # A row the database refuses must not roll back the months around it: each row is its own savepoint,
+        # blanked on the fields its constraint names, else quarantined (and named in the errors below).
+        stored = store_rows_isolated(session, PrimaryYieldSnapshot, rows, "treasury",
+                                     write=lambda r: (upsert_primary_yield(session, r), "stored")[1])
         session.commit()
         # One fingerprint per page read. The newest page is the one that matters
         # for "has BB moved today"; the rest are registered so a shape BB uses
         # only on older months is known-good rather than a surprise.
         from fetchers.treasury import LAST_STRUCTURE
         watch, errs = {}, []
+        if stored["quarantined"]:
+            errs.append(f"treasury: {len(stored['quarantined'])} yield row(s) refused by the database and quarantined: "
+                        + "; ".join(f"{q['raw'].get('tenor_label')} {q['raw'].get('auction_date')} ({q['constraint'] or q['error'][:80]})"
+                                    for q in stored["quarantined"][:5]))
+        if stored["blanked"]:
+            errs.append(f"treasury: {len(stored['blanked'])} yield row(s) stored with a field blank because it broke "
+                        + ", ".join(sorted({b['constraint'] for b in stored['blanked']})))
         for snap in LAST_STRUCTURE:
             w = _register_source(session, snap)
             if w:
                 watch = w
                 if w.get("source_verdict") == "degraded":
                     errs.append("treasury page structure: " + "; ".join(w["source_reasons"]))
-        log.info("Primary yield history: stored %d rows (%d months)", len(rows), months_back)
-        return {"rows": len(rows), "months": months_back, "errors": errs, **watch}
+        log.info("Primary yield history: stored %d rows (%d months)", stored["stored"], months_back)
+        return {"rows": stored["stored"], "months": months_back, "errors": errs,
+                "blanked": len(stored["blanked"]), "quarantined": len(stored["quarantined"]), **watch}
     except Exception as exc:
         session.rollback()
         log.exception("Primary yield history failed")

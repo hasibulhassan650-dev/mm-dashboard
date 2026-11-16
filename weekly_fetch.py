@@ -61,6 +61,19 @@ def _cal_closure() -> str:
 LOCK_STALE_SECONDS = 3 * 3600      # a refresh never runs this long; a lock older than this is a crashed run's
 
 
+# What each step did in THIS run (rows read / stored / refused), reported by the step itself. engines/step_ledger.py turns it,
+# with the errors, into one step_runs row per step. A step that reports nothing is not recorded as 'ok': silence is not success.
+STEP_STATS: dict = {}
+
+
+def note_step(step: str, fetched=None, stored=None, rejected=None) -> None:
+    STEP_STATS[step] = {"fetched": fetched, "stored": stored, "rejected": rejected}
+
+
+def _stored(st: dict) -> int:
+    return (st.get("inserted", 0) + st.get("updated", 0)) if st else 0
+
+
 def rejected_error(step: str, stats: dict):
     """The error line for a batch in which the database refused some days, or None.
 
@@ -123,6 +136,7 @@ def main():
 
 
 def _run():
+    STEP_STATS.clear()
     start = datetime.datetime.now()
     log.info("=" * 60)
     log.info("Weekly fetch started  %s", start.strftime("%Y-%m-%d %H:%M"))
@@ -216,6 +230,7 @@ def _run():
     try:
         result = run_primary_yield_history(months_back=TREASURY_MONTHS)
         log.info("Treasury OK | new_rows=%s", result.get("rows"))
+        note_step("treasury", result.get("rows"), result.get("rows"))
         errors.extend(prefixed("treasury", result.get("errors")))
     except Exception as exc:
         log.exception("Treasury fetch failed: %s", exc)
@@ -272,6 +287,7 @@ def _run():
     try:
         result = run_omo_fetch(days_back=OMO_DAYS_BACK, max_files=OMO_MAX_FILES)
         log.info("OMO OK | new_rows=%s", result.get("rows"))
+        note_step("omo", result.get("txns", result.get("rows")), result.get("rows"))
         errors.extend(prefixed("omo", result.get("errors")))
     except Exception as exc:
         log.exception("OMO fetch failed: %s", exc)
@@ -295,6 +311,7 @@ def _run():
         session.commit()
         session.close()
         log.info("Call money OK | %s (fetched %d)", st, len(rows_cm))
+        note_step("callmoney", len(rows_cm), _stored(st), len(st.get("rejected", [])))
         if rejected_error("callmoney", st):
             errors.append(rejected_error("callmoney", st))
     except Exception as exc:
@@ -342,6 +359,7 @@ def _run():
         session.commit()
         session.close()
         log.info("RefRate OK | %s (fetched %d)", st, len(rows_rr))
+        note_step("refrate", len(rows_rr), _stored(st), len(st.get("rejected", [])))
         if rejected_error("refrate", st):
             errors.append(rejected_error("refrate", st))
     except Exception as exc:
@@ -495,6 +513,7 @@ def _run():
             r["ingested_utc"] = now_utc
         session = get_session()
         st = replace_daily_rows(session, InterbankFx, rows_fx, ("segment",))
+        note_step("interbank_fx", len(rows_fx), _stored(st), len(st.get("rejected", [])))
         if rejected_error("interbank_fx", st):
             errors.append(rejected_error("interbank_fx", st))
         # BB skips the occasional working day on this page (08-Oct-2026, while
@@ -548,6 +567,7 @@ def _run():
         session.commit()
         session.close()
         log.info("FX rates OK | %s (fetched %d)", st, len(rows_fr))
+        note_step("fxrates", len(rows_fr), _stored(st), len(st.get("rejected", [])))
         # the page keeps only the latest day, so a refused day here is gone for good: it must never be silent
         if rejected_error("fxrates", st):
             errors.append(rejected_error("fxrates", st))
@@ -578,6 +598,7 @@ def _run():
         session.commit()
         session.close()
         log.info("Interbank repo OK | %s (fetched %d)", st, len(rows_rp))
+        note_step("interbank_repo", len(rows_rp), _stored(st), len(st.get("rejected", [])))
         if rejected_error("interbank_repo", st):
             errors.append(rejected_error("interbank_repo", st))
         if not rows_rp:
@@ -604,6 +625,7 @@ def _run():
         bg = run_bgiib_fetch()
         log.info("BGIIB OK | %d release(s), %d row(s) (%d new)", bg.get("releases", 0),
                  bg.get("rows", 0), bg.get("added", 0))
+        note_step("bgiib", bg.get("rows", 0), bg.get("added", 0))
         errors.extend(prefixed("bgiib", bg.get("errors")))
     except Exception as exc:
         log.exception("BGIIB fetch failed: %s", exc)
@@ -749,6 +771,35 @@ def _run():
     except Exception as exc:
         log.exception("Guardian ledger failed: %s", exc)
         errors.append(f"guardian: {exc}")
+
+    # The Doctor (engines/doctor.py): repairs only what has PROOF (a lost exchange-rate day from our own read log, a tenor BB's own
+    # later print contradicts), records each change with its old values, and writes a heartbeat. It never breaks the run.
+    try:
+        from engines.doctor import run_doctor
+        session = get_session()
+        dr = run_doctor(session)
+        session.commit()
+        session.close()
+        for line in dr["lost_days"]:
+            log.warning("Doctor recorded a lost day: %s", line)
+        for f in dr["tenor_fixes"]:
+            log.warning("Doctor corrected a tenor: %s %s -> matures %s (proof %s)", f["instrument"], f["deal_date"],
+                        f["true_maturity"], f["proof"])
+        errors.extend(dr["errors"])
+    except Exception as exc:
+        log.warning("Doctor did not run: %s", exc)
+
+    # One row per step per machine (engines/step_ledger.py): the ledger the freshness rule and the Doctor judge from. It is
+    # written beside, and never instead of, the run row below, and it can never break the run.
+    try:
+        from engines.step_ledger import record_step_runs
+        session = get_session()
+        n_steps = record_step_runs(session, errors, STEP_STATS)
+        session.commit()
+        session.close()
+        log.info("Step ledger: %d step row(s) recorded", n_steps)
+    except Exception as exc:
+        log.warning("Step ledger not written: %s", exc)
 
     # Record the run so the dashboard can show "last refreshed at X" honestly,
     # even when a run found no new rows.

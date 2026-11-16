@@ -285,7 +285,7 @@ def known_print_errors(path: str = None) -> list:
     return out
 
 
-def known_tenor_corrections(path: str = None) -> list:
+def known_tenor_corrections(path: str = None, session=None) -> list:
     """Tranches whose printed tenor BB's OWN later maturity print contradicts, from known_absences.yaml
     `tenor_corrections`: {dataset, instrument, deal_date, accepted_crore, true_maturity, reason}.
 
@@ -296,11 +296,21 @@ def known_tenor_corrections(path: str = None) -> list:
 
     import yaml
     path = path or KNOWN_ABSENCES_PATH
-    if not path or not os.path.exists(path):
-        return []
-    with open(path, encoding="utf-8") as fh:
-        doc = yaml.safe_load(fh) or {}
+    doc = {}
+    if path and os.path.exists(path):
+        with open(path, encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh) or {}
     out = []
+    # corrections the Doctor proved from BB's own maturity prints (db.TenorOverride): consulted exactly like the YAML ones
+    if session is not None:
+        try:
+            from db import TenorOverride
+            for o in session.query(TenorOverride).all():
+                out.append({"dataset": "omo", "instrument": o.instrument, "deal_date": o.deal_date,
+                            "accepted_crore": o.accepted_crore, "true_maturity": o.true_maturity,
+                            "reason": "proved from BB's own later maturity print (Doctor): " + (o.evidence or "")})
+        except Exception:
+            session.rollback()
     for e in doc.get("tenor_corrections") or []:
         deal, mat = _as_date(e.get("deal_date")), _as_date(e.get("true_maturity"))
         try:
@@ -332,7 +342,7 @@ def sync_tenor_corrections(session, path: str = None) -> dict:
     """Apply the corrections to rows already stored. Returns {"corrected": [...]}; safe to run every time."""
     from db import OMOTransaction
     out = {"corrected": []}
-    for c in known_tenor_corrections(path):
+    for c in known_tenor_corrections(path, session):
         days = (c["true_maturity"] - c["deal_date"]).days
         for row in session.query(OMOTransaction).filter(
                 OMOTransaction.transaction_date == c["deal_date"], OMOTransaction.instrument == c["instrument"]).all():

@@ -258,7 +258,7 @@ class TestATenorBBsOwnMaturityPrintContradicts:
     def test_corrected_the_ledger_agrees_with_bb_on_both_days(self, monkeypatch):
         import engines.absences as A
         eng, s = self._world()
-        monkeypatch.setattr(A, "known_tenor_corrections", lambda path=None: self._entries())
+        monkeypatch.setattr(A, "known_tenor_corrections", lambda path=None, session=None: self._entries())
         done = A.sync_tenor_corrections(s)
         s.commit()
         assert len(done["corrected"]) == 1
