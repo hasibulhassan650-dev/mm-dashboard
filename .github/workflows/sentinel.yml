@@ -53,8 +53,19 @@ jobs:
             BODY="$BODY
 
           Run: $RUN_URL"
+            # A comment is an email: add one only when the set of problems CHANGED. Issue #18 collected a comment every
+            # half hour for the same unchanged list.
+            SHA=$(python -c "import json,hashlib;v=json.load(open('verdict.json'));print(hashlib.sha1('|'.join(sorted(v['problems'])).encode()).hexdigest()[:10])")
+            BODY="$BODY
+
+          problems-sha: $SHA"
             if [ -n "$NUM" ]; then
-              gh issue comment "$NUM" --body "$BODY"
+              LAST=$(gh issue view "$NUM" --json body,comments --jq '(.comments[-1].body // .body)' 2>/dev/null || true)
+              if echo "$LAST" | grep -q "problems-sha: $SHA"; then
+                echo "Same problems as the last report ($SHA) - no new comment."
+              else
+                gh issue comment "$NUM" --body "$BODY"
+              fi
             else
               gh issue create --title "UPTIME ALERT: site/API unreachable or deploy stale" --label uptime --body "$BODY"
             fi

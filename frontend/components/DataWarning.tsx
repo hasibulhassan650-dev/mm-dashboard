@@ -109,7 +109,15 @@ export function BBOutageBanner() {
  */
 export function EscalationBanner() {
   const s = useStatus();
-  const items = s?.escalations ?? [];
+  // The escalation list is a verdict RECORDED by the last refresh run, up to an hour old. The per-dataset `current`
+  // flag beside it is computed live from the data. When the data has since been repaired, the recorded line is stale
+  // ("repo: nothing newer than 9-Nov" was still on screen after 10/11/12/15-Nov were stored), so a freshness line
+  // whose dataset is live-current is dropped. Anything else stays: only a live-current dataset can contradict it.
+  const staleLine = (m: string) => {
+    const key = /^freshness:\s*([a-z_]+):/i.exec(m)?.[1];
+    return !!key && s?.datasets?.[key]?.current === true;
+  };
+  const items = (s?.escalations ?? []).filter((m) => !staleLine(m));
   if (!items.length) return null;
   const clean = (m: string) =>
     m.replace(/^freshness:\s*/, "").replace(/ESCALATED\s*—\s*/, "");

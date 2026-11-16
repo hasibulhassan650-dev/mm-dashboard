@@ -172,18 +172,30 @@ def fetch_interbank_repo_month(month: datetime.date) -> List[Dict]:
         return rows
     except Exception as exc:
         log.error("Interbank repo fetch failed for %s: %s", label, exc)
-        return []
+        # re-raised, not returned as []: "no rows because BB blocked us" and "no rows because nothing was published" must
+        # not look the same to the caller (the repo step logged 'OK (fetched 0)' for days while GitHub was blocked)
+        raise
 
 
 def fetch_interbank_repo_range(start: datetime.date, end: datetime.date) -> List[Dict]:
     """Every month between start and end inclusive."""
     out, seen = [], set()
+    failed = []
     d = start.replace(day=1)
     while d <= end:
-        for row in fetch_interbank_repo_month(d):
+        try:
+            month_rows = fetch_interbank_repo_month(d)
+        except Exception as exc:                      # one month failing must not lose the other
+            failed.append(exc)
+            month_rows = []
+        for row in month_rows:
             key = str(row.get("trade_date"))
             if key not in seen:
                 seen.add(key)
                 out.append(row)
         d = (d.replace(day=28) + datetime.timedelta(days=7)).replace(day=1)
+    if failed and not out:
+        raise failed[0]            # nothing at all was read AND a month failed: that is a failed fetch, not "no data"
+    if failed:
+        log.warning("Interbank repo: %d month(s) could not be read (%s); the rest were", len(failed), failed[0])
     return out

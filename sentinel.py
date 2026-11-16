@@ -75,6 +75,24 @@ def check():
     if st != 200:
         problems.append(f"Frontend unreachable: /login -> {st}")
 
+    # 2b) API deploy freshness: /health reports the commit the API was built from; the API project only rebuilds for
+    #     commits that touch api/, so compare with the last such commit (a stale API served wrong figures in Aug-2026).
+    st, body = _http(f"{API}/health?_cb=sentinel")
+    if st == 200 and body:
+        try:
+            api_deployed = (json.loads(body).get("commit") or "").strip().lower()
+        except Exception:
+            api_deployed = ""
+        try:
+            api_head = subprocess.check_output(["git", "log", "-1", "--format=%h", "--abbrev=7", "--", "api"]).decode().strip().lower()
+            api_ts = int(subprocess.check_output(["git", "log", "-1", "--format=%ct", "--", "api"]).decode().strip())
+            api_age = (datetime.datetime.now(datetime.timezone.utc).timestamp() - api_ts) / 60
+        except Exception:
+            api_head, api_age = "", 0
+        if api_deployed and api_head and api_deployed != api_head and api_age > DEPLOY_GRACE_MIN:
+            problems.append(f"Stale API deploy: serving {api_deployed}, the last commit touching api/ is {api_head} "
+                            f"({int(api_age)} min old, past {DEPLOY_GRACE_MIN}-min grace)")
+
     # 3) Deploy freshness — deploy-status is un-gated and exposes the commit SHA.
     st, body = _http(f"{FRONTEND}/api/deploy-status?_cb=sentinel")
     if st == 200 and body:

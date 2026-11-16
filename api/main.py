@@ -58,4 +58,6 @@ app.include_router(desk.router,        prefix="/api/desk",        tags=["Desk"])
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    # the commit this deployment was built from (Vercel injects it), so the sentinel can tell a stale API deploy from a
+    # current one the way it already can for the site
+    return {"status": "ok", "commit": (os.environ.get("VERCEL_GIT_COMMIT_SHA") or "")[:7] or None}

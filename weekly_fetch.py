@@ -61,6 +61,29 @@ def _cal_closure() -> str:
 LOCK_STALE_SECONDS = 3 * 3600      # a refresh never runs this long; a lock older than this is a crashed run's
 
 
+def rejected_error(step: str, stats: dict):
+    """The error line for a batch in which the database refused some days, or None.
+
+    replace_daily_rows writes each day in its own savepoint, so a refused day no longer loses the others - but a day
+    the database refused is still a day that is missing, and it must reach pipeline_runs.errors (and so the digest, the
+    sentinel and the Doctor). Only the repo step reported it; four others dropped it into a log line."""
+    bad = (stats or {}).get("rejected") or []
+    if not bad:
+        return None
+    return (f"{step}: BB rows for {', '.join(bad)} were rejected by a database rule (the other days were stored)")
+
+
+def prefixed(step: str, errs) -> list:
+    """Errors from a runner that catches its own exceptions arrive bare ("OMO fetch failed ...") and so were not
+    attributed to their step: the freshness rule looks for the `<step>:` prefix, and a bare error read as a HEALTHY
+    fetch. This makes the attribution uniform."""
+    out = []
+    for e in errs or []:
+        e = str(e)
+        out.append(e if e.startswith(f"{step}:") else f"{step}: {e}")
+    return out
+
+
 def acquire_lock(path: str = None, now: float = None) -> str:
     """Take the one-refresh-at-a-time lock on this machine, or return None if another refresh holds it.
 
@@ -193,8 +216,7 @@ def _run():
     try:
         result = run_primary_yield_history(months_back=TREASURY_MONTHS)
         log.info("Treasury OK | new_rows=%s", result.get("rows"))
-        if result.get("errors"):
-            errors.extend(result["errors"])
+        errors.extend(prefixed("treasury", result.get("errors")))
     except Exception as exc:
         log.exception("Treasury fetch failed: %s", exc)
         errors.append(f"treasury: {exc}")
@@ -250,8 +272,7 @@ def _run():
     try:
         result = run_omo_fetch(days_back=OMO_DAYS_BACK, max_files=OMO_MAX_FILES)
         log.info("OMO OK | new_rows=%s", result.get("rows"))
-        if result.get("errors"):
-            errors.extend(result["errors"])
+        errors.extend(prefixed("omo", result.get("errors")))
     except Exception as exc:
         log.exception("OMO fetch failed: %s", exc)
         errors.append(f"omo: {exc}")
@@ -274,6 +295,8 @@ def _run():
         session.commit()
         session.close()
         log.info("Call money OK | %s (fetched %d)", st, len(rows_cm))
+        if rejected_error("callmoney", st):
+            errors.append(rejected_error("callmoney", st))
     except Exception as exc:
         log.exception("Call money fetch failed: %s", exc)
         errors.append(f"callmoney: {exc}")
@@ -319,6 +342,8 @@ def _run():
         session.commit()
         session.close()
         log.info("RefRate OK | %s (fetched %d)", st, len(rows_rr))
+        if rejected_error("refrate", st):
+            errors.append(rejected_error("refrate", st))
     except Exception as exc:
         log.exception("RefRate fetch failed: %s", exc)
         errors.append(f"refrate: {exc}")
@@ -470,6 +495,8 @@ def _run():
             r["ingested_utc"] = now_utc
         session = get_session()
         st = replace_daily_rows(session, InterbankFx, rows_fx, ("segment",))
+        if rejected_error("interbank_fx", st):
+            errors.append(rejected_error("interbank_fx", st))
         # BB skips the occasional working day on this page (08-Oct-2026, while
         # every other feed printed). Record those from THIS fetch's own window
         # so the gap check stops calling BB's omission our defect — and only
@@ -521,6 +548,9 @@ def _run():
         session.commit()
         session.close()
         log.info("FX rates OK | %s (fetched %d)", st, len(rows_fr))
+        # the page keeps only the latest day, so a refused day here is gone for good: it must never be silent
+        if rejected_error("fxrates", st):
+            errors.append(rejected_error("fxrates", st))
     except Exception as exc:
         log.exception("FX rates fetch failed: %s", exc)
         errors.append(f"fxrates: {exc}")
@@ -548,9 +578,8 @@ def _run():
         session.commit()
         session.close()
         log.info("Interbank repo OK | %s (fetched %d)", st, len(rows_rp))
-        if st.get("rejected"):
-            errors.append(f"interbank_repo: BB rows for {', '.join(st['rejected'])} were rejected by a database rule "
-                          f"(the other days were stored)")
+        if rejected_error("interbank_repo", st):
+            errors.append(rejected_error("interbank_repo", st))
         if not rows_rp:
             errors.append("interbank_repo: no rows were read from BB's page (blocked, or the page changed)")
     except Exception as exc:
@@ -575,8 +604,7 @@ def _run():
         bg = run_bgiib_fetch()
         log.info("BGIIB OK | %d release(s), %d row(s) (%d new)", bg.get("releases", 0),
                  bg.get("rows", 0), bg.get("added", 0))
-        for e in bg.get("errors") or []:
-            errors.append(e)
+        errors.extend(prefixed("bgiib", bg.get("errors")))
     except Exception as exc:
         log.exception("BGIIB fetch failed: %s", exc)
         errors.append(f"bgiib: {exc}")
