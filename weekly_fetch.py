@@ -548,6 +548,11 @@ def _run():
         session.commit()
         session.close()
         log.info("Interbank repo OK | %s (fetched %d)", st, len(rows_rp))
+        if st.get("rejected"):
+            errors.append(f"interbank_repo: BB rows for {', '.join(st['rejected'])} were rejected by a database rule "
+                          f"(the other days were stored)")
+        if not rows_rp:
+            errors.append("interbank_repo: no rows were read from BB's page (blocked, or the page changed)")
     except Exception as exc:
         log.exception("Interbank repo fetch failed: %s", exc)
         errors.append(f"interbank_repo: {exc}")

@@ -23,7 +23,7 @@ than stored half-parsed.
 
 The default page (≈1 month) passes on TLS impersonation alone — no Chrome hop.
 """
-from fetchers.bb_health import check_response
+from fetchers.bb_health import check_response, looks_blocked_page
 import datetime
 import logging
 import re
@@ -105,6 +105,15 @@ def parse_interbank_repo_html(html: str) -> List[Dict]:
             # at 0% and drag every average and chart down with it. A real figure
             # or no figure.
             no_trade = not deals and not amount
+            # A row BB prints against itself: 11-Nov-2026 read "8.90-8.85" for the range and 8.92 for the weighted
+            # average, which lies OUTSIDE both ends. Which of the three numbers BB mistyped cannot be known (the 8.92 may
+            # be the right one), so none of them is stored: deals, amount and tenor are kept, the rates are blank.
+            # The DB constraint ck_repo_rate_band rejected the row, and that one row aborted the whole month's batch.
+            if (not no_trade and war is not None and rate_min is not None and rate_max is not None
+                    and not (rate_min <= war <= rate_max)):
+                log.warning("interbank repo %s: BB prints rate range %s-%s with a weighted average of %s outside it; "
+                            "the rates are left blank, not guessed: %r", trade_date, rate_min, rate_max, war, cells)
+                rate_min = rate_max = war = None
             rows.append({
                 "trade_date":     trade_date,
                 "num_deals":      deals,
@@ -156,6 +165,10 @@ def fetch_interbank_repo_month(month: datetime.date) -> List[Dict]:
         check_response(r)
         rows = parse_interbank_repo_html(r.text)
         log.info("Interbank repo %s: parsed %d rows", label, len(rows))
+        if not rows and looks_blocked_page(r.text):
+            # a 200 with no table that is BB's challenge page: that is a BLOCK, not "nothing published". Without this the
+            # run logged "OK (fetched 0)" and the freshness rule blamed us for a fetch that "succeeded".
+            raise RuntimeError(f"BB answered {label} with a block/challenge page, not the table")
         return rows
     except Exception as exc:
         log.error("Interbank repo fetch failed for %s: %s", label, exc)

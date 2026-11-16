@@ -243,33 +243,49 @@ def replace_daily_rows(session, model, rows: list, key_fields: tuple,
     for d, page_rows in by_date.items():
         if not page_rows:
             continue
-        existing = session.query(model).filter(getattr(model, date_field) == d).all()
-        ex_by_key = {tuple(getattr(e, k) for k in key_fields): e for e in existing}
-        seen = set()
-        for r in page_rows:
-            key = tuple(r.get(k) for k in key_fields)
-            seen.add(key)
-            e = ex_by_key.get(key)
-            if e is None:
-                session.add(model(**r)); stats["inserted"] += 1
-                continue
-            changed = False
-            for f, v in r.items():
-                if f in ("ingested_utc", "id") or not hasattr(e, f):
-                    continue
-                if getattr(e, f) != v:
-                    setattr(e, f, v); changed = True
-            if changed:
-                if hasattr(e, "ingested_utc") and "ingested_utc" in r:
-                    e.ingested_utc = r["ingested_utc"]
-                stats["updated"] += 1
-            else:
-                stats["unchanged"] += 1
-        for key, e in ex_by_key.items():
-            if key not in seen:
-                session.delete(e); stats["deleted"] += 1
+        # ONE BAD DAY MUST NOT LOSE THE OTHERS. A single BB row that broke a database rule (a repo row whose weighted
+        # average lay outside its own range) aborted the one flush for the whole month, so 10, 12 and 15 Nov never reached
+        # the table for four days. Each date is written inside its own savepoint; a day the database refuses is skipped,
+        # named in stats["rejected"] and reported by the caller, and every other day is kept.
+        try:
+            with session.begin_nested():
+                _replace_one_day(session, model, d, page_rows, key_fields, date_field, stats)
+                session.flush()
+        except Exception as exc:
+            session.expire_all()
+            log.error("replace_daily_rows %s %s rejected by the database: %s", model.__name__, d, str(exc)[:200])
+            stats.setdefault("rejected", []).append(str(d))
     session.flush()
     return stats
+
+
+def _replace_one_day(session, model, d, page_rows: list, key_fields: tuple, date_field: str, stats: dict) -> None:
+    """One date's rows: update what changed, insert what is new, delete what the page no longer has."""
+    existing = session.query(model).filter(getattr(model, date_field) == d).all()
+    ex_by_key = {tuple(getattr(e, k) for k in key_fields): e for e in existing}
+    seen = set()
+    for r in page_rows:
+        key = tuple(r.get(k) for k in key_fields)
+        seen.add(key)
+        e = ex_by_key.get(key)
+        if e is None:
+            session.add(model(**r)); stats["inserted"] += 1
+            continue
+        changed = False
+        for f, v in r.items():
+            if f in ("ingested_utc", "id") or not hasattr(e, f):
+                continue
+            if getattr(e, f) != v:
+                setattr(e, f, v); changed = True
+        if changed:
+            if hasattr(e, "ingested_utc") and "ingested_utc" in r:
+                e.ingested_utc = r["ingested_utc"]
+            stats["updated"] += 1
+        else:
+            stats["unchanged"] += 1
+    for key, e in ex_by_key.items():
+        if key not in seen:
+            session.delete(e); stats["deleted"] += 1
 
 
 def confirm_auctions_from_results(session) -> dict:

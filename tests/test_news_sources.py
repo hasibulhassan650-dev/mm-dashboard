@@ -65,12 +65,12 @@ class TestASitemapIsRead:
 
 
 class TestTheRegistry:
-    def test_bangla_sources_are_registered_but_not_read_until_the_guards_exist(self):
-        """A Bangla amount (কোটি, লাখ) and a Bangla request cannot be checked yet, and an unchecked amount is how a
-        wrong figure gets stored. Switching one on must be a deliberate edit that removes `enabled: False`."""
+    def test_bangla_sources_are_read_now_that_their_amounts_and_requests_are_checked_by_code(self):
+        """They were registered but off until engines/bangla.py could re-read a Bangla amount and tell a request from a
+        payment: an unchecked amount is how a wrong figure gets stored."""
         bn = [s for s in N.NEWS_SOURCES if s.get("lang") == "bn"]
-        assert bn and all(s.get("enabled") is False and s.get("why") for s in bn)
-        assert not [s for s in N.active_sources() if s.get("lang") == "bn"]
+        assert bn and all(s.get("enabled", True) for s in bn)
+        assert {s["key"] for s in bn} <= {s["key"] for s in N.active_sources()}
 
     def test_the_engine_reads_every_active_source_and_no_other(self):
         assert {s["key"] for s in N.active_sources()} <= {s["key"] for s in N.NEWS_SOURCES}

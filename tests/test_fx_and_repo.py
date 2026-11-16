@@ -110,3 +110,39 @@ class TestExchangeRates:
         # Returning nothing is correct; assuming "today" would be a silent lie.
         assert parse_fx_rates_html("<html><body><table><tr><td>USD</td>"
                                    "<td>1</td><td>2</td></tr></table></body></html>") == []
+
+
+class TestARowBBPrintsAgainstItself:
+    """11-Nov-2026: BB printed the repo range as '8.90-8.85' and the weighted average as 8.92, outside both ends. The database
+    rule (rate_min <= war <= rate_max) rejected that one row, and because the whole month was written in one flush,
+    10, 12 and 15 Nov were lost with it for four days."""
+
+    _HTML = ("<table><tr><td>11/11/2026</td><td>59</td><td>5629.689717845</td><td>1-7</td><td>8.90-8.85</td><td>8.92</td></tr>"
+             "<tr><td>12/11/2026</td><td>40</td><td>3000.0</td><td>1-7</td><td>8.80-8.90</td><td>8.85</td></tr></table>")
+
+    def test_the_contradicting_rates_are_blank_and_the_facts_are_kept(self):
+        rows = {r["trade_date"].day: r for r in parse_interbank_repo_html(self._HTML)}
+        bad = rows[11]
+        assert bad["num_deals"] == 59 and bad["amount_crore"] == 5629.689717845 and bad["tenor_max_days"] == 7
+        assert bad["rate_min_pct"] is None and bad["rate_max_pct"] is None and bad["war_pct"] is None, \
+            "which of the three BB numbers is wrong cannot be known, so none is stored"
+        ok = rows[12]
+        assert (ok["rate_min_pct"], ok["rate_max_pct"], ok["war_pct"]) == (8.80, 8.90, 8.85), "a consistent row is untouched"
+
+    def test_one_day_the_database_refuses_does_not_lose_the_others(self):
+        import datetime as dt
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        import db as dbmod
+        from engines.pipeline import replace_daily_rows
+        eng = create_engine("sqlite:///:memory:")
+        dbmod.Base.metadata.create_all(eng)
+        s = sessionmaker(bind=eng)()
+        d1, d2, d3 = dt.date(2026, 11, 10), dt.date(2026, 11, 11), dt.date(2026, 11, 12)
+        good = lambda d: {"trade_date": d, "num_deals": 5, "amount_crore": 100.0}
+        # two rows for one date break the table's unique(trade_date) rule: that DAY is refused, the rest are not
+        rows = [good(d1), good(d2), good(d2), good(d3)]
+        st = replace_daily_rows(s, dbmod.InterbankRepo, rows, ())
+        s.commit()
+        assert st["rejected"] == [str(d2)]
+        assert sorted(r.trade_date for r in s.query(dbmod.InterbankRepo).all()) == [d1, d3]

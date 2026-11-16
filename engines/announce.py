@@ -246,7 +246,7 @@ def news_digest_lines(session, now: datetime.datetime = None, hours: int = 24):
         problems.append("the liquidity news watch has not run for 6h+")
         out.append("**The news watch has not read anything for 6h or more.**")
     waiting = session.execute(text(
-        "SELECT COUNT(*) FROM news_articles WHERE triage_status IN ('untriaged', 'error') "
+        "SELECT COUNT(*) FROM news_articles WHERE triage_status IN ('untriaged', 'error', 'awaiting_ai') "
         "AND fetched_utc < :b"), {"b": now - datetime.timedelta(hours=2)}).scalar() or 0
     if waiting > 20:
         problems.append(f"{waiting} news articles are waiting for Claude (key missing or failing)")

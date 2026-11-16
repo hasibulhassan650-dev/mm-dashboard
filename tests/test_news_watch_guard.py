@@ -65,7 +65,7 @@ class TestNewsHeartbeat:
                 s.add(dbmod.NewsArticle(url=f"w{i}", source="x", title="t", triage_status="untriaged",
                                         fetched_utc=NOW - datetime.timedelta(hours=3)))
         rep = _check(monkeypatch, pop)
-        assert any("waited over 2h for Claude" in i for i in _mine(rep, "news-watch"))
+        assert any("waited over 2h for an AI reader" in i for i in _mine(rep, "news-watch"))
 
     def test_a_small_recent_backlog_is_not(self, monkeypatch):
         def pop(s):

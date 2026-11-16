@@ -18,6 +18,8 @@ import json
 import re
 from typing import Dict, List, Optional, Tuple
 
+from engines import bangla as _BN
+
 # kind -> direction. Fixed on our side: the model chooses a kind, never a direction.
 KINDS: Dict[str, str] = {
     # cash INTO the banking system
@@ -81,10 +83,11 @@ def _has(word: str, low: str) -> bool:
 
 def keyword_score(title: str, text: str = "") -> Tuple[int, bool]:
     """(score, passes). Passes only with an actor AND an action AND money (or CRR/SLR)."""
-    low = f"{title or ''} {text or ''}".lower()
-    actors = sum(_has(a, low) for a in _ACTORS)
-    actions = sum(_has(a, low) for a in _ACTIONS)
-    money = sum(_has(m, low) for m in _MONEY)
+    low = _BN.normalize(f"{title or ''} {text or ''}").lower()
+    # the Bangla words count beside the English ones: without them the gate skipped every Bangla article
+    actors = sum(_has(a, low) for a in _ACTORS) + sum(a in low for a in _BN.ACTORS)
+    actions = sum(_has(a, low) for a in _ACTIONS) + sum(a in low for a in _BN.ACTIONS)
+    money = sum(_has(m, low) for m in _MONEY) + sum(m in low for m in _BN.MONEY)
     regulatory = any(_has(r, low) for r in _REGULATORY)
     passes = bool(actors and actions and (money or regulatory))
     return actors + 2 * actions + money, passes
@@ -104,7 +107,8 @@ def amounts_crore(text: str) -> List[float]:
     """Every taka amount stated in `text`, in crore. A bare number with no unit is
     ignored: "Tk 4,000" could be a per-unit price, and guessing is how a wrong
     figure gets stored. Dollar amounts are ignored here (they are not taka)."""
-    out: List[float] = []
+    text = _BN.normalize(text)                    # Bangla digits as ASCII, no zero-width joiners
+    out: List[float] = list(_BN.amounts_crore(text)) if _BN.is_bangla(text, 0.05) else []
     for rx in (_PRE, _POST):
         for m in rx.finditer(text or ""):
             raw, unit = m.group(1), (m.group(2) or "")
@@ -156,7 +160,7 @@ def verify_amount(model_amount, quote: str, kind: str = None) -> Tuple[Optional[
 
 # ── validating what the model reported ────────────────────────────────────────
 def _norm(s: str) -> str:
-    s = (s or "").replace("’", "'").replace("‘", "'").replace("“", '"') \
+    s = _BN.normalize(s or "").replace("’", "'").replace("‘", "'").replace("“", '"') \
         .replace("”", '"').replace("–", "-").replace("—", "-").replace("\xa0", " ")
     return re.sub(r"\s+", " ", s).strip().lower()
 
@@ -192,14 +196,17 @@ def validate_event(raw: Dict, article: Dict) -> Tuple[Optional[Dict], List[str]]
     # wrong, so the rule reader's own test of meaning is applied to every reader's output: a
     # sentence that asks, estimates or plans, and contains no act of paying, is rejected.
     from engines import news_rules as _R
-    done, future = _R._tense(quote)
-    if _R.is_request(quote) and not done and not (future and kind in ALWAYS_MATTERS):
+    # A Bangla quote is judged by the Bangla guards: the English verb lists see nothing in it, so a Bangla "requested"
+    # would otherwise pass as a payment (the first-benchmark failure again, in another language).
+    bn = _BN.is_bangla(quote)
+    done, future = _BN.tense(quote) if bn else _R._tense(quote)
+    if (_BN.is_request(quote) if bn else _R.is_request(quote)) and not done and not (future and kind in ALWAYS_MATTERS):
         return None, ["the quote is a request, estimate or plan, not a payment"]
 
     # A running STOCK is not new cash: "as of June BB had provided Tk 76,000 crore" restates what
     # has been lent over years. gemini-3.8-flash-high and gemini-3.5-flash both reported it as an
     # event in the first model benchmark, so the rule reader's test applies to every reader.
-    if _R._STOCK.search(quote):
+    if (_BN.is_stock(quote) if bn else _R._STOCK.search(quote)):
         return None, ["the quote restates a running total ('as of', 'so far', 'outstanding'), not a new payment"]
 
     amount, unverified = verify_amount(raw.get("amount_crore"), quote, kind)
@@ -230,7 +237,7 @@ def validate_event(raw: Dict, article: Dict) -> Tuple[Optional[Dict], List[str]]
     ev = {
         "kind": kind, "direction": KINDS[kind], "amount_crore": amount,
         "amount_unverified": unverified,
-        "is_cumulative": bool(raw.get("is_cumulative")),
+        "is_cumulative": bool(raw.get("is_cumulative")) or (bn and _BN.is_period_total(quote)),
         "event_date": near(raw.get("event_date")), "announced_date": near(raw.get("announced_date")) or (pub if pub else None),
         "status": status if status in STATUSES else None,
         "channel": channel if channel in CHANNELS else None,

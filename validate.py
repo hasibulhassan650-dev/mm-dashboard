@@ -1227,11 +1227,11 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
             else:
                 add("news-watch", "the liquidity news watch has never run", "notice")
             backlog = q("SELECT COUNT(*) FROM news_articles WHERE triage_status IN "
-                        "('untriaged', 'error') AND fetched_utc < :b",
+                        "('untriaged', 'error', 'awaiting_ai') AND fetched_utc < :b",
                         b=datetime.datetime.utcnow() - datetime.timedelta(hours=2))
             if backlog and backlog[0][0] and backlog[0][0] > 20:
-                add("news-watch", f"{backlog[0][0]} news articles have waited over 2h for Claude to "
-                                  f"read them - ANTHROPIC_API_KEY is missing or the calls are failing")
+                add("news-watch", f"{backlog[0][0]} news articles have waited over 2h for an AI reader (the news task on "
+                                  f"the PC, or an LLM_*/ANTHROPIC_API_KEY secret on GitHub) - it is off or its calls are failing")
         except Exception:
             s.rollback()
 

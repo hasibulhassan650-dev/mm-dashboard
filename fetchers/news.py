@@ -64,17 +64,15 @@ NEWS_SOURCES: List[Dict] = [
     {"key": "newage_business", "label": "New Age - Business", "type": "sitemap",
      "url": "https://www.newagebd.net/news-sitemap/1.xml", "limit": 400,
      "section": r"/post/(economy|trade-commerce|business-miscellany|banking)/"},
-    # Bangla: registered, not read. The reader cannot yet check a Bangla amount (digits and the units কোটি, লাখ,
-    # হাজার কোটি) or tell a Bangla request from a payment, and an unchecked amount is how a wrong figure gets stored.
+    # Bangla: read, but only by an AI reader (the rule reader has no Bangla: those articles wait as 'awaiting_ai'), and
+    # every figure is re-read by engines/bangla.py (digits, কোটি/লাখ/হাজার কোটি, dollars never taka) and every quote is
+    # held to the Bangla request / future / running-total guards.
     {"key": "prothomalo_bn_business", "label": "Prothom Alo (Bangla) - Business", "type": "sitemap", "lang": "bn",
-     "url": "https://www.prothomalo.com/news_sitemap.xml", "section": r"/business/",
-     "enabled": False, "why": "Bangla amount and request guards not built yet"},
+     "url": "https://www.prothomalo.com/news_sitemap.xml", "section": r"/business/"},
     {"key": "samakal_economics", "label": "Samakal - Economics", "type": "sitemap", "lang": "bn",
-     "url": "https://samakal.com/news_sitemap.xml", "section": r"/economics/", "naive_utc_offset": 6,
-     "enabled": False, "why": "Bangla amount and request guards not built yet"},
+     "url": "https://samakal.com/news_sitemap.xml", "section": r"/economics/", "naive_utc_offset": 6},
     {"key": "tbs_bn_economy", "label": "The Business Standard (Bangla) - Economy", "lang": "bn",
-     "url": "https://www.tbsnews.net/bangla/economy/rss.xml",
-     "enabled": False, "why": "Bangla amount and request guards not built yet"},
+     "url": "https://www.tbsnews.net/bangla/economy/rss.xml"},
 ]
 
 

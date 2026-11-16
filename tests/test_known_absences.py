@@ -205,10 +205,17 @@ class TestABBPrintErrorIsReportedNotHidden:
         rep = self._report(monkeypatch, self._world(printed=1512.95), self._entry())
         assert not any("omo-ledger" in x for x in rep["issues"] + rep["notices"]), (rep["issues"], rep["notices"])
 
-    def test_the_shipped_entry_is_complete(self):
+    def test_no_print_error_is_recorded_that_a_later_bb_print_explains(self):
+        """The 29-Oct AR gap was first recorded as 'BB omitted a maturity'. BB's 11-Nov release later printed that tranche
+        maturing as a 14-day one, so BB had omitted nothing: it had mislabelled the tenor. The wrong entry is gone."""
         from engines.absences import known_print_errors
-        e = [x for x in known_print_errors() if x["instrument"] == "AR"]
-        assert e and e[0]["date"] == datetime.date(2026, 10, 29) and e[0]["reason"]
+        assert [x for x in known_print_errors() if x["instrument"] == "AR" and x["date"] == datetime.date(2026, 10, 29)] == []
+
+    def test_the_28_oct_assured_repo_is_a_14_day_tranche_by_bbs_own_later_print(self):
+        from engines.absences import known_tenor_corrections
+        e = [x for x in known_tenor_corrections() if x["instrument"] == "AR"]
+        assert e and e[0]["deal_date"] == datetime.date(2026, 10, 28) and e[0]["true_maturity"] == datetime.date(2026, 11, 11)
+        assert abs(e[0]["accepted_crore"] * (1 + 0.095 * 14 / 365) - 311.01) < 0.01, "BB printed 311.01 on 11-Nov"
 
 
 class TestATenorBBsOwnMaturityPrintContradicts:

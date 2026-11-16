@@ -83,8 +83,11 @@ def check():
         except Exception:
             deployed = ""
         try:
-            head = subprocess.check_output(["git", "rev-parse", "--short=7", "HEAD"]).decode().strip().lower()
-            head_ts = int(subprocess.check_output(["git", "log", "-1", "--format=%ct"]).decode().strip())
+            # The last commit that touched the FRONTEND, not HEAD: the keep-alive commit (1st and 15th of the month) changes
+            # nothing the site serves, and its Vercel deploy failing paged "stale deploy" for a site that was current. A
+            # failed deploy of a real frontend commit still alerts.
+            head = subprocess.check_output(["git", "log", "-1", "--format=%h", "--abbrev=7", "--", "frontend"]).decode().strip().lower()
+            head_ts = int(subprocess.check_output(["git", "log", "-1", "--format=%ct", "--", "frontend"]).decode().strip())
             age_min = (datetime.datetime.now(datetime.timezone.utc).timestamp() - head_ts) / 60
         except Exception:
             head, age_min = "", 0

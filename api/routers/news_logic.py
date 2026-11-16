@@ -116,7 +116,7 @@ def news_block(session, today: datetime.date = None, days: int = 120,
     if last is None:
         last = session.execute(text("SELECT MAX(fetched_utc) FROM news_articles")).scalar()
     waiting = session.execute(text(
-        "SELECT COUNT(*) FROM news_articles WHERE triage_status IN ('untriaged', 'error')")).scalar() or 0
+        "SELECT COUNT(*) FROM news_articles WHERE triage_status IN ('untriaged', 'error', 'awaiting_ai')")).scalar() or 0
     counts = {k: n for k, n in session.execute(text(
         "SELECT triage_status, COUNT(*) FROM news_articles GROUP BY triage_status")).fetchall()}
     reader_row = session.execute(text(

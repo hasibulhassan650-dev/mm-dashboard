@@ -20,6 +20,7 @@ import logging
 import os
 from typing import Callable, Dict, List, Optional
 
+from engines import bangla as _BN
 from engines import liquidity_news as L
 from engines import news_rules as R
 
@@ -65,7 +66,7 @@ _KIND_HELP = {
 }
 
 SCREEN_SYSTEM = (
-    "You screen Bangladeshi news for a money-market desk. Answer is_candidate=true ONLY if the "
+    "You screen Bangladeshi news for a money-market desk. The article may be in English or Bangla. Answer is_candidate=true ONLY if the "
     "article reports that a specific amount of cash was, or is about to be, released, paid, lent, "
     "borrowed or withdrawn between the government, Bangladesh Bank and the banking system - a subsidy "
     "release, arrears payment, support to a bank, a CRR/SLR change, a refinance scheme, BB or "
@@ -79,9 +80,11 @@ EXTRACT_SYSTEM = (
     "demand, estimate, projection or plan (\"Petrobangla has requested Tk 27,000 crore\", \"BERC projects\", "
     "\"the ministry plans to issue\") is NOT an event: report only cash that moved, or that an authority "
     "has formally decided to move. For every event "
-    "give `evidence_quote`: the exact sentence from the article that supports it, copied verbatim. "
+    "give `evidence_quote`: the exact sentence from the article that supports it, copied verbatim, in the language "
+    "it is written (the article may be Bangla: copy the Bangla sentence, do not translate it). "
     "`amount_crore` is in Bangladeshi crore taka (1 billion taka = 100 crore; 1 million = 0.1 crore; "
-    "1 lakh crore = 100,000 crore); null if the article gives no taka amount. `is_cumulative` is true "
+    "1 lakh crore = 100,000 crore; in Bangla, কোটি = 1 crore, হাজার কোটি = 1,000 crore, লাখ কোটি = 100,000 crore, "
+    "লাখ = 0.01 crore; an amount in ডলার is dollars, not taka); null if the article gives no taka amount. `is_cumulative` is true "
     "when the amount is a running total over a period (\"disbursed Tk 47 billion until mid-August\", "
     "\"so far this fiscal year\", \"in the first quarter\") rather than one payment. `status`: ANNOUNCED "
     "(planned or requested), APPROVED, DISBURSED (cash moved) or COMPLETED. `channel`: CASH, BONDS, "
@@ -255,7 +258,7 @@ def triage_pending(session, client, now: datetime.datetime,
     stats = {"bodies": 0, "skipped": 0, "screened_out": 0, "extracted": 0, "events_created": 0,
              "events_merged": 0, "events_rejected": 0, "errors": 0, "untriaged_left": 0,
              "budget_hit": False, "no_key": client is None, "reasons": []}
-    pend = session.query(NewsArticle).filter(NewsArticle.triage_status.in_(("untriaged", "error"))) \
+    pend = session.query(NewsArticle).filter(NewsArticle.triage_status.in_(("untriaged", "error", "awaiting_ai"))) \
         .order_by(NewsArticle.published_utc.desc().nullslast()).all()
 
     # 1. cheap filter on title + blurb; read the body only for plausible candidates
@@ -296,9 +299,15 @@ def triage_pending(session, client, now: datetime.datetime,
         # No key means no bill, not no reading: the free rule reader takes every candidate
         # through the same validation. Claude, when a key exists, reads what rules cannot.
         stats["mode"] = "rules"
-        stats["reasons"].append("no ANTHROPIC_API_KEY: read by the rule reader (free, conservative)")
+        stats["reasons"].append("no AI reader configured: read by the rule reader (free, conservative)")
         for a in work:
             art = _article_dict(a)
+            if _BN.is_bangla(f"{a.title or ''} {a.body_text or ''}"):
+                # The rule reader has no Bangla: it would store the article as 'read' having found nothing. Wait for
+                # an AI reader instead, and let the backlog alarm say so if none arrives.
+                a.triage_status = "awaiting_ai"
+                stats["awaiting_ai"] = stats.get("awaiting_ai", 0) + 1
+                continue
             a.triage_model, a.triage_utc = R.RULES_MODEL, now
             raw_events = R.extract(art)
             a.triage_json = json.dumps(raw_events)[:20000]
@@ -341,7 +350,10 @@ def triage_pending(session, client, now: datetime.datetime,
             msg = f"{type(exc).__name__}: {exc}"[:500]
             stats["errors"] += 1
             stats["reasons"].append(f"{a.url}: {msg}")
-            if _is_free_provider(client):
+            if _is_free_provider(client) and _BN.is_bangla(f"{a.title or ''} {a.body_text or ''}"):
+                a.triage_status = "awaiting_ai"          # no Bangla rules: retry with an AI reader, never "read, found nothing"
+                stats["awaiting_ai"] = stats.get("awaiting_ai", 0) + 1
+            elif _is_free_provider(client):
                 # A free tier fails routinely (rate limit, bad model name). The article is still
                 # read, by the rule reader, so coverage never drops below the floor - and the
                 # failure above is still counted, so a misconfiguration is fixed, not hidden.

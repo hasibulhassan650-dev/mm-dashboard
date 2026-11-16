@@ -69,18 +69,11 @@ absences:
 # maturity; when BB's print omits a tranche that BB's own earlier release shows, the check would fail
 # forever. An entry here turns that ONE finding into a dated notice, and only while the gap equals the
 # omitted amount (within tolerance) - any other gap on that day, or a correction by BB, is judged normally.
-print_errors:
-  # 29-Oct-2026 Assured Repo. pr14357 (as on 28-Oct) records a 1-day AR deal of 309.88 cr maturing 29-Oct
-  # (309.96 with a day's profit at 9.50%). pr14359 (as on 29-Oct) prints AR maturing 1,202.99 cr, which is
-  # exactly the 14-day tranche of 1,198.62 cr dealt 15-Oct (1,202.99 with 14 days' profit); the 1-day
-  # tranche is missing from that print although BB's own 28-Oct release shows it.
-  - dataset: omo
-    instrument: AR
-    date: 2026-10-29
-    omitted_crore: 309.96
-    source: https://www.bb.org.bd/mediaroom/press_release/press/pr14359_20261101.pdf
-    reason: >-
-      BB's 29-Oct release omits the 1-day AR tranche (309.88 cr, pr14357) that matures that day.
+# (Empty on purpose. The one entry it held, "BB's 29-Oct release omits the 1-day AR tranche", was WRONG: pr14382
+# (as on 11-Nov) later printed that tranche maturing as a 14-day one, so BB omitted nothing - it had mislabelled
+# the tenor, and the fix is the tenor_corrections entry below. A print error is only recorded when no later
+# BB print explains the gap.)
+print_errors: []
 
 # A tranche whose PRINTED tenor BB's own later maturity print contradicts. Not an absent day and not a missing
 # maturity: the deal is stored once, with the maturity date BB's figures prove. Applied to stored rows and to every
@@ -100,3 +93,16 @@ tenor_corrections:
     reason: >-
       BB's 27-Oct release prints this tranche maturing 15,870.00 (principal plus 2 days' profit at 9.50%), so it
       was a 2-day operation although the 25-Oct release prints "7-Days".
+  # pr14357 (as on 28-Oct) prints "AR 1-Day 309.88". BB's 29-Oct release (pr14359) prints no AR maturity for it (its only
+  # AR maturity that day is the 15-Oct 14-day tranche, 1,202.99), and pr14382 (as on 11-Nov) prints "AR 14-Days
+  # -311.01" = 309.88 + 14 days' profit at 9.50% (311.009). So it was a 14-day operation maturing 11-Nov (a Wednesday,
+  # a working day, so no holiday roll). Found by the 11-Nov omo-ledger shortfall (130 cr held vs 441 cr printed).
+  - dataset: omo
+    instrument: AR
+    deal_date: 2026-10-28
+    accepted_crore: 309.88
+    true_maturity: 2026-11-11
+    source: https://www.bb.org.bd/mediaroom/press_release/press/pr14382_20261112.pdf
+    reason: >-
+      BB's 11-Nov release prints an AR maturity of 311.01 = 309.88 + 14 days' profit at 9.50%, and its 29-Oct release
+      prints no maturity for this tranche, so it was a 14-day operation although the 28-Oct release prints "1-Day".
