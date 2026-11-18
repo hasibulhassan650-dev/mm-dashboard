@@ -1,7 +1,7 @@
 "use client";
 import * as React from "react";
 import { api, type MetaStatus } from "@/lib/api";
-import { timeAgo, fmtDate } from "@/lib/format";
+import { timeAgo, fmtDate, parseTs } from "@/lib/format";
 
 // Order datasets by importance for the panel.
 const ORDER = ["yields", "omo", "callmoney", "repo", "fx", "fxmarket", "fxrates",
@@ -9,7 +9,7 @@ const ORDER = ["yields", "omo", "callmoney", "repo", "fx", "fxmarket", "fxrates"
 
 function hoursSince(iso: string | null): number {
   if (!iso) return Infinity;
-  return (Date.now() - new Date(iso).getTime()) / 3.6e6;
+  return (Date.now() - parseTs(iso).getTime()) / 3.6e6;
 }
 
 export default function UpdateStatus() {
@@ -62,7 +62,7 @@ export default function UpdateStatus() {
                 </b>
               </span>
               <span className="mono" suppressHydrationWarning style={{ fontSize: 10.5, color: "var(--fg-mute)", textAlign: "right" }}>
-                {s?.last_run ? new Date(s.last_run).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : ""}
+                {s?.last_run ? parseTs(s.last_run).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : ""}
               </span>
             </div>
             <p style={{ fontSize: 11, color: "var(--fg-dim)", margin: "0 0 12px" }}>

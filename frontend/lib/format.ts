@@ -51,10 +51,22 @@ export function bps(deltaPct: number | null | undefined): string {
   return `${b > 0 ? "+" : ""}${b} bps`;
 }
 
+/**
+ * A server timestamp as a Date. The API sends UTC with NO zone ("2026-11-18T14:49:53"), and `new Date()` reads a zone-less date-time
+ * as LOCAL time: in Bangladesh (UTC+6) every age came out six hours too old ("Auto 6h ago" for a refresh that finished minutes
+ * earlier), which can also trip the "refresh has stopped" banner for a healthy system. A date-time without a zone is UTC;
+ * a date-only string ("2026-11-18") is already read as UTC and an explicit zone is respected.
+ */
+export function parseTs(iso: string): Date {
+  const hasTime = /T\d{2}:\d{2}/.test(iso);
+  const hasZone = /(Z|[+-]\d{2}:?\d{2})$/.test(iso);
+  return new Date(hasTime && !hasZone ? iso + "Z" : iso);
+}
+
 /** ISO/date string → "DD MMM YY" (BD convention). */
 export function fmtDate(iso: string | null | undefined): string {
   if (!iso) return DASH;
-  const d = new Date(iso);
+  const d = parseTs(iso);
   if (Number.isNaN(d.getTime())) return iso;
   const yy = String(d.getFullYear()).slice(2);
   return `${String(d.getDate()).padStart(2, "0")} ${MONTHS[d.getMonth()]} ${yy}`;
@@ -76,7 +88,7 @@ export function fmtMonth(s: string | null | undefined): string {
 /** Short axis label → "DD MMM". */
 export function fmtDateShort(iso: string | null | undefined): string {
   if (!iso) return DASH;
-  const d = new Date(iso);
+  const d = parseTs(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return `${String(d.getDate()).padStart(2, "0")} ${MONTHS[d.getMonth()]}`;
 }
@@ -84,7 +96,7 @@ export function fmtDateShort(iso: string | null | undefined): string {
 /** ISO → "DD MMM YY, HH:mm". */
 export function fmtDateTime(iso: string | null | undefined): string {
   if (!iso) return DASH;
-  const d = new Date(iso);
+  const d = parseTs(iso);
   if (Number.isNaN(d.getTime())) return iso;
   const hh = String(d.getHours()).padStart(2, "0");
   const mm = String(d.getMinutes()).padStart(2, "0");
@@ -94,7 +106,7 @@ export function fmtDateTime(iso: string | null | undefined): string {
 /** Relative age — e.g. "3m ago". */
 export function timeAgo(iso: string | null | undefined): string {
   if (!iso) return DASH;
-  const t = new Date(iso).getTime();
+  const t = parseTs(iso).getTime();
   if (Number.isNaN(t)) return DASH;
   const s = Math.floor((Date.now() - t) / 1000);
   if (s < 60)  return `${s}s ago`;

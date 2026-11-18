@@ -1,4 +1,5 @@
 import { api } from "@/lib/api";
+import { parseTs } from "@/lib/format";
 import { Panel } from "@/components/terminal/ui";
 import RelatedLinks from "@/components/RelatedLinks";
 import DownloadButton from "@/components/DownloadButton";
@@ -7,7 +8,7 @@ export const revalidate = 300;
 
 function ago(iso: string | null | undefined): string {
   if (!iso) return "—";
-  const h = (Date.now() - new Date(iso).getTime()) / 3.6e6;
+  const h = (Date.now() - parseTs(iso).getTime()) / 3.6e6;
   if (h < 1) return "just now";
   if (h < 48) return `${Math.round(h)}h`;
   return `${Math.round(h / 24)}d`;
@@ -15,7 +16,7 @@ function ago(iso: string | null | undefined): string {
 
 function when(iso: string | null | undefined): string {
   if (!iso) return "—";
-  return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  return parseTs(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
 export default async function GuardianPage() {

@@ -1,6 +1,7 @@
 "use client";
 import * as React from "react";
 import { api, type MetaStatus } from "@/lib/api";
+import { parseTs } from "@/lib/format";
 
 /**
  * Two honest warnings about the data, both driven by /api/meta/status.
@@ -28,7 +29,7 @@ function useStatus(): MetaStatus | null {
 
 function daysAgo(iso: string | null | undefined): string {
   if (!iso) return "unknown";
-  const h = (Date.now() - new Date(iso).getTime()) / 3.6e6;
+  const h = (Date.now() - parseTs(iso).getTime()) / 3.6e6;
   if (h < 48) return `${Math.round(h)} hours`;
   return `${Math.round(h / 24)} days`;
 }
@@ -38,7 +39,7 @@ export function StaleDataBanner() {
   // `pipeline_alive === false` only — never `!pipeline_alive`, or an older API
   // build that omits the field would show a false alarm on every page.
   if (!s || s.pipeline_alive !== false) return null;
-  const when = s.last_run ? new Date(s.last_run).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "unknown";
+  const when = s.last_run ? parseTs(s.last_run).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "unknown";
   return (
     <div role="alert" style={{
       background: "color-mix(in oklab, var(--neg) 16%, var(--panel))",
@@ -200,7 +201,7 @@ export function DataWarning({ dataset }: { dataset: string | string[] }) {
       <b style={{ color: "var(--warn)" }}>⚠ {issues.length} integrity issue(s) affect this page</b>
       {s?.health_as_of && (
         <span style={{ color: "var(--fg-mute)" }}>
-          {" "}· checked {new Date(s.health_as_of).toLocaleDateString(undefined, { dateStyle: "medium" })}
+          {" "}· checked {parseTs(s.health_as_of).toLocaleDateString(undefined, { dateStyle: "medium" })}
         </span>
       )}
       <ul style={{ margin: "4px 0 0", paddingLeft: 16 }}>

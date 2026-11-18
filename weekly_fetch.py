@@ -735,6 +735,38 @@ def _run():
     else:
         log.info("Weekly fetch complete — no errors — %ds elapsed", elapsed)
 
+    # ORDER MATTERS: the Doctor repairs, and the step ledger is written, BEFORE the verdict below is computed, so the verdict this run
+    # records already reflects what was repaired and carries this run's own diagnosis. (They used to run after it, so the banner kept
+    # showing a problem the Doctor had fixed until the NEXT hourly run recorded a new verdict.)
+    # The Doctor (engines/doctor.py): repairs only what has PROOF (a lost exchange-rate day from our own read log, a tenor BB's own
+    # later print contradicts), records each change with its old values, and writes a heartbeat. It never breaks the run.
+    try:
+        from engines.doctor import run_doctor
+        session = get_session()
+        dr = run_doctor(session)
+        session.commit()
+        session.close()
+        for line in dr["lost_days"]:
+            log.warning("Doctor recorded a lost day: %s", line)
+        for f in dr["tenor_fixes"]:
+            log.warning("Doctor corrected a tenor: %s %s -> matures %s (proof %s)", f["instrument"], f["deal_date"],
+                        f["true_maturity"], f["proof"])
+        errors.extend(dr["errors"])
+    except Exception as exc:
+        log.warning("Doctor did not run: %s", exc)
+
+    # One row per step per machine (engines/step_ledger.py): the ledger the freshness rule and the Doctor judge from. It is
+    # written beside, and never instead of, the run row below, and it can never break the run.
+    try:
+        from engines.step_ledger import record_step_runs
+        session = get_session()
+        n_steps = record_step_runs(session, errors, STEP_STATS)
+        session.commit()
+        session.close()
+        log.info("Step ledger: %d step row(s) recorded", n_steps)
+    except Exception as exc:
+        log.warning("Step ledger not written: %s", exc)
+
     # Data-integrity monitor: scan the stored data for rule violations (0% yields,
     # OMO mislabels, etc.) so bad data is caught automatically, not by eye.
     try:
@@ -771,35 +803,6 @@ def _run():
     except Exception as exc:
         log.exception("Guardian ledger failed: %s", exc)
         errors.append(f"guardian: {exc}")
-
-    # The Doctor (engines/doctor.py): repairs only what has PROOF (a lost exchange-rate day from our own read log, a tenor BB's own
-    # later print contradicts), records each change with its old values, and writes a heartbeat. It never breaks the run.
-    try:
-        from engines.doctor import run_doctor
-        session = get_session()
-        dr = run_doctor(session)
-        session.commit()
-        session.close()
-        for line in dr["lost_days"]:
-            log.warning("Doctor recorded a lost day: %s", line)
-        for f in dr["tenor_fixes"]:
-            log.warning("Doctor corrected a tenor: %s %s -> matures %s (proof %s)", f["instrument"], f["deal_date"],
-                        f["true_maturity"], f["proof"])
-        errors.extend(dr["errors"])
-    except Exception as exc:
-        log.warning("Doctor did not run: %s", exc)
-
-    # One row per step per machine (engines/step_ledger.py): the ledger the freshness rule and the Doctor judge from. It is
-    # written beside, and never instead of, the run row below, and it can never break the run.
-    try:
-        from engines.step_ledger import record_step_runs
-        session = get_session()
-        n_steps = record_step_runs(session, errors, STEP_STATS)
-        session.commit()
-        session.close()
-        log.info("Step ledger: %d step row(s) recorded", n_steps)
-    except Exception as exc:
-        log.warning("Step ledger not written: %s", exc)
 
     # Record the run so the dashboard can show "last refreshed at X" honestly,
     # even when a run found no new rows.
