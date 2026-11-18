@@ -44,13 +44,18 @@ CLASS_POLICY: Dict[str, Policy] = {
 _RULES = (
     (DB_CONSTRAINT, re.compile(r"CheckViolation|violates check constraint|IntegrityError|UniqueViolation|NotNullViolation|"
                                r"CHECK constraint failed|NOT NULL constraint failed|rejected by a database rule", re.I)),
-    (PDF_UNSERVED, re.compile(r"Request Rejected|pdf[^.]{0,40}(not served|download failed)|download failed \(RuntimeError\)", re.I)),
+    # "not a PDF": the download answered with HTML (a challenge or "Request Rejected" page) where a PDF should be
+    (PDF_UNSERVED, re.compile(r"Request Rejected|pdf[^.]{0,40}(not served|download failed)|download failed \(RuntimeError\)|"
+                              r"not a PDF", re.I)),
     (BB_DOWN, re.compile(r"under maintenance|maintenance page|HTTP 5\d\d|\b50[0-4]\b|Service Unavailable|Bad Gateway", re.I)),
     # our own "no rows were read ... (blocked, or the page changed)" is AMBIGUOUS by its own words: EMPTY, not BB_BLOCKED
-    (EMPTY, re.compile(r"no rows were read|returned no rows", re.I)),
+    (EMPTY, re.compile(r"no rows were read|returned no rows|returned nothing|unparseable", re.I)),
     (BB_BLOCKED, re.compile(r"challenge page|block page|F5 CAPTCHA|captcha|enable JavaScript|support ID|human visitor|"
-                            r"blocked|firewall", re.I)),
-    (PARSE_DEGRADED, re.compile(r"page changed|parse got worse|less than half the|parsed 0 rows where|layout|degraded", re.I)),
+                            r"blocked|firewall|page was not served|not served \(challenge|challenge or no table", re.I)),
+    # a parser that crashes on a page it did not expect ('NoneType' object has no attribute 'find_all'): the page is not what
+    # it was (a challenge page, or a changed layout) - never a silent success
+    (PARSE_DEGRADED, re.compile(r"page changed|parse got worse|less than half the|parsed 0 rows where|layout|degraded|"
+                                r"NoneType' object has no attribute", re.I)),
     (EMPTY, re.compile(r"no rows were read|parsed 0 rows|fetched 0\b|returned no rows|no rows", re.I)),
     (NETWORK, re.compile(r"timed? ?out|ReadTimeout|ConnectTimeout|ConnectionError|Connection reset|Connection refused|"
                          r"Name or service not known|getaddrinfo|Max retries exceeded|SSLError", re.I)),

@@ -256,6 +256,12 @@ def matters(ev: Dict) -> bool:
     if conf is not None and conf < MATTERS_MIN_CONFIDENCE:
         return False
     if ev["kind"] in ALWAYS_MATTERS:
+        # A background sentence is not news: "Despite liquidity injection by the government, the bank has failed to return
+        # depositors' money for years" was announced as BB bank support - no amount, a running total over years. A reserve-
+        # requirement change keeps mattering whatever it states; any other always-matters kind needs an amount or a single act.
+        if (ev["kind"] not in ("RESERVE_REQ_CUT", "RESERVE_REQ_HIKE") and ev.get("amount_crore") is None
+                and ev.get("is_cumulative")):
+            return False
         return True
     amt = ev.get("amount_crore")
     return amt is not None and amt >= MATTERS_MIN_CRORE
@@ -326,19 +332,26 @@ def _same_event(row, ev: Dict, url: str, anchor) -> bool:
 
 
 def merge_or_create(session, ev: Dict, article: Dict, now: datetime.datetime = None,
-                    verified_by: str = "llm"):
+                    verified_by: str = "llm", exclude_ids=()):
     """Fold a validated event into the stored ones. Returns (row, 'created'|'merged').
 
     A reading by a STRONGER reader that merges into a weaker one takes the row over (amount, status, quote,
     counterparty, confidence, verified_by) and confirms it: an AI reading agreeing with a rule-read lead is the
-    same event, confirmed, not a second one."""
+    same event, confirmed, not a second one.
+
+    `exclude_ids`: rows this SAME reading of this article already produced. Two events from one article are two facts, never one:
+    "Forty farmers received Tk 4.50 crore under the Tk 10,000 crore scheme" yields a disbursement AND the scheme's size, and the
+    second merged into the first through the shared-article rule, filling its (rightly empty) amount with 10,000 crore."""
     from db import LiquidityEvent, LiquidityEventHistory
     now = now or datetime.datetime.utcnow()
     anchor = ev.get("event_date") or ev.get("announced_date")
     url = article.get("url") or ""
+    exclude = set(exclude_ids or ())
     match = None
     for row in session.query(LiquidityEvent).filter(LiquidityEvent.kind == ev["kind"],
                                                      LiquidityEvent.superseded_utc.is_(None)).all():
+        if row.id in exclude:
+            continue
         if _same_event(row, ev, url, anchor):
             match = row
             break
@@ -376,7 +389,7 @@ def merge_or_create(session, ev: Dict, article: Dict, now: datetime.datetime = N
             match.amount_crore = ev["amount_crore"]
         match.updated_utc = now
         match.matters = matters({"kind": match.kind, "confidence": match.confidence,
-                                 "amount_crore": match.amount_crore})
+                                 "amount_crore": match.amount_crore, "is_cumulative": match.is_cumulative})
         session.flush()
         return match, "merged"
 

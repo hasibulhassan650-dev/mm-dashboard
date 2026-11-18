@@ -43,7 +43,7 @@ _ABBREV = re.compile(r"\b(Tk|Mr|Mrs|Ms|Dr|No|Ltd|Co|Govt|St|Prof)\.(?=\s)")
 # release" matched them and were stored as payments. "cut", "raise" and "pay" stay (same word in both tenses),
 # and _governed() rejects them when "to", "will" or a request verb sits in front.
 _DONE = re.compile(
-    r"\b(released|releases|disbursed|disburses|disbursement of|paid|pays|provided|provides|lent|lends|injected|"
+    r"\b(released|releases|disbursed|disburses|disbursement of|paid|pays|received|receives|provided|provides|lent|lends|injected|"
     r"injects|given|gives|gave|cleared|clears|settled|extended|extends|drawn|borrowed|borrows|withdrawn|issued|"
     r"issues|reallocated|raised|raises|expanded|increased|cut|cuts|reduced|reduces|lowered|slashed|relaxed|eased|"
     r"hiked|hikes|repaid|repays|repaying|sold|sells|bought|buys|purchased|purchases)\b", re.I)

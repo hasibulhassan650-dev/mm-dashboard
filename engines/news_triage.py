@@ -231,7 +231,7 @@ def _store_events(session, raw_events, art: Dict, now: datetime.datetime, stats:
             stats["reasons"].append(f"{url}: rejected - {'; '.join(why)}")
             continue
         red = L.redundancy(session, ev, art)
-        row, how = L.merge_or_create(session, ev, art, now, verified_by=verified_by)
+        row, how = L.merge_or_create(session, ev, art, now, verified_by=verified_by, exclude_ids=kept)
         if red and not row.redundant_with:
             row.redundant_with = red
         kept.append(row.id)

@@ -1347,14 +1347,26 @@ def run_bgiib_fetch(limit: int = 12) -> dict:
     try:
         out = fetch_bgiib(session, limit=limit)
         rows = out["rows"]
+        # A refusal for a release the Doctor has proved is BB's dead link (data_absences, 'Unserved PDF:') is expected: it is
+        # logged and retried every run, but it is not this step's failure.
+        try:
+            from db import DataAbsence
+            holes = " ".join((a.reason or "") for a in session.query(DataAbsence).filter(DataAbsence.dataset == "bgiib").all())
+        except Exception:
+            session.rollback()
+            holes = ""
+        real_refused = {k: v for k, v in (out["refused"] or {}).items() if not (k.split(":")[0] and k.split(":")[0] in holes)}
+        if len(real_refused) != len(out["refused"] or {}):
+            log.info("BGIIB: %d refused release(s) are recorded BB dead links (not an error)",
+                     len(out["refused"]) - len(real_refused))
         if not rows:
             msg = out.get("reason")
-            if out["refused"]:
-                msg = f"{msg}; refused: {out['refused']}"
+            if real_refused:
+                msg = f"{msg}; refused: {real_refused}"
             if msg:
                 log.warning("BGIIB: %s", msg)
             return {"rows": 0, "releases": 0, "refused": out["refused"],
-                    "errors": [f"bgiib: {msg}"] if out["refused"] else []}
+                    "errors": [f"bgiib: {msg}"] if real_refused else []}
 
         now = datetime.datetime.utcnow()
 
@@ -1375,7 +1387,7 @@ def run_bgiib_fetch(limit: int = 12) -> dict:
         session.commit()
         log.info("BGIIB: %d release(s) read, %d row(s) added, %d updated",
                  out["releases"], added, updated)
-        errs = [f"bgiib: refused {out['refused']}"] if out["refused"] else []
+        errs = [f"bgiib: refused {real_refused}"] if real_refused else []
         if res["quarantined"]:
             errs.append(f"bgiib: {len(res['quarantined'])} auction row(s) refused by the database and quarantined: "
                         + "; ".join(f"{q['raw'].get('tenor_label')} {q['raw'].get('auction_date')} "

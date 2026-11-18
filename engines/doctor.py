@@ -20,6 +20,9 @@ import json
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 MAX_TENOR_FIXES_PER_RUN = 3
+BGIIB_GRACE_DAYS = 5               # a listed BGIIB PDF BB does not serve is BB's hole only after this many days...
+BGIIB_MIN_FAILED_READS = 3         # ...and this many failed reads, and only while BB serves a LATER BGIIB PDF
+UNSERVED_MARK = "Unserved PDF:"    # the Doctor's own absences start with this, so it can find (and retire) exactly its own
 TENOR_PROOF_TOLERANCE_CRORE = 0.02          # paisa-exact: BB prints 2 decimals
 LEDGER_TOLERANCE_PCT, LEDGER_TOLERANCE_MIN = 0.015, 10.0     # the same band validate's omo-ledger uses
 MAX_TENOR_DAYS = 400
@@ -112,6 +115,42 @@ def find_tenor_mismatches(printed: Dict[Tuple[str, datetime.date], float], tranc
     return [f for f in out if seen[f["id"]] == 1]
 
 
+# ── a listed PDF BB never serves ─────────────────────────────────────────────
+def find_unserved_bgiib(releases: List[Dict], stored_dates: Iterable[datetime.date], failed_reads: Dict[str, List],
+                        served_serials: Iterable[str], today: datetime.date) -> List[Dict]:
+    """BGIIB results BB has LISTED but whose PDF it demonstrably does not serve - proof, not a guess.
+
+    A release qualifies only when ALL hold: no auction is stored within 2 days of its held date; it is at least BGIIB_GRACE_DAYS
+    old; at least BGIIB_MIN_FAILED_READS reads of it failed; and a LATER BGIIB release has been read successfully (BB serves PDFs,
+    so this one is BB's dead link, not an outage or our block). Anything less stays a waiting item that retries every run.
+
+    releases      - dicts: serial, published (date), held (date), url
+    failed_reads  - {serial: [timestamps of failed reads]} from the step ledger
+    served_serials- serials of BGIIB releases whose figures we hold"""
+    stored = list(stored_dates)
+    served = set(served_serials)
+    out = []
+    for r in releases:
+        if any(abs((d - r["held"]).days) <= 2 for d in stored):
+            continue
+        reads = sorted(failed_reads.get(r["serial"], []))
+        if (today - r["published"]).days < BGIIB_GRACE_DAYS or len(reads) < BGIIB_MIN_FAILED_READS:
+            continue
+        later = sorted(x["serial"] for x in releases if x["published"] > r["published"] and x["serial"] in served)
+        if not later:
+            continue
+        out.append({"serial": r["serial"], "held": r["held"], "url": r["url"], "reads": len(reads),
+                    "first_read": reads[0], "last_read": reads[-1], "later_served": later[0]})
+    return out
+
+
+def unserved_reason(f: Dict) -> str:
+    return (f"{UNSERVED_MARK} BB lists {f['serial']} (BGIIB result held {f['held']}) at {f['url']} but has not served its PDF in "
+            f"{f['reads']} reads between {str(f['first_read'])[:16]} and {str(f['last_read'])[:16]} UTC, while it did serve the later "
+            f"release {f['later_served']}; BB's dead link, retried every run and retired automatically when BB publishes it. "
+            f"Recorded by the Doctor.")
+
+
 # ── database glue ────────────────────────────────────────────────────────────
 def _holidays(session) -> Set[datetime.date]:
     from db import HolidayCalendar
@@ -135,6 +174,50 @@ def heal_lost_days(session, now: Optional[datetime.datetime] = None) -> List[str
             session.add(_change(now, "lost_day", {"dataset": "fxrates", "day": str(f["day"]), "evidence": lost_reason(f)}))
             done.append(f"fxrates {f['day']} (lost)")
     return done
+
+
+def heal_unserved_bgiib(session, now: Optional[datetime.datetime] = None) -> Dict[str, List[str]]:
+    """Record a BGIIB result BB lists but does not serve as BB's hole, with evidence; retire the record when BB publishes it.
+
+    The PDF keeps being retried by run_bgiib_fetch every run, so a fixed link is picked up with no human: the next run stores the
+    figures and this function then removes its own absence (data_changes keeps both events)."""
+    from db import BgiibAuction, DataAbsence, PressRelease, StepRun
+    now = now or datetime.datetime.utcnow()
+    today = now.date()
+    out: Dict[str, List[str]] = {"recorded": [], "retired": []}
+    stored = {}
+    for d, serial in session.query(BgiibAuction.auction_date, BgiibAuction.source_serial).all():
+        stored[serial] = d
+    # retire first: figures now exist near a date the Doctor had recorded as BB's hole
+    for a in session.query(DataAbsence).filter(DataAbsence.dataset == "bgiib").all():
+        if (a.reason or "").startswith(UNSERVED_MARK) and any(abs((d - a.absent_date).days) <= 2 for d in stored.values()):
+            session.add(_change(now, "unserved_pdf_retired", {"day": str(a.absent_date), "why": "BB published the figures"}))
+            out["retired"].append(f"bgiib {a.absent_date} (BB published it)")
+            session.delete(a)
+    rels = []
+    for serial, pub, subj, url in session.query(PressRelease.serial, PressRelease.published_date, PressRelease.subject_date,
+                                                PressRelease.url).filter(
+            PressRelease.category == "BGIIB", ~PressRelease.title.ilike("%notice%"),
+            PressRelease.published_date >= today - datetime.timedelta(days=60)).all():
+        held = subj if isinstance(subj, datetime.date) else pub
+        if held is not None and pub is not None:
+            rels.append({"serial": serial, "published": pub, "held": held, "url": url})
+    failed: Dict[str, List] = {}
+    for r in session.query(StepRun).filter(StepRun.step == "bgiib", StepRun.status != "ok",
+                                           StepRun.run_utc >= now - datetime.timedelta(days=30)).all():
+        for rel in rels:
+            if rel["serial"] in (r.error or ""):
+                failed.setdefault(rel["serial"], []).append(r.run_utc)
+    known = {a.absent_date for a in session.query(DataAbsence).filter(DataAbsence.dataset == "bgiib").all()}
+    for f in find_unserved_bgiib(rels, stored.values(), failed, [s for s in stored if s], today):
+        if any(abs((k - f["held"]).days) <= 2 for k in known):
+            continue
+        session.add(DataAbsence(dataset="bgiib", absent_date=f["held"], kind="bb_omission", reason=unserved_reason(f),
+                                source=f["url"], verified_utc=now, checks=1))
+        session.add(_change(now, "unserved_pdf", {"serial": f["serial"], "held": str(f["held"]), "reads": f["reads"],
+                                                  "later_served": f["later_served"], "evidence": unserved_reason(f)}))
+        out["recorded"].append(f"bgiib {f['held']} ({f['serial']}: BB dead link)")
+    return out
 
 
 def _change(now, cls: str, detail: Dict):
@@ -202,7 +285,7 @@ def run_doctor(session, now: Optional[datetime.datetime] = None) -> Dict:
     """One pass: repair what has proof, heartbeat, and report. Never raises into the caller's run."""
     from db import StepRun
     now = now or datetime.datetime.utcnow()
-    out: Dict = {"lost_days": [], "tenor_fixes": [], "errors": []}
+    out: Dict = {"lost_days": [], "tenor_fixes": [], "unserved": {"recorded": [], "retired": []}, "errors": []}
     try:
         out["lost_days"] = heal_lost_days(session, now)
     except Exception as exc:
@@ -213,10 +296,15 @@ def run_doctor(session, now: Optional[datetime.datetime] = None) -> Dict:
     except Exception as exc:
         session.rollback()
         out["errors"].append(f"doctor: tenor repair failed: {exc}")
+    try:
+        out["unserved"] = heal_unserved_bgiib(session, now)
+    except Exception as exc:
+        session.rollback()
+        out["errors"].append(f"doctor: unserved-PDF repair failed: {exc}")
     from fetchers.news import machine
     session.add(StepRun(run_utc=now, machine=machine(), step="doctor",
                         status="failed" if out["errors"] else "ok", error="; ".join(out["errors"]) or None,
-                        rows_stored=len(out["lost_days"]) + len(out["tenor_fixes"]),
+                        rows_stored=len(out["lost_days"]) + len(out["tenor_fixes"]) + len(out["unserved"]["recorded"]),
                         evidence_json=json.dumps({"lost_days": out["lost_days"],
                                                   "tenor_fixes": [str(f["id"]) for f in out["tenor_fixes"]]})))
     return out

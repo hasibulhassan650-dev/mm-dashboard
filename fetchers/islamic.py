@@ -174,7 +174,7 @@ def fetch_bgiib(session, limit: int = 12) -> dict:
     pending = session.execute(_t("""
         SELECT p.serial, p.published_date, p.subject_date, p.title, p.url
         FROM press_releases p
-        WHERE p.category IN ('BGIIB', 'SUKUK')
+        WHERE p.category = 'BGIIB'
           AND NOT EXISTS (SELECT 1 FROM bgiib_auctions b
                           WHERE b.source_serial = p.serial)
         ORDER BY p.published_date DESC

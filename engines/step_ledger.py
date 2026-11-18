@@ -82,6 +82,11 @@ def step_health(session, step: str, now: Optional[datetime.datetime] = None, max
     rows = session.query(StepRun).filter(StepRun.step == step, StepRun.run_utc >= since).order_by(StepRun.run_utc).all()
     if not rows:
         return False, False, None
+    # The PC is the real reader and GitHub's runner is a backup that BB's firewall blocks as a matter of course: when the PC has
+    # rows for this step in the window, the step is judged from the PC alone. A GitHub failure newer than the PC's ok must not
+    # turn a healthy step red (the 16-Nov race, reversed). GitHub's rows stand in only when the PC has none.
+    pc = [r for r in rows if r.machine != "github"]
+    rows = pc if pc else rows
     oks = [r.run_utc for r in rows if r.status == "ok"]
     # GitHub's runner is blocked by BB's firewall as a matter of course (the PC is the real reader), so its empty/blocked reads
     # say nothing against a step; a FAILED step counts from any machine, and any non-ok status counts from the PC.

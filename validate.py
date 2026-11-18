@@ -95,8 +95,24 @@ def _empty_fetches(session) -> dict:
     return out
 
 
+def _as_date(v):
+    """A date from a date, a datetime or an ISO string; None when it cannot be read (never guessed)."""
+    if v is None:
+        return None
+    if isinstance(v, datetime.datetime):
+        return v.date()
+    if isinstance(v, datetime.date):
+        return v
+    try:
+        return datetime.date.fromisoformat(str(v)[:10])
+    except ValueError:
+        return None
+
+
 # How long a BGIIB result BB has listed but we hold no figures for may wait on BB before it counts as OUR defect.
 BGIIB_GRACE_DAYS = 5
+# A Sukuk auction release is followed, only after settlement, by a row on BB's sukuk-outstanding page; it waits this long.
+SUKUK_GRACE_DAYS = 21
 
 
 def integrity_check(limit_per_rule: int = 8) -> dict:
@@ -1086,8 +1102,16 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
             # The Islamic window is stored now, so this is no longer a coverage
             # notice but a real check: a BGIIB RESULT with no auction row means
             # a weekly auction the ladder and the curve cannot see.
+            # Dead BB links the Doctor has proved (engines/doctor.heal_unserved_bgiib): a hole in BB's publication, on record.
+            try:
+                _bgiib_holes = {r[0]: r[1] for r in q("SELECT absent_date, reason FROM data_absences WHERE dataset = 'bgiib'")}
+            except Exception:
+                s.rollback()
+                _bgiib_holes = {}
+            # ONLY the BGIIB result table: a Sukuk release (a different instrument, on a different BB page) can never have a
+            # bgiib_auctions row, so judging it here escalated pr14384 for ever. Sukuk is checked against its own table below.
             for r in q("SELECT serial, published_date, subject_date FROM press_releases "
-                       "WHERE category IN ('BGIIB', 'SUKUK') "
+                       "WHERE category = 'BGIIB' "
                        "AND LOWER(title) NOT LIKE '%notice%' "
                        "AND published_date >= :lo ORDER BY published_date DESC",
                        lo=today - datetime.timedelta(days=60)):
@@ -1102,6 +1126,12 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
                         "BETWEEN :lo AND :hi",
                         lo=held - datetime.timedelta(days=2),
                         hi=held + datetime.timedelta(days=2))
+                _hole = next((v for k, v in _bgiib_holes.items() if k is not None and abs((_as_date(k) - held).days) <= 2), None) \
+                    if _bgiib_holes else None
+                if (not got or not got[0][0]) and _hole is not None:
+                    add("bgiib", f"{serial}: BB lists this BGIIB result (held {held}) but never served its PDF - recorded as "
+                                 f"BB's hole by the Doctor ({str(_hole)[:160]})", "notice")
+                    continue
                 if not got or not got[0][0]:
                     # BB sometimes lists a release before its PDF is served: on 12-Nov-2026 five releases (OMO, T-Bond
                     # result, BGIIB, ...) were listed and every one answered "Request Rejected", exactly as a file that
@@ -1117,6 +1147,26 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
                             "waiting")
                     else:
                         add("bgiib", "ESCALATED — " + _msg + f" ({_age}d: BB has not served the PDF, or it cannot be parsed)")
+            # A Sukuk auction release is followed - only after settlement - by a row on BB's sukuk-outstanding page.
+            for r in q("SELECT serial, published_date, subject_date FROM press_releases "
+                       "WHERE category = 'SUKUK' AND LOWER(title) NOT LIKE '%notice%' "
+                       "AND published_date >= :lo ORDER BY published_date DESC",
+                       lo=today - datetime.timedelta(days=90)):
+                serial, pub, subj = r[0], r[1], r[2]
+                held = _as_date(subj or pub)
+                if held is None:
+                    continue
+                n = q("SELECT COUNT(*) FROM sukuk_outstanding WHERE issue_date BETWEEN :lo AND :hi",
+                      lo=held - datetime.timedelta(days=3), hi=held + datetime.timedelta(days=SUKUK_GRACE_DAYS))
+                if n and n[0][0]:
+                    continue
+                _age = (today - _as_date(pub)).days
+                _m = (f"{serial} published {pub} announces a Sukuk auction ({held}) and BB's sukuk-outstanding page does not "
+                      f"list a new issue for it")
+                if _age <= SUKUK_GRACE_DAYS:
+                    add("sukuk", _m + f" (BB lists an issue only after settlement; {_age}d so far)", "waiting")
+                else:
+                    add("sukuk", "ESCALATED — " + _m + f" ({_age}d)")
         except Exception as exc:
             s.rollback()
             add("press", f"the announcement-vs-event check could not run ({exc})")
