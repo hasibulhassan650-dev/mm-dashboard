@@ -3,6 +3,7 @@ import { api } from "@/lib/api";
 import type { NewsEvent } from "@/lib/api";
 import { Panel } from "@/components/terminal/ui";
 import RelatedLinks from "@/components/RelatedLinks";
+import LiquidityInsights from "@/components/LiquidityInsights";
 
 export const revalidate = 300;
 
@@ -36,7 +37,7 @@ export default async function LiquidityWatchPage({
   const sp = await searchParams;
   const showRed = sp.redundant === "1";
   const showMinor = sp.minor === "1";
-  const feed = await api.news(180, showRed, showMinor);
+  const [feed, insights] = await Promise.all([api.news(180, showRed, showMinor), api.insights()]);
 
   if (!feed) {
     return (
@@ -83,6 +84,15 @@ export default async function LiquidityWatchPage({
         </div>
       )}
 
+      {insights ? <LiquidityInsights data={insights} /> : (
+        <div style={{ fontSize: 12.5, color: "var(--warn)", marginBottom: "var(--gap)" }}>
+          The liquidity insights are unavailable (<code>/api/insights</code> is not deployed or not answering). Nothing is assumed in their place.
+        </div>
+      )}
+
+      <div style={{ fontSize: 11.5, color: "var(--fg-mute)", margin: "2px 0 6px", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+        Reported in the press — not Bangladesh Bank data, not in any figure above
+      </div>
       <div className="kpi-strip" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(190px,1fr))" }}>
         {kpi("Injected this month", fmt(t.month_inject_crore), "crore · events with a stated amount", "var(--pos)")}
         {kpi("Absorbed this month", fmt(t.month_absorb_crore), "crore", "var(--warn)")}

@@ -54,6 +54,10 @@ export const api = {
       return await get<NewsFeed>("/api/news", { days, redundant: String(redundant), minor: String(minor) });
     } catch { return null; }
   },
+  /** Liquidity insights (regime, weekly drivers, next working days), computed from BB's own data. null when the API has not deployed it. */
+  insights: async (): Promise<Insights | null> => {
+    try { return await get<Insights>("/api/insights"); } catch { return null; }
+  },
   omoInjection: (window_days = 30) => get<OmoInjection>("/api/omo/injection", { window_days }),
   yieldCurve:      () => get<YieldRow[]>("/api/yields/curve"),
   yieldDormant:    () => get<YieldRow[]>("/api/yields/curve/dormant"),
@@ -483,6 +487,39 @@ export interface NewsFeed {
   events: NewsEvent[];
   /** read only by the free rule reader: leads, never counted, announced or summed. Older APIs omit it. */
   unconfirmed?: NewsEvent[]; unconfirmed_note?: string;
+}
+
+export interface InsightStatement {
+  id: string; severity: "alert" | "watch" | "info"; headline: string; detail: string;
+  numbers: Record<string, number | null | undefined>; evidence: { label: string; href: string }[];
+}
+export interface InsightDay {
+  date: string; weekday: string; holiday: boolean; securities_net_crore: number | null;
+  govt_inflow_crore: number | null; auction_out_crore: number | null; omo_rolloff_crore: number | null;
+  basis: string; events: { id: number; summary?: string; amount_crore?: number | null }[];
+}
+export interface Insights {
+  as_of: string; unit: string; sign_convention: string;
+  regime: {
+    label: "TIGHT" | "BALANCED" | "SURPLUS" | "UNKNOWN"; rule: { tight: string; surplus: string; otherwise: string };
+    why: string[]; position_in_corridor_pct: number | null; segmented: boolean;
+    inputs: {
+      call: { rate: number; date: string; provisional: boolean } | null;
+      corridor: { repo: number | null; slf: number | null; sdf: number | null; effective_date: string } | null;
+      fresh: { date: string; injection_crore: number; sdf_crore: number } | null;
+    };
+  };
+  drivers: {
+    bb_net_lending_now_crore: number | null; bb_lending_maturing_7d_crore: number | null; bb_net_lending_change_crore: number | null;
+    movers: { instrument: string; change_crore: number; now_crore: number | null; then_crore: number }[];
+    securities: { crore: number | null; days: number; confirmed_days: number };
+    fx: { crore: number | null; items: unknown[]; unknown_types: string[] };
+    call_change_bp: number | null;
+  };
+  calendar: InsightDay[];
+  news: { events: NewsEvent[]; unconfirmed: number; note?: string };
+  knowledge: { omo_known_to: string | null; auction_calendar_to: string | null; last_fx_auction: string | null };
+  insights: InsightStatement[];
 }
 
 export interface DeskBuyback {
