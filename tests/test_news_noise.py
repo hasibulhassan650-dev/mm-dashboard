@@ -346,3 +346,42 @@ class TestNoGenuineEventIsLost:
         assert {2, 4, 6, 8, 17} <= shown
         # and the month's figure is the one real act, 715 crore
         assert _month_inject(s) == 715.0
+
+
+class TestNatureIsAudited:
+    """An event with no nature is read as cash, and a story link to nothing hides a real event: both must be loud."""
+
+    def _check(self, monkeypatch, rows):
+        import datetime
+        import validate
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        import db as dbmod
+        eng = create_engine("sqlite:///:memory:")
+        dbmod.Base.metadata.create_all(eng)
+        s = sessionmaker(bind=eng)()
+        for r in rows:
+            s.add(dbmod.LiquidityEvent(dedupe_key=f"k{r.get('id', len(rows))}", direction="INJECT", evidence_quote="q", summary="s",
+                                    first_seen_utc=datetime.datetime(2026, 11, 10), **r))
+        s.commit()
+        for r in rows:
+            if r.get("nature") is None:
+                s.execute(validate.text("UPDATE liquidity_events SET nature = NULL WHERE id = :i"), {"i": r["id"]})
+        s.commit()                                    # the column default would otherwise turn None into 'ACT'
+        monkeypatch.setattr(validate, "get_session", lambda: sessionmaker(bind=eng)())
+        v = validate.integrity_check()
+        return [i for i in v["issues"] + v["notices"] if "liquidity event" in i], v
+
+    def test_a_dangling_story_link_is_a_defect_and_a_clean_table_is_silent(self, monkeypatch):
+        import datetime
+        base = dict(event_date=datetime.date(2026, 11, 10), kind="BB_REFINANCE", nature="ACT")
+        issues, _ = self._check(monkeypatch, [dict(base, id=1), dict(base, id=2, redundant_with="liquidity_events:1")])
+        assert issues == []
+        issues, v = self._check(monkeypatch, [dict(base, id=1, redundant_with="liquidity_events:99"),
+                                              dict(base, id=2, redundant_with="liquidity_events:2")])
+        assert len(issues) == 1 and "2 liquidity event" in issues[0] and issues[0] in v["issues"]
+
+    def test_an_event_without_nature_is_noticed(self, monkeypatch):
+        import datetime
+        issues, v = self._check(monkeypatch, [dict(event_date=datetime.date(2026, 11, 10), kind="BB_REFINANCE", nature=None, id=1)])
+        assert len(issues) == 1 and issues[0] in v["notices"]

@@ -1320,6 +1320,23 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
         except Exception:
             s.rollback()
 
+        # ── every liquidity event must carry a nature, and story links must point at a real, different event ──
+        # An event with no nature is read as cash by the API, so one the classifier missed would be counted silently;
+        # a link to a missing event would hide a real event from the totals as a "duplicate".
+        try:
+            _nn = q("SELECT COUNT(*) FROM liquidity_events WHERE nature IS NULL")[0][0]
+            if _nn:
+                add("news-nature", f"{_nn} liquidity event(s) have no nature (run: python -m engines.news_triage reclassify --apply) "
+                                   f"- until then they are counted as cash", "notice")
+            _dang = q("SELECT e.id FROM liquidity_events e WHERE e.redundant_with LIKE 'liquidity_events:%' AND "
+                      "(e.redundant_with = 'liquidity_events:' || e.id OR NOT EXISTS (SELECT 1 FROM liquidity_events t "
+                      "WHERE 'liquidity_events:' || t.id = e.redundant_with))")
+            if _dang:
+                add("news-nature", f"{len(_dang)} liquidity event(s) are linked as a duplicate of a missing or themselves "
+                                   f"(ids {[r[0] for r in _dang][:10]}) - they are hidden from the totals for no reason")
+        except Exception:
+            s.rollback()
+
         # ── the Doctor must itself be alive ─────────────────────────────────────
         # It runs at the end of every refresh and writes a 'doctor' row to step_runs. A repair system that has silently stopped
         # looks exactly like a healthy one, so its heartbeat is checked here, by a rule that does not depend on it. (Judged only
