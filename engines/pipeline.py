@@ -18,7 +18,7 @@ import logging
 import re
 from typing import Callable, List, Optional
 
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DataError, IntegrityError
 
 import calendar_utils
 from config import GSOM_TBOND_URL, GSOM_FRTB_URL, GSOM_TBILL_URL
@@ -28,7 +28,7 @@ from db import (
     BgiibAuction, SukukOutstanding, SukukDocument,
     AuctionEvent, HolidayCalendar, DailyNetFlow, MtmSnapshot,
     PrimaryYieldSnapshot, OMOTransaction,
-    QuarantinedRow, CONSTRAINT_FIELDS,
+    QuarantinedRow, CONSTRAINT_FIELDS, DataChange,
 )
 from fetchers.gsom import fetch_gsom_html
 from fetchers.auction_live import fetch_live_auction_rows as fetch_auction_rows
@@ -563,6 +563,33 @@ def confirm_auctions_from_results(session) -> dict:
     # Deleting is safe in the one way that matters: issue_date is NOT NULL under
     # a validated CHECK, so the results query above cannot omit a live result and
     # strand the row that belongs to it.
+    # The same auction under two labels. BB files a re-issue onto its tenor grid, and a 2.6-year bond has been read as 2Y and later as
+    # 5Y. The calendar row it was confirmed under (2Y) then matched no result, the result looked ad hoc, and an uncalendared twin was
+    # made: 3-Feb-2026 booked 25,000 mn twice (ids 136 and 346, identical cut-off and sale value, ONE yields row). When an uncalendared
+    # row has an UNCLAIMED calendar row of the same security type, auction date, settlement date and size (exactly one), that calendar
+    # row IS the auction: it takes BB's current label and the twin goes. Recorded in data_changes; a clean table never triggers it.
+    session.flush()
+    twins = 0
+    for u in [a for a in session.query(AuctionEvent).all() if a.source == _UNCALENDARED and id(a) in claimed]:
+        same = [c for c in cal if c.source != _UNCALENDARED and id(c) not in claimed and c.security_type == u.security_type
+                and c.auction_date == u.auction_date and c.settlement_date == u.settlement_date
+                and c.offered_amount_bdt_mill is not None and u.offered_amount_bdt_mill is not None
+                and abs(float(c.offered_amount_bdt_mill) - float(u.offered_amount_bdt_mill)) < 0.5]
+        if len(same) != 1:
+            continue
+        c = same[0]
+        session.add(DataChange(changed_utc=datetime.datetime.utcnow(), change_class="auction_twin", detail=(
+            f"auction_events {u.id} ({u.tenor_label}, uncalendared) was the calendar auction {c.id} ({c.tenor_label}) under another label: "
+            f"{u.security_type} {u.auction_date} settling {u.settlement_date}, {float(u.offered_amount_bdt_mill):g} mn, same result. "
+            f"Kept {c.id} with BB's label {u.tenor_label}; removed {u.id}")))
+        for field in ("accepted_amount_bdt_crore", "accepted_amount_bdt_mill", "sale_value_bdt_crore", "sale_value_bdt_mill",
+                      "weighted_avg_yield_pct", "outflow_status"):
+            setattr(c, field, getattr(u, field))
+        c.tenor_label = u.tenor_label
+        claimed.add(id(c))
+        session.delete(u)
+        twins += 1
+
     orphans = [a for a in cal if a.source == _UNCALENDARED and id(a) not in claimed]
     for a in orphans:
         log.warning("Removing orphaned uncalendared auction: %s auctioned %s, settled %s, "
@@ -576,7 +603,7 @@ def confirm_auctions_from_results(session) -> dict:
              "corrected from BB issue dates, %d uncalendared auctions added, %d orphans removed",
              confirmed, moved, added, len(orphans))
     return {"confirmed": confirmed, "moved": moved, "added": added,
-            "orphans_removed": len(orphans)}
+            "orphans_removed": len(orphans), "twins_merged": twins}
 
 
 def upsert_primary_yield(session, row: dict):
@@ -895,10 +922,20 @@ def _prior_gap_day(session, d: datetime.date, max_back: int = 12):
     return None
 
 
-def _store_omo_txns(session, txns: list, now: datetime.datetime) -> tuple:
+def _omo_pub(x) -> datetime.date:
+    return x.get("source_pub_date") or datetime.date.min
+
+
+def _omo_sig(rs):
+    return tuple(sorted((x[0], int(x[1] or 0), round(float(x[2] or 0), 2), round(float(x[3] or 0), 2))
+                        for x in rs))
+
+
+def _store_omo_txns(session, txns: list, now: datetime.datetime, stats: Optional[dict] = None) -> tuple:
     """
     Store OMO rows with correction-aware supersession, returning (saved,
-    superseded). For each operation ('as on') date, only the LATEST-published
+    superseded) - still exactly two values; refused/blanked rows are reported
+    through the optional `stats` dict ("rejected", "blanked", "quarantined"). For each operation ('as on') date, only the LATEST-published
     release is authoritative — this is how BB's GENUINE corrections work: a later
     press release re-states the SAME operation with the right figures. Naively
     keying on date alone would pile both onto one day.
@@ -926,10 +963,9 @@ def _store_omo_txns(session, txns: list, now: datetime.datetime) -> tuple:
     except Exception as exc:
         log.warning("OMO tenor corrections not applied: %s", exc)
 
-    def _pub(x) -> datetime.date:
-        return x.get("source_pub_date") or datetime.date.min
-
-    def _insert(r):
+    def _write(r: dict) -> str:
+        # Builds the model from the row it is GIVEN: _write_isolated retries with the offending field blanked, and
+        # that blank must be what reaches the database.
         session.add(OMOTransaction(
             transaction_date   = r["transaction_date"],
             maturity_date      = r["maturity_date"],
@@ -949,17 +985,16 @@ def _store_omo_txns(session, txns: list, now: datetime.datetime) -> tuple:
             source_serial      = r.get("source_serial"),
             ingested_utc       = now,
         ))
+        return "inserted"
 
     by_date: dict = defaultdict(list)
     for r in txns:
         by_date[r["transaction_date"]].append(r)
 
     # Row-set signatures of every stored operation, for the duplicate-content
-    # guard below. (instrument, tenor, accepted, maturity) per row — an entire
+    # guard in _store_omo_day. (instrument, tenor, accepted, maturity) per row — an entire
     # table copied verbatim onto another date matches exactly.
-    def _sig(rs):
-        return tuple(sorted((x[0], int(x[1] or 0), round(float(x[2] or 0), 2), round(float(x[3] or 0), 2))
-                            for x in rs))
+    _sig = _omo_sig
     stored_sigs: dict = {}
     for r in session.execute(text("SELECT transaction_date, instrument, tenor_days, accepted_bdt_crore, "
                                   "COALESCE(maturity_bdt_crore, 0) FROM omo_transactions")).fetchall():
@@ -967,187 +1002,267 @@ def _store_omo_txns(session, txns: list, now: datetime.datetime) -> tuple:
         stored_sigs.setdefault(dd, []).append(r[1:])
     stored_sigs = {dd: _sig(rs) for dd, rs in stored_sigs.items()}
 
+    # ONE REFUSED ROW MUST NOT LOSE THE OTHER DAYS. The whole batch used to be one flush: a single row the database
+    # refused (a CHECK, or a duplicate line inside one release) threw away every day around it, and the next hourly run
+    # hit the same row. Each operation date is now its own savepoint (the supersession delete-then-insert and the
+    # re-homing guards, which move rows onto OTHER dates, are inside it, so a refused correction cannot half-replace a
+    # stored release), and each row inside that goes through _write_isolated: a CHECK-violating row is stored with exactly
+    # that constraint's fields blank (stats["blanked"]); a row still refused refuses its day (stats["rejected"]), its raw
+    # row goes to quarantined_rows (stats["quarantined"]) and every other day is kept.
+    # Only IntegrityError / DataError / _DayRefused mean "this day's data is bad". An OperationalError (a dead
+    # connection, a timeout) is NOT a bad day: it propagates, so the caller fails loudly instead of marking every
+    # remaining day as rejected.
+    if stats is None:
+        stats = {}
     saved = superseded = 0
     for d, rows in by_date.items():
-        latest_pub = max((_pub(x) for x in rows), default=datetime.date.min)
-        keep = [x for x in rows if _pub(x) == latest_pub]   # drop older release if both in batch
-        if not keep:
-            continue
+        blanked: list = []
+        quarantined: list = []
 
-        # ── Duplicate-content guard: a release whose WHOLE table equals another
-        # date's operation is a re-published stale file, not a new operation.
-        # BB's "as on 04 May 2026" (pr14062) was the 05-Apr table verbatim; it
-        # put a phantom 2,587 cr IBLF tranche into outstanding for 28 days. Never
-        # store it (and never let a re-fetch overwrite the reconstruction).
-        inc_sig = _sig([(x["instrument"], x.get("tenor_days"), x["accepted_bdt_crore"],
-                         x.get("maturity_bdt_crore")) for x in keep])
-        twin = next((dd for dd, sg in stored_sigs.items() if dd != d and sg == inc_sig and len(sg) >= 3), None)
-        if twin is not None:
-            log.error("OMO duplicate-content guard: release 'as on %s' (%s) is a verbatim copy of the "
-                      "%s operation — BB re-published a stale table. NOT stored; the %s operation "
-                      "must be reconstructed from BB's printed maturities.",
-                      d, keep[0].get("source_pdf", "?"), twin, d)
-            continue
+        def insert(r: dict, blanked=blanked, quarantined=quarantined) -> int:
+            """Write one row; 1 if it is stored (blanked counts: it IS stored), 0 if it was quarantined."""
+            res = _write_isolated(session, OMOTransaction, r, _write)
+            if res["outcome"] == "quarantined":
+                quarantined.append(res)
+                return 0
+            if res["outcome"] == "blanked":
+                blanked.append({k: res[k] for k in ("constraint", "fields", "original", "row")})
+            return 1
 
-        # Within-batch, no-lag variant: this fetch pulled BOTH releases for date d
-        # and one was published with NO LAG (pub <= d), so BB stamped it with the
-        # wrong date — the keep-latest filter above would silently drop it. Re-home
-        # that release to the day the market traded with no OMO recorded.
-        _nolag_pubs = {_pub(x) for x in rows
-                       if _pub(x) not in (latest_pub, datetime.date.min) and _pub(x) <= d}
-        if len(_nolag_pubs) == 1:
-            _p = _nolag_pubs.pop()
-            target = _prior_gap_day(session, d)
+        try:
+            with session.begin_nested():
+                day_saved, day_superseded = _store_omo_day(session, d, rows, stored_sigs, insert)
+                session.flush()
+                if quarantined:
+                    raise _DayRefused(f"{len(quarantined)} row(s) refused even with their offending fields blank")
+        except (IntegrityError, DataError, _DayRefused) as exc:
+            session.expire_all()
+            log.error("OMO %s rejected by the database, the other days are kept: %s", d, str(exc)[:200])
+            stats.setdefault("rejected", []).append(str(d))
+            blanked = []          # that day was rolled back: nothing on it was stored, blanked or otherwise
+        else:
+            saved += day_saved
+            superseded += day_superseded
+        # Persist quarantined rows only AFTER the day's savepoint has settled (they live in another table).
+        for info in quarantined:
+            _quarantine(session, OMOTransaction, "omo", info, now)
+        if blanked:
+            stats.setdefault("blanked", []).extend(blanked)
+        if quarantined:
+            stats.setdefault("quarantined", []).extend(
+                {k: info[k] for k in ("constraint", "error", "raw")} for info in quarantined)
+    return saved, superseded
+
+
+def omo_store_errors(stats: dict) -> list:
+    """The `omo:` error lines for what _store_omo_txns refused or blanked, [] when it stored everything cleanly.
+
+    Always ERRORS, never warnings, and on EVERY run: a blanked maturity_date drops that tranche from every outstanding
+    query, and a refused day is a day of OMO missing. The wording 'rejected by a database rule' is what
+    engines.failures.classify maps to DB_CONSTRAINT (same text as weekly_fetch.rejected_error)."""
+    out = []
+    if stats.get("rejected"):
+        out.append(f"omo: BB rows for {', '.join(stats['rejected'])} were rejected by a database rule "
+                   f"(the other days were stored)")
+    if stats.get("quarantined"):
+        q = stats["quarantined"]
+        out.append(f"omo: {len(q)} OMO row(s) rejected by a database rule and quarantined: "
+                   + "; ".join(f"{x['raw'].get('instrument')} {x['raw'].get('transaction_date')} "
+                               f"({x['constraint'] or x['error'][:80]})" for x in q[:5]))
+    if stats.get("blanked"):
+        b = stats["blanked"]
+        fields = sorted({f for x in b for f in x["fields"]})
+        out.append(f"omo: {len(b)} OMO row(s) stored with {', '.join(fields)} blank because BB's figures were rejected by a "
+                   f"database rule ({', '.join(sorted({x['constraint'] for x in b}))}); a tranche with no maturity date "
+                   f"is missing from every outstanding figure until it is corrected")
+    return out
+
+
+def _store_omo_day(session, d, rows: list, stored_sigs: dict, insert) -> tuple:
+    """ONE operation date's rows, returning (saved, superseded). The caller wraps this in a savepoint.
+
+    `insert(row) -> 1|0` writes one row in isolation (1 when stored). The body is the former per-date loop of
+    _store_omo_txns, unchanged apart from that."""
+    saved = superseded = 0
+    latest_pub = max((_omo_pub(x) for x in rows), default=datetime.date.min)
+    keep = [x for x in rows if _omo_pub(x) == latest_pub]   # drop older release if both in batch
+    if not keep:
+        return 0, 0
+
+    # ── Duplicate-content guard: a release whose WHOLE table equals another
+    # date's operation is a re-published stale file, not a new operation.
+    # BB's "as on 04 May 2026" (pr14062) was the 05-Apr table verbatim; it
+    # put a phantom 2,587 cr IBLF tranche into outstanding for 28 days. Never
+    # store it (and never let a re-fetch overwrite the reconstruction).
+    inc_sig = _omo_sig([(x["instrument"], x.get("tenor_days"), x["accepted_bdt_crore"],
+                     x.get("maturity_bdt_crore")) for x in keep])
+    twin = next((dd for dd, sg in stored_sigs.items() if dd != d and sg == inc_sig and len(sg) >= 3), None)
+    if twin is not None:
+        log.error("OMO duplicate-content guard: release 'as on %s' (%s) is a verbatim copy of the "
+                  "%s operation — BB re-published a stale table. NOT stored; the %s operation "
+                  "must be reconstructed from BB's printed maturities.",
+                  d, keep[0].get("source_pdf", "?"), twin, d)
+        return saved, superseded
+
+    # Within-batch, no-lag variant: this fetch pulled BOTH releases for date d
+    # and one was published with NO LAG (pub <= d), so BB stamped it with the
+    # wrong date — the keep-latest filter above would silently drop it. Re-home
+    # that release to the day the market traded with no OMO recorded.
+    _nolag_pubs = {_omo_pub(x) for x in rows
+                   if _omo_pub(x) not in (latest_pub, datetime.date.min) and _omo_pub(x) <= d}
+    if len(_nolag_pubs) == 1:
+        _p = _nolag_pubs.pop()
+        target = _prior_gap_day(session, d)
+        if target is not None:
+            for x in (r for r in rows if _omo_pub(r) == _p):
+                x2 = dict(x)
+                x2["transaction_date"] = target
+                x2["maturity_date"]    = target + datetime.timedelta(days=(x.get("tenor_days") or 0))
+                saved += insert(x2)
+            log.error("OMO mislabel guard (batch): no-lag release (pub %s) re-homed from "
+                      "'as on %s' to %s.", _p, d, target)
+
+    # Within-batch mislabel: if this one fetch pulled BOTH releases for date d
+    # and the OLDER one carries a CB Repo the latest lacks, the keep-filter
+    # above would silently drop it. That CB Repo is a different (Tuesday)
+    # operation BB double-dated — re-home the whole older release to its
+    # Tuesday instead of losing it. (Cross-run duplicates are caught below.)
+    if not any(k["instrument"] == "CB_REPO" and k["accepted_bdt_crore"] > 0 for k in keep):
+        older_cb_pub = max((_omo_pub(x) for x in rows
+                            if _omo_pub(x) != latest_pub and x["instrument"] == "CB_REPO" and x["accepted_bdt_crore"] > 0),
+                           default=datetime.date.min)
+        if older_cb_pub != datetime.date.min:
+            target = _prior_free_tuesday(session, d)
             if target is not None:
-                for x in (r for r in rows if _pub(r) == _p):
+                for x in (r for r in rows if _omo_pub(r) == older_cb_pub):
                     x2 = dict(x)
                     x2["transaction_date"] = target
                     x2["maturity_date"]    = target + datetime.timedelta(days=(x.get("tenor_days") or 0))
-                    _insert(x2); saved += 1
-                log.error("OMO mislabel guard (batch): no-lag release (pub %s) re-homed from "
-                          "'as on %s' to %s.", _p, d, target)
+                    saved += insert(x2)
+                log.error("OMO mislabel guard (batch): CB_REPO operation re-homed from 'as on "
+                          "%s' to Tuesday %s — BB double-dated two operations. CONFIRM %s was a "
+                          "working day (not a bank holiday).", d, target, target)
 
-        # Within-batch mislabel: if this one fetch pulled BOTH releases for date d
-        # and the OLDER one carries a CB Repo the latest lacks, the keep-filter
-        # above would silently drop it. That CB Repo is a different (Tuesday)
-        # operation BB double-dated — re-home the whole older release to its
-        # Tuesday instead of losing it. (Cross-run duplicates are caught below.)
-        if not any(k["instrument"] == "CB_REPO" and k["accepted_bdt_crore"] > 0 for k in keep):
-            older_cb_pub = max((_pub(x) for x in rows
-                                if _pub(x) != latest_pub and x["instrument"] == "CB_REPO" and x["accepted_bdt_crore"] > 0),
-                               default=datetime.date.min)
-            if older_cb_pub != datetime.date.min:
-                target = _prior_free_tuesday(session, d)
-                if target is not None:
-                    for x in (r for r in rows if _pub(r) == older_cb_pub):
-                        x2 = dict(x)
-                        x2["transaction_date"] = target
-                        x2["maturity_date"]    = target + datetime.timedelta(days=(x.get("tenor_days") or 0))
-                        _insert(x2); saved += 1
-                    log.error("OMO mislabel guard (batch): CB_REPO operation re-homed from 'as on "
-                              "%s' to Tuesday %s — BB double-dated two operations. CONFIRM %s was a "
-                              "working day (not a bank holiday).", d, target, target)
+    existing = session.query(OMOTransaction).filter_by(transaction_date=d).all()
+    stored_pub = max((e.source_pub_date for e in existing if e.source_pub_date), default=None)
+    inc_pub = None if latest_pub == datetime.date.min else latest_pub
 
-        existing = session.query(OMOTransaction).filter_by(transaction_date=d).all()
-        stored_pub = max((e.source_pub_date for e in existing if e.source_pub_date), default=None)
-        inc_pub = None if latest_pub == datetime.date.min else latest_pub
+    # ── Mislabel guard A: a release published with NO LAG is mis-dated ───
+    # BB publishes a day's operations the NEXT working day, so a release whose
+    # 'as on' date equals (or precedes) its own publication date has BB's date
+    # wrong — it is an EARLIER operation. When a second, normally-lagged
+    # release claims the same 'as on' date, keying on the date alone deletes
+    # one of two REAL operations (Sep-2026: the 03-Sep op, published 06-Sep
+    # and stamped 'as on 06 Sep', was dropped by the genuine 06-Sep release).
+    # Re-home the no-lag release to the day the market traded but no OMO was
+    # recorded. Instrument-agnostic and works on either fetch order.
+    if existing and inc_pub is not None and stored_pub is not None and inc_pub != stored_pub:
+        stored_nolag = stored_pub <= d
+        inc_nolag    = inc_pub <= d
+        if stored_nolag != inc_nolag:          # exactly one side is mis-dated
+            target = _prior_gap_day(session, d)
+            if target is not None:
+                if stored_nolag:   # move the stored mis-dated op, keep incoming on d
+                    for e in existing:
+                        e.transaction_date = target
+                        e.maturity_date    = target + datetime.timedelta(days=e.tenor_days or 0)
+                    session.flush()
+                    for r in keep:
+                        saved += insert(r)
+                else:              # incoming is mis-dated → store it on the gap day
+                    for r in keep:
+                        r2 = dict(r)
+                        r2["transaction_date"] = target
+                        r2["maturity_date"]    = target + datetime.timedelta(days=(r.get("tenor_days") or 0))
+                        saved += insert(r2)
+                log.error("OMO mislabel guard: no-lag release re-homed from 'as on %s' to %s "
+                          "— BB double-dated two operations (%s traded but had no OMO).",
+                          d, target, target)
+                return saved, superseded
 
-        # ── Mislabel guard A: a release published with NO LAG is mis-dated ───
-        # BB publishes a day's operations the NEXT working day, so a release whose
-        # 'as on' date equals (or precedes) its own publication date has BB's date
-        # wrong — it is an EARLIER operation. When a second, normally-lagged
-        # release claims the same 'as on' date, keying on the date alone deletes
-        # one of two REAL operations (Sep-2026: the 03-Sep op, published 06-Sep
-        # and stamped 'as on 06 Sep', was dropped by the genuine 06-Sep release).
-        # Re-home the no-lag release to the day the market traded but no OMO was
-        # recorded. Instrument-agnostic and works on either fetch order.
-        if existing and inc_pub is not None and stored_pub is not None and inc_pub != stored_pub:
-            stored_nolag = stored_pub <= d
-            inc_nolag    = inc_pub <= d
-            if stored_nolag != inc_nolag:          # exactly one side is mis-dated
-                target = _prior_gap_day(session, d)
-                if target is not None:
-                    if stored_nolag:   # move the stored mis-dated op, keep incoming on d
-                        for e in existing:
-                            e.transaction_date = target
-                            e.maturity_date    = target + datetime.timedelta(days=e.tenor_days or 0)
-                        session.flush()
-                        for r in keep:
-                            _insert(r); saved += 1
-                    else:              # incoming is mis-dated → store it on the gap day
-                        for r in keep:
-                            r2 = dict(r)
-                            r2["transaction_date"] = target
-                            r2["maturity_date"]    = target + datetime.timedelta(days=(r.get("tenor_days") or 0))
-                            _insert(r2); saved += 1
-                    log.error("OMO mislabel guard: no-lag release re-homed from 'as on %s' to %s "
-                              "— BB double-dated two operations (%s traded but had no OMO).",
-                              d, target, target)
-                    continue
+    # ── OMO mislabel guard: two operations stamped with one 'as on' date ──
+    # A genuine BB correction re-states the SAME operation (it keeps CB_REPO).
+    # When one release for this date carries CB_REPO and the other does NOT,
+    # they are DIFFERENT operations BB gave the same 'as on' date — the
+    # Aug-2026 bug where the 04-Aug Tuesday CB Repo, mislabelled 'as on 06
+    # August', was silently deleted by the genuine 06-Aug release. Re-home the
+    # CB_REPO release to the Tuesday it belongs to, on EITHER fetch order,
+    # instead of one side deleting or regressing the other. Tight + reversible:
+    # only fires when exactly one side has CB Repo and the prior Tuesday is a
+    # clean, empty working day. Loud, so the desk can confirm the date.
+    if existing and inc_pub is not None and stored_pub is not None and inc_pub != stored_pub:
+        stored_has_cb = any(e.instrument == "CB_REPO" and (e.accepted_bdt_crore or 0) > 0 for e in existing)
+        inc_has_cb    = any(r["instrument"] == "CB_REPO" and r["accepted_bdt_crore"] > 0 for r in keep)
+        if stored_has_cb != inc_has_cb:
+            target = _prior_free_tuesday(session, d)
+            if target is not None:
+                if stored_has_cb:      # keep incoming on d, move stored CB Repo op to its Tuesday
+                    for e in existing:
+                        e.transaction_date = target
+                        e.maturity_date    = target + datetime.timedelta(days=e.tenor_days or 0)
+                    session.flush()
+                    for r in keep:
+                        saved += insert(r)
+                else:                  # keep stored on d, store incoming CB Repo op on its Tuesday
+                    for r in keep:
+                        r2 = dict(r)
+                        r2["transaction_date"] = target
+                        r2["maturity_date"]    = target + datetime.timedelta(days=(r.get("tenor_days") or 0))
+                        saved += insert(r2)
+                log.error("OMO mislabel guard: CB_REPO operation re-homed from 'as on %s' to "
+                          "Tuesday %s — BB double-dated two operations. CONFIRM %s was a "
+                          "working day (not a bank holiday).", d, target, target)
+                return saved, superseded
 
-        # ── OMO mislabel guard: two operations stamped with one 'as on' date ──
-        # A genuine BB correction re-states the SAME operation (it keeps CB_REPO).
-        # When one release for this date carries CB_REPO and the other does NOT,
-        # they are DIFFERENT operations BB gave the same 'as on' date — the
-        # Aug-2026 bug where the 04-Aug Tuesday CB Repo, mislabelled 'as on 06
-        # August', was silently deleted by the genuine 06-Aug release. Re-home the
-        # CB_REPO release to the Tuesday it belongs to, on EITHER fetch order,
-        # instead of one side deleting or regressing the other. Tight + reversible:
-        # only fires when exactly one side has CB Repo and the prior Tuesday is a
-        # clean, empty working day. Loud, so the desk can confirm the date.
-        if existing and inc_pub is not None and stored_pub is not None and inc_pub != stored_pub:
-            stored_has_cb = any(e.instrument == "CB_REPO" and (e.accepted_bdt_crore or 0) > 0 for e in existing)
-            inc_has_cb    = any(r["instrument"] == "CB_REPO" and r["accepted_bdt_crore"] > 0 for r in keep)
-            if stored_has_cb != inc_has_cb:
-                target = _prior_free_tuesday(session, d)
-                if target is not None:
-                    if stored_has_cb:      # keep incoming on d, move stored CB Repo op to its Tuesday
-                        for e in existing:
-                            e.transaction_date = target
-                            e.maturity_date    = target + datetime.timedelta(days=e.tenor_days or 0)
-                        session.flush()
-                        for r in keep:
-                            _insert(r); saved += 1
-                    else:                  # keep stored on d, store incoming CB Repo op on its Tuesday
-                        for r in keep:
-                            r2 = dict(r)
-                            r2["transaction_date"] = target
-                            r2["maturity_date"]    = target + datetime.timedelta(days=(r.get("tenor_days") or 0))
-                            _insert(r2); saved += 1
-                    log.error("OMO mislabel guard: CB_REPO operation re-homed from 'as on %s' to "
-                              "Tuesday %s — BB double-dated two operations. CONFIRM %s was a "
-                              "working day (not a bank holiday).", d, target, target)
-                    continue
-
-        # Replace the date's rows when the incoming release is NEWER (a
-        # correction supersedes), or SAME publication but re-parsed into at least
-        # as many rows (a parser fix must be able to overwrite already-stored
-        # wrong labels — e.g. MLS/SDF that were mislabelled as IBLF — without a
-        # partial parse ever shrinking good data).
-        newer = inc_pub is not None and (stored_pub is None or inc_pub > stored_pub)
-        same_reparse = inc_pub is not None and stored_pub is not None and inc_pub == stored_pub and len(keep) >= len(existing)
-        replace = existing and (newer or same_reparse)
-        if replace:
-            if stored_pub is not None and inc_pub is not None and inc_pub > stored_pub:
-                superseded += 1
-                log.warning("OMO supersede %s: release pub %s replaces older pub %s (%d rows)",
-                            d, inc_pub, stored_pub, len(existing))
-            for e in existing:
-                session.delete(e)
-            session.flush()
-            for r in keep:
-                _insert(r); saved += 1
-        elif not existing:
-            for r in keep:
-                _insert(r); saved += 1
-        elif inc_pub is not None and stored_pub is not None and inc_pub < stored_pub:
-            # Incoming release is OLDER than what we already have for this date
-            # (e.g. re-seeing the mislabelled 343 after the 345 correction is
-            # stored) — never regress: add nothing, remove nothing.
-            continue
-        else:
-            # Same publication (or legacy rows w/o pub info): row-level upsert so
-            # genuinely new lines are added and fields backfilled.
-            for r in keep:
-                ex = session.query(OMOTransaction).filter_by(
-                    transaction_date=r["transaction_date"], instrument=r["instrument"],
-                    tenor_days=r["tenor_days"], accepted_bdt_crore=r["accepted_bdt_crore"],
-                ).first()
-                if ex:
-                    if ex.source_pub_date is None and r.get("source_pub_date"):
-                        ex.source_pub_date = r["source_pub_date"]; ex.source_serial = r.get("source_serial")
-                    if ex.maturity_bdt_crore is None and r.get("maturity_bdt_crore"):
-                        ex.maturity_bdt_crore = r["maturity_bdt_crore"]
-                    if ex.rate_range is None and r.get("rate_range"):
-                        ex.rate_range = r["rate_range"]
-                    if ex.offered_bdt_crore is None and r.get("offered_bdt_crore") is not None:
-                        ex.offered_bdt_crore = r["offered_bdt_crore"]
-                    if ex.net_bdt_crore is None and r.get("net_bdt_crore") is not None:
-                        ex.net_bdt_crore = r["net_bdt_crore"]
-                    if ex.printed_totals is None and r.get("printed_totals"):
-                        ex.printed_totals = r["printed_totals"]
-                else:
-                    _insert(r); saved += 1
+    # Replace the date's rows when the incoming release is NEWER (a
+    # correction supersedes), or SAME publication but re-parsed into at least
+    # as many rows (a parser fix must be able to overwrite already-stored
+    # wrong labels — e.g. MLS/SDF that were mislabelled as IBLF — without a
+    # partial parse ever shrinking good data).
+    newer = inc_pub is not None and (stored_pub is None or inc_pub > stored_pub)
+    same_reparse = inc_pub is not None and stored_pub is not None and inc_pub == stored_pub and len(keep) >= len(existing)
+    replace = existing and (newer or same_reparse)
+    if replace:
+        if stored_pub is not None and inc_pub is not None and inc_pub > stored_pub:
+            superseded += 1
+            log.warning("OMO supersede %s: release pub %s replaces older pub %s (%d rows)",
+                        d, inc_pub, stored_pub, len(existing))
+        for e in existing:
+            session.delete(e)
+        session.flush()
+        for r in keep:
+            saved += insert(r)
+    elif not existing:
+        for r in keep:
+            saved += insert(r)
+    elif inc_pub is not None and stored_pub is not None and inc_pub < stored_pub:
+        # Incoming release is OLDER than what we already have for this date
+        # (e.g. re-seeing the mislabelled 343 after the 345 correction is
+        # stored) — never regress: add nothing, remove nothing.
+        return saved, superseded
+    else:
+        # Same publication (or legacy rows w/o pub info): row-level upsert so
+        # genuinely new lines are added and fields backfilled.
+        for r in keep:
+            ex = session.query(OMOTransaction).filter_by(
+                transaction_date=r["transaction_date"], instrument=r["instrument"],
+                tenor_days=r["tenor_days"], accepted_bdt_crore=r["accepted_bdt_crore"],
+            ).first()
+            if ex:
+                if ex.source_pub_date is None and r.get("source_pub_date"):
+                    ex.source_pub_date = r["source_pub_date"]; ex.source_serial = r.get("source_serial")
+                if ex.maturity_bdt_crore is None and r.get("maturity_bdt_crore"):
+                    ex.maturity_bdt_crore = r["maturity_bdt_crore"]
+                if ex.rate_range is None and r.get("rate_range"):
+                    ex.rate_range = r["rate_range"]
+                if ex.offered_bdt_crore is None and r.get("offered_bdt_crore") is not None:
+                    ex.offered_bdt_crore = r["offered_bdt_crore"]
+                if ex.net_bdt_crore is None and r.get("net_bdt_crore") is not None:
+                    ex.net_bdt_crore = r["net_bdt_crore"]
+                if ex.printed_totals is None and r.get("printed_totals"):
+                    ex.printed_totals = r["printed_totals"]
+            else:
+                saved += insert(r)
     return saved, superseded
 
 
@@ -1562,13 +1677,15 @@ def run_omo_fetch(days_back: int = 28, max_files: int = 20) -> dict:
             return {"rows": 0, "pdfs": 0, "errors": [msg], "empty_reason": reason,
                     **watch, **meta}
 
-        saved, superseded = _store_omo_txns(session, txns, datetime.datetime.utcnow())
+        store_stats: dict = {}
+        saved, superseded = _store_omo_txns(session, txns, datetime.datetime.utcnow(), store_stats)
         session.commit()
         log.info("OMO fetch: %d rows stored, %d date(s) superseded by corrections, from %d txns",
                  saved, superseded, len(txns))
         recon = sorted({t["recon_mismatch"] for t in txns if t.get("recon_mismatch")})
         return {"rows": saved, "txns": len(txns), "pdfs": meta.get("pdfs", max_files),
-                "errors": recon, **watch, **meta}
+                "errors": recon + omo_store_errors(store_stats),
+                "rejected_days": store_stats.get("rejected", []), **watch, **meta}
     except Exception as exc:
         session.rollback()
         log.exception("OMO fetch failed")

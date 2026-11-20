@@ -28,7 +28,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 import db as dbmod
 from db import (AuctionEvent, PrimaryYieldSnapshot, HolidayCalendar, CallMoneyRate,
-                PolicyRateHistory, OMOTransaction)
+                PolicyRateHistory, OMOTransaction, DataChange)
 import calendar_utils
 import validate
 from fetchers.omo import _fingerprint
@@ -206,7 +206,7 @@ class TestConfirmAuctions:
         s.commit()
         confirm_auctions_from_results(s); s.commit()
         r2 = confirm_auctions_from_results(s); s.commit()
-        assert r2 == {"confirmed": 2, "moved": 0, "added": 0, "orphans_removed": 0}
+        assert r2 == {"confirmed": 2, "moved": 0, "added": 0, "orphans_removed": 0, "twins_merged": 0}
         assert s.query(AuctionEvent).count() == 2
 
 
@@ -535,3 +535,57 @@ def test_a_timestamp_column_does_not_crash_the_sweep():
     import audit
     assert audit._as_date(datetime.datetime(2026, 11, 2, 15, 12)) == datetime.date(2026, 11, 2)
     assert audit._as_date("2026-11") == datetime.date(2026, 11, 1)
+
+
+class TestOneAuctionUnderTwoLabels:
+    """3-Feb-2026: BB's column filed a 2.6-year re-issue as 2Y, later as 5Y. The calendar row (2Y) stayed CONFIRMED but matched no result,
+    the result looked ad hoc, and an uncalendared twin booked the same 25,000 mn a second time - a ladder outflow the desk does not owe."""
+
+    def _setup(self, s):
+        s.add(AuctionEvent(fiscal_year="2025-26", auction_no="B30", auction_date=D(2026, 2, 3), settlement_date=D(2026, 2, 5),
+                           security_type="T_BOND", tenor_label="2Y", offered_amount_bdt_crore=2500.0, offered_amount_bdt_mill=25000.0,
+                           accepted_amount_bdt_crore=2500.0, accepted_amount_bdt_mill=25000.0, weighted_avg_yield_pct=10.4598,
+                           sale_value_bdt_crore=2425.59, sale_value_bdt_mill=24255.9, outflow_status="CONFIRMED", source="seed"))
+        s.add(AuctionEvent(fiscal_year="2025-26", auction_date=D(2025, 11, 20), settlement_date=D(2025, 11, 23),
+                           security_type="T_BILL", tenor_label="91D", offered_amount_bdt_crore=3500.0, offered_amount_bdt_mill=35000.0,
+                           outflow_status="PLANNED", source="seed"))                     # sets the calendar era
+        s.add(PrimaryYieldSnapshot(snapshot_date=D(2026, 2, 28), auction_date=D(2026, 2, 3), issue_date=D(2026, 2, 5),
+                                   security_type="T_BOND", tenor_label="5Y", tenor_years=5.0, cutoff_yield_pct=10.4598,
+                                   offered_bdt_crore=8298.42, accepted_bdt_crore=2500.0, sale_value_bdt_crore=2425.59))
+        s.commit()
+
+    def test_the_calendar_auction_takes_bbs_label_and_is_booked_once(self):
+        eng, s = _mem()
+        self._setup(s)
+        r = confirm_auctions_from_results(s); s.commit()
+        rows = s.query(AuctionEvent).filter_by(security_type="T_BOND").all()
+        assert len(rows) == 1 and rows[0].auction_no == "B30" and rows[0].tenor_label == "5Y"
+        assert rows[0].accepted_amount_bdt_mill == 25000.0 and r["twins_merged"] == 1
+        assert s.query(DataChange).filter_by(change_class="auction_twin").count() == 1
+
+    def test_an_existing_twin_is_merged_and_the_repair_is_recorded_and_idempotent(self):
+        eng, s = _mem()
+        self._setup(s)
+        s.add(AuctionEvent(fiscal_year="2025-26", auction_date=D(2026, 2, 3), settlement_date=D(2026, 2, 5), security_type="T_BOND",
+                           tenor_label="5Y", offered_amount_bdt_crore=2500.0, offered_amount_bdt_mill=25000.0,
+                           accepted_amount_bdt_crore=2500.0, accepted_amount_bdt_mill=25000.0, weighted_avg_yield_pct=10.4598,
+                           outflow_status="CONFIRMED", source="BB treasury results (uncalendared auction)"))
+        s.commit()
+        assert confirm_auctions_from_results(s)["twins_merged"] == 1; s.commit()
+        rows = s.query(AuctionEvent).filter_by(security_type="T_BOND").all()
+        assert len(rows) == 1 and rows[0].auction_no == "B30" and rows[0].tenor_label == "5Y"
+        assert s.query(DataChange).filter_by(change_class="auction_twin").count() == 1
+        for _ in range(2):
+            assert confirm_auctions_from_results(s)["twins_merged"] == 0; s.commit()
+        assert s.query(AuctionEvent).filter_by(security_type="T_BOND").count() == 1
+
+    def test_a_genuine_second_auction_of_another_size_is_never_merged(self):
+        """Two bonds really can settle the same day; only the SAME size with no result of its own is a twin."""
+        eng, s = _mem()
+        self._setup(s)
+        s.add(AuctionEvent(fiscal_year="2025-26", auction_date=D(2026, 2, 3), settlement_date=D(2026, 2, 5), security_type="T_BOND",
+                           tenor_label="10Y", offered_amount_bdt_crore=1500.0, offered_amount_bdt_mill=15000.0,
+                           outflow_status="PLANNED", source="seed"))
+        s.commit()
+        confirm_auctions_from_results(s); s.commit()
+        assert s.query(AuctionEvent).filter_by(security_type="T_BOND").count() == 2

@@ -287,7 +287,8 @@ def _run():
     try:
         result = run_omo_fetch(days_back=OMO_DAYS_BACK, max_files=OMO_MAX_FILES)
         log.info("OMO OK | new_rows=%s", result.get("rows"))
-        note_step("omo", result.get("txns", result.get("rows")), result.get("rows"))
+        note_step("omo", result.get("txns", result.get("rows")), result.get("rows"),
+                  len(result.get("rejected_days") or []))
         errors.extend(prefixed("omo", result.get("errors")))
     except Exception as exc:
         log.exception("OMO fetch failed: %s", exc)
