@@ -7,6 +7,7 @@ import { resolveRange, inRange } from "@/lib/daterange";
 import DownloadButton from "@/components/DownloadButton";
 import Freshness from "@/components/Freshness";
 import RelatedLinks from "@/components/RelatedLinks";
+import SourceLink from "@/components/SourceLink";
 import { DataWarning } from "@/components/DataWarning";
 
 export const revalidate = 300;
@@ -160,6 +161,7 @@ export default async function FxMarketPage({ searchParams }: { searchParams: Pro
         </Panel>
       </div>
 
+      <SourceLink k="fxmarket" />
       <RelatedLinks items={[
         { href: "/fx", label: "FX Auctions", why: "BB's own interventions in this market" },
         { href: "/macro", label: "External Sector", why: "reserves behind the rate" },

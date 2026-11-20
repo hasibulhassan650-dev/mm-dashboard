@@ -1,6 +1,7 @@
 import { api, exportUrl } from "@/lib/api";
 import { fmtDate } from "@/lib/format";
 import RelatedLinks from "@/components/RelatedLinks";
+import SourceLink from "@/components/SourceLink";
 import DateRangeControl from "@/components/DateRangeControl";
 import { resolveRange, inRange } from "@/lib/daterange";
 import { OMO_INSTRUMENTS, pivotOmo, omoCatsFromData } from "@/lib/terminal";
@@ -102,6 +103,7 @@ export default async function OmoPage({ searchParams }: { searchParams: Promise<
       <div className="grid12">
         <OmoMaturityLadderPanel data={ladder} />
       </div>
+      <SourceLink k="omo" />
       <RelatedLinks items={[
         { href: "/forecast", label: "Liquidity Forecast", why: "when these repos mature & drain" },
         { href: "/callmoney", label: "Call Money", why: "where the corridor stance shows up" },

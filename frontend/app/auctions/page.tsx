@@ -8,6 +8,7 @@ import DateRangeControl from "@/components/DateRangeControl";
 import Freshness from "@/components/Freshness";
 import NextAuction from "@/components/NextAuction";
 import RelatedLinks from "@/components/RelatedLinks";
+import SourceLink from "@/components/SourceLink";
 import { fmtDate } from "@/lib/format";
 
 export const revalidate = 300;
@@ -204,6 +205,7 @@ export default async function AuctionsPage({
         </Panel>
       </div>
 
+      <SourceLink k={["auctions_forward", "yields"]} />
       <RelatedLinks items={[
         { href: "/yields", label: "Yield Curve", why: "where these cut-offs sit on the curve" },
         { href: "/schedule", label: "Schedule by Product", why: "these auctions netted against redemptions" },

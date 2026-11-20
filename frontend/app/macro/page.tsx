@@ -1,5 +1,6 @@
 import { api } from "@/lib/api";
 import RelatedLinks from "@/components/RelatedLinks";
+import SourceLink from "@/components/SourceLink";
 import DateRangeControl from "@/components/DateRangeControl";
 import { resolveRange, inRange } from "@/lib/daterange";
 import { fmtMonth } from "@/lib/format";
@@ -55,6 +56,7 @@ export default async function MacroPage({ searchParams }: { searchParams: Promis
           </div>
         </Panel>
       </div>
+      <SourceLink k={["reserves", "remittance"]} />
       <RelatedLinks items={[
         { href: "/fx", label: "FX Auctions", why: "interventions that spend these reserves" },
         { href: "/monetary", label: "Monetary", why: "the policy & money-supply backdrop" },

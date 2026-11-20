@@ -6,6 +6,7 @@ import { DataWarning } from "@/components/DataWarning";
 import Freshness from "@/components/Freshness";
 import HorizonControl from "@/components/HorizonControl";
 import RelatedLinks from "@/components/RelatedLinks";
+import SourceLink from "@/components/SourceLink";
 import ScheduleChart from "@/components/ScheduleChart";
 
 export const revalidate = 300;
@@ -326,6 +327,7 @@ export default async function SchedulePage({
         </Panel>
       </div>
 
+      <SourceLink k={["coupons", "maturities", "auctions_forward"]} />
       <RelatedLinks items={[
         { href: "/auctions", label: "Treasury Auctions", why: "every tender: notified, bids, accepted, cut-off" },
         { href: "/cashflows", label: "Cash Flows", why: "the same flows day by day" },

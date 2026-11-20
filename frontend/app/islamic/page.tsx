@@ -2,6 +2,7 @@ import { api } from "@/lib/api";
 import type { IslamicWindow, OmoInjection, OmoTxnRow } from "@/lib/api";
 import { Panel } from "@/components/terminal/ui";
 import RelatedLinks from "@/components/RelatedLinks";
+import SourceLink from "@/components/SourceLink";
 import IslamicFacilities from "@/components/IslamicFacilities";
 import SukukPanel from "@/components/SukukPanel";
 
@@ -147,6 +148,7 @@ export default async function IslamicPage() {
         <SukukPanel data={data.sukuk} />
       </div>
 
+      <SourceLink k={["bgiib", "sukuk"]} />
       <RelatedLinks items={[
         { href: "/yields", label: "Yield Curve", why: "the conventional cut-offs these are measured against" },
         { href: "/press", label: "Press Releases", why: "the releases these figures come from" },

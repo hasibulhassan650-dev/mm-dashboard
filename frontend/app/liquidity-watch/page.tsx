@@ -3,6 +3,7 @@ import { api } from "@/lib/api";
 import type { NewsEvent } from "@/lib/api";
 import { Panel } from "@/components/terminal/ui";
 import RelatedLinks from "@/components/RelatedLinks";
+import SourceLink from "@/components/SourceLink";
 import LiquidityInsights from "@/components/LiquidityInsights";
 
 export const revalidate = 300;
@@ -296,6 +297,7 @@ export default async function LiquidityWatchPage({
         </Panel>
       </div>
 
+      <SourceLink k="news" />
       <RelatedLinks items={[
         { href: "/omo", label: "OMO", why: "what BB itself injects and absorbs" },
         { href: "/cashflows", label: "Cash Flows", why: "the ladder these events are NOT part of" },

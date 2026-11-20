@@ -8,6 +8,7 @@ import { resolveRange, inRange } from "@/lib/daterange";
 import DownloadButton from "@/components/DownloadButton";
 import Freshness from "@/components/Freshness";
 import RelatedLinks from "@/components/RelatedLinks";
+import SourceLink from "@/components/SourceLink";
 import { DataWarning } from "@/components/DataWarning";
 
 export const revalidate = 300;
@@ -108,6 +109,7 @@ export default async function CashFlowsPage({ searchParams }: { searchParams: Pr
           </div>
         </Panel>
       </div>
+      <SourceLink k="flows" />
       <RelatedLinks items={[
         { href: "/auctions", label: "Treasury Auctions", why: "the tenders behind the outflow column" },
         { href: "/schedule", label: "Schedule by Product", why: "the same flows split T-Bond / T-Bill / FRTB, monthly" },

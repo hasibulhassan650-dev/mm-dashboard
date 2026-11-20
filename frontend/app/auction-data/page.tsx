@@ -5,6 +5,7 @@ import { DataWarning } from "@/components/DataWarning";
 import DateRangeControl from "@/components/DateRangeControl";
 import Freshness from "@/components/Freshness";
 import RelatedLinks from "@/components/RelatedLinks";
+import SourceLink from "@/components/SourceLink";
 import Link from "next/link";
 
 export const revalidate = 300;
@@ -165,6 +166,7 @@ export default async function AuctionDataPage({
         </Panel>
       </div>
 
+      <SourceLink k={["yields", "auctions_forward"]} />
       <RelatedLinks items={[
         { href: "/auctions", label: "Treasury Auctions", why: "the same auctions with bids and cover" },
         { href: "/yields", label: "Yield Curve", why: "where these cut-offs sit on the curve" },

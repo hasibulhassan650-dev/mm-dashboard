@@ -3,6 +3,7 @@ import type { CumulativeBlock } from "@/lib/api";
 import StatCard from "@/components/StatCard";
 import DownloadButton from "@/components/DownloadButton";
 import Link from "next/link";
+import SourceLink from "@/components/SourceLink";
 
 export const revalidate = 0;   // lists the desk's provisional buybacks the moment they are saved
 
@@ -53,6 +54,8 @@ export default async function DrilldownPage({
           className="px-3 py-1.5 rounded b-panel2 hover-b-panel2 text-sm t-dim">Next ▶</Link>
         <Link href="/cashflows" className="ml-auto text-xs t-info hover:underline">← Back to Cash Flows</Link>
       </div>
+
+      <SourceLink k={["flows", "omo", "buybacks", "news"]} />
 
       {/* The whole liquidity picture for the day, in the order cash moves.
           OMO first because it is the biggest mover and was, until now, missing

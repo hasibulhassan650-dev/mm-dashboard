@@ -8,6 +8,7 @@ import DownloadButton from "@/components/DownloadButton";
 import Freshness from "@/components/Freshness";
 import InfoTip from "@/components/InfoTip";
 import RelatedLinks from "@/components/RelatedLinks";
+import SourceLink from "@/components/SourceLink";
 import type { RefRateRow } from "@/lib/api";
 import { DataWarning } from "@/components/DataWarning";
 
@@ -115,6 +116,7 @@ export default async function RefRatePage({ searchParams }: { searchParams: Prom
           </Panel>
         )}
       </div>
+      <SourceLink k="refrate" />
       <RelatedLinks items={[
         { href: "/callmoney", label: "Call Money", why: "the actual traded overnight rate" },
         { href: "/omo", label: "OMO Operations", why: "policy rates these benchmark against" },

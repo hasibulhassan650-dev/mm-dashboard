@@ -1,6 +1,7 @@
 import { api, exportUrl } from "@/lib/api";
 import Link from "next/link";
 import RelatedLinks from "@/components/RelatedLinks";
+import SourceLink from "@/components/SourceLink";
 import { fmtDate, fmtCrore, fmtRate } from "@/lib/format";
 import { Panel } from "@/components/terminal/ui";
 import LiquidityLadderChart from "@/components/LiquidityLadderChart";
@@ -220,6 +221,7 @@ export default async function ForecastPage({
           </div>
         </Panel>
       </div>
+      <SourceLink k="flows" />
       <RelatedLinks items={[
         { href: "/auctions", label: "Treasury Auctions", why: "every tender: notified, bids, accepted, cut-off" },
         { href: "/omo", label: "OMO Operations", why: "the repos & SDF driving these flows" },

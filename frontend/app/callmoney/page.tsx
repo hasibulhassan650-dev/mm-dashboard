@@ -10,6 +10,7 @@ import DownloadButton from "@/components/DownloadButton";
 import Freshness from "@/components/Freshness";
 import InfoTip from "@/components/InfoTip";
 import RelatedLinks from "@/components/RelatedLinks";
+import SourceLink from "@/components/SourceLink";
 import { DataWarning } from "@/components/DataWarning";
 
 export const revalidate = 300;
@@ -133,6 +134,7 @@ export default async function CallMoneyPage({ searchParams }: { searchParams: Pr
           </div>
         </Panel>
       </div>
+      <SourceLink k="callmoney" />
       <RelatedLinks items={[
         { href: "/omo", label: "OMO Operations", why: "the corridor tools that anchor this rate" },
         { href: "/forecast", label: "Liquidity Forecast", why: "why tight/flush days move the rate" },

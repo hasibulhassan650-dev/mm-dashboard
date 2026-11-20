@@ -2,6 +2,7 @@ import { api } from "@/lib/api";
 import type { PressFeed, PressRelease } from "@/lib/api";
 import { Panel } from "@/components/terminal/ui";
 import RelatedLinks from "@/components/RelatedLinks";
+import SourceLink from "@/components/SourceLink";
 
 export const revalidate = 300;
 
@@ -158,6 +159,7 @@ export default async function PressPage() {
         </Panel>
       </div>
 
+      <SourceLink k="press" />
       <RelatedLinks items={[
         { href: "/omo", label: "OMO", why: "the operations these releases publish" },
         { href: "/auction-data", label: "Auction Data", why: "the auction results, parsed" },

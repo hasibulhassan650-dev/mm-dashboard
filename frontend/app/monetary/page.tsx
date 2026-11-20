@@ -1,5 +1,6 @@
 import { api } from "@/lib/api";
 import RelatedLinks from "@/components/RelatedLinks";
+import SourceLink from "@/components/SourceLink";
 import DateRangeControl from "@/components/DateRangeControl";
 import { resolveRange, inRange } from "@/lib/daterange";
 import { fmtMonth, fmtDate, fmtPct } from "@/lib/format";
@@ -77,6 +78,7 @@ export default async function MonetaryPage({ searchParams }: { searchParams: Pro
           </div>
         </Panel>
       </div>
+      <SourceLink k="monetary" />
       <RelatedLinks items={[
         { href: "/macro", label: "External Sector", why: "reserves & remittance" },
         { href: "/callmoney", label: "Call Money", why: "where policy meets the market" },

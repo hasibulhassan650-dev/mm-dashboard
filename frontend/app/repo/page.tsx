@@ -7,6 +7,7 @@ import { resolveRange, inRange } from "@/lib/daterange";
 import DownloadButton from "@/components/DownloadButton";
 import Freshness from "@/components/Freshness";
 import RelatedLinks from "@/components/RelatedLinks";
+import SourceLink from "@/components/SourceLink";
 import { DataWarning } from "@/components/DataWarning";
 
 export const revalidate = 300;
@@ -120,6 +121,7 @@ export default async function RepoPage({ searchParams }: { searchParams: Promise
         </Panel>
       </div>
 
+      <SourceLink k="repo" />
       <RelatedLinks items={[
         { href: "/callmoney", label: "Call Money", why: "the unsecured side of the same market" },
         { href: "/omo", label: "OMO", why: "BB's own repo operations" },
