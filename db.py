@@ -813,6 +813,10 @@ class LiquidityEvent(Base):
     # payment. Shown, never added: a later article says "Tk 70bn until September" and summing
     # both would count the first 47bn twice.
     is_cumulative   = Column(Boolean, default=False)
+    # What KIND of fact the sentence states, set by code (engines/news_rules.nature_of), never by the model:
+    # ACT (cash moved / a decision) | FACILITY (a scheme's size) | ENROLMENT (one bank joining a scheme) | BACKGROUND.
+    # Only an ACT that is not a running total is ever added into a total. NULL (an old row) is read as ACT.
+    nature          = Column(String(12), default="ACT")
     event_date      = Column(Date)
     announced_date  = Column(Date)
     status          = Column(String(12))                            # ANNOUNCED | APPROVED | DISBURSED | COMPLETED
@@ -1187,6 +1191,8 @@ def init_db():
         "ALTER TABLE press_releases ADD COLUMN notified_utc TIMESTAMP",
         "ALTER TABLE liquidity_events ADD COLUMN IF NOT EXISTS is_cumulative BOOLEAN DEFAULT FALSE",
         "ALTER TABLE liquidity_events ADD COLUMN is_cumulative BOOLEAN DEFAULT 0",
+        "ALTER TABLE liquidity_events ADD COLUMN IF NOT EXISTS nature VARCHAR(12) DEFAULT 'ACT'",
+        "ALTER TABLE liquidity_events ADD COLUMN nature VARCHAR(12) DEFAULT 'ACT'",
         "ALTER TABLE data_absences ADD COLUMN IF NOT EXISTS kind VARCHAR(16) DEFAULT 'bb_omission'",
         "ALTER TABLE daily_net_flow ADD COLUMN IF NOT EXISTS buyback_inflow_bdt_mill REAL DEFAULT 0",
         "ALTER TABLE daily_net_flow ADD COLUMN IF NOT EXISTS sukuk_inflow_bdt_mill REAL DEFAULT 0",

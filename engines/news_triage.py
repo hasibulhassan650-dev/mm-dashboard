@@ -234,6 +234,10 @@ def _store_events(session, raw_events, art: Dict, now: datetime.datetime, stats:
         row, how = L.merge_or_create(session, ev, art, now, verified_by=verified_by, exclude_ids=kept)
         if red and not row.redundant_with:
             row.redundant_with = red
+        if how == "created" and not row.redundant_with:
+            # the same story from another outlet (a scheme announced twice, one stake purchase in two papers) is one event
+            if L.link_story(session, row, exclude_ids=kept, now=now):
+                stats["events_linked"] = stats.get("events_linked", 0) + 1
         kept.append(row.id)
         stats["events_created" if how == "created" else "events_merged"] += 1
     if verified_by != "rules":
@@ -410,16 +414,38 @@ def run(session, client=None, now: datetime.datetime = None, sources: Optional[L
     return out
 
 
+def _reclassify(session, apply: bool) -> int:
+    """Repair what was stored before nature / running-total / story rules existed. The dry run works on a copy read with
+    SELECT only: the real database is not written, and the report lists every id that moves a total."""
+    import sys
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="replace")      # a Bangla quote must not crash a Windows console report
+    target = session if apply else L.clone_events_to_memory(session)
+    rep = L.reclassify_stored(target, datetime.datetime.utcnow(), apply=apply)
+    print(f"{'APPLIED' if apply else 'DRY RUN (nothing written)'}: {len(rep['changes'])} change(s)")
+    for c in rep["changes"]:
+        print(f"  [{c['class']}] {c['detail']}")
+    print("totals before:", json.dumps(rep["before"]))
+    print("totals after: ", json.dumps(rep["after"]))
+    for d in rep["differences"]:
+        print(f"  ev-{d['id']} {d['kind']} {d['amount_crore']} on {d['when']}: summed {d['was_summed']} -> "
+              f"{d['now_summed']} ({d['why']})")
+    return 0
+
+
 def main(argv=None) -> int:
     import argparse
     ap = argparse.ArgumentParser(description="Liquidity Watch: read Bangladesh's financial news")
-    ap.add_argument("action", choices=("run", "list", "backfill"))
+    ap.add_argument("action", choices=("run", "list", "backfill", "reclassify"))
+    ap.add_argument("--apply", action="store_true",
+                    help="reclassify: write the repair (default is a dry run on an in-memory copy; nothing is written)")
     ap.add_argument("--since", default="2026-07-01",
                     help="backfill: first date to cover (default: start of FY2026-27)")
     a = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     from db import get_session, init_db
-    init_db()
+    if not (a.action == "reclassify" and not a.apply):
+        init_db()                  # a reclassify dry run must not even migrate: it only reads
     s = get_session()
     try:
         if a.action == "list":
@@ -427,6 +453,8 @@ def main(argv=None) -> int:
             for e in s.query(LiquidityEvent).order_by(LiquidityEvent.event_date.desc().nullslast()).limit(50):
                 print(e.event_date, e.kind, e.amount_crore, e.status, e.counterparty, "|", e.summary)
             return 0
+        if a.action == "reclassify":
+            return _reclassify(s, a.apply)
         if a.action == "backfill":
             client = get_client()
             if client is None:

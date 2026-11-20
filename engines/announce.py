@@ -32,6 +32,9 @@ import subprocess
 from typing import Callable, Dict, List, Optional, Sequence
 
 from engines.liquidity_news import CONFIRMED_SQL as _CONFIRMED   # rule-read leads are never announced
+# Only a new act or a new scheme is announced: not one bank joining a scheme (ENROLMENT), not background, and not a running
+# total ("banks have disbursed Tk 12,000 crore so far"). A row not yet classified (NULL nature) counts as an ACT.
+_ANNOUNCEABLE = "COALESCE(nature, 'ACT') IN ('ACT', 'FACILITY') AND NOT COALESCE(is_cumulative, FALSE)"
 
 log = logging.getLogger("announce")
 
@@ -103,7 +106,7 @@ def _sources():
          # CONFIRMED only: a rule-read lead is not announced until an AI reader confirms it. The age window runs
          # from CONFIRMATION, so an event confirmed on day 4 is still announced.
          "where": "matters IS TRUE AND redundant_with IS NULL AND notified_utc IS NULL AND "
-                  + _CONFIRMED + " AND COALESCE(confirmed_utc, first_seen_utc) >= :since",
+                  + _CONFIRMED + " AND " + _ANNOUNCEABLE + " AND COALESCE(confirmed_utc, first_seen_utc) >= :since",
          "order": "COALESCE(confirmed_utc, first_seen_utc), id"},
     )
 
@@ -223,12 +226,21 @@ def news_digest_lines(session, now: datetime.datetime = None, hours: int = 24):
     rows = session.execute(text(
         "SELECT kind, direction, amount_crore, status, counterparty, summary FROM liquidity_events "
         "WHERE COALESCE(confirmed_utc, first_seen_utc) >= :s AND matters IS TRUE AND redundant_with IS NULL "
-        "AND " + _CONFIRMED + " ORDER BY first_seen_utc DESC"), {"s": now - datetime.timedelta(hours=hours)}).fetchall()
+        "AND " + _CONFIRMED + " AND " + _ANNOUNCEABLE + " ORDER BY first_seen_utc DESC"),
+        {"s": now - datetime.timedelta(hours=hours)}).fetchall()
     for kind, direction, amt, status, cp, summ in rows:
         amount = "amount not stated" if amt is None else f"{float(amt):,.0f} cr"
         out.append(f"- {kind.replace('_', ' ').title()} ({direction.lower()}) · {amount}"
                    f"{' · ' + status.lower() if status else ''} · {cp or 'counterparty not stated'} · {str(summ)[:110]}")
-    if not rows:
+    # one line per scheme for the banks that joined it: allocations, not cash, so never a line each
+    enrol = session.execute(text(
+        "SELECT amount_crore, COUNT(*) FROM liquidity_events WHERE nature = 'ENROLMENT' AND redundant_with IS NULL "
+        "AND COALESCE(confirmed_utc, first_seen_utc) >= :s AND " + _CONFIRMED + " GROUP BY amount_crore ORDER BY amount_crore"),
+        {"s": now - datetime.timedelta(hours=hours)}).fetchall()
+    for amt, n in enrol:
+        scheme = "a scheme" if amt is None else f"the {float(amt):,.0f} cr scheme"
+        out.append(f"- {n} bank(s) signed participation agreements under {scheme} (allocations, not cash)")
+    if not rows and not enrol:
         out.append("- nothing new")
     leads = session.execute(text(
         "SELECT COUNT(*) FROM liquidity_events WHERE verified_by = 'rules' AND superseded_utc IS NULL "

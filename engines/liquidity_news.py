@@ -50,6 +50,10 @@ STATUSES = ("ANNOUNCED", "APPROVED", "DISBURSED", "COMPLETED")
 # 5,100 and a request as a payment, so it is not trusted to move a number on its own.
 READER_RANK = {"rules": 0, "llm": 1, "claude": 1, "research": 2, "human": 3}
 CONFIRMED_SQL = "COALESCE(verified_by, 'llm') <> 'rules' AND superseded_utc IS NULL"
+# What is ADDED into a total: a single act, never a scheme's size, an enrolment, background or a running total. A row not
+# yet classified (NULL nature) is an ACT, so an old row never vanishes. api/ cannot import this module: a copy lives in
+# api/routers/news_logic.py and tests/test_news_noise.py fails if the two ever differ.
+SUMMABLE_SQL = "COALESCE(nature, 'ACT') = 'ACT' AND NOT COALESCE(is_cumulative, FALSE)"
 CHANNELS = ("CASH", "BONDS", "BB_CREDIT", "REGULATORY")
 
 # Of any size: a CRR change or BB lending to a bank matters whatever its amount.
@@ -234,10 +238,15 @@ def validate_event(raw: Dict, article: Dict) -> Tuple[Optional[Dict], List[str]]
             conf = max(0.0, min(1.0, float(raw.get("confidence", 0.5))))
         except (TypeError, ValueError):
             conf = 0.5
+    # The CODE has the last word on the nature of a sentence and on whether it is a running total, whichever reader
+    # (rules, Claude, a free model) wrote it: "By mid-October, banks disbursed about Tk 12,000 crore" was a running
+    # total only because the model happened to say so, and the model is not a guarantee.
+    cumulative = bool(raw.get("is_cumulative")) or bool(bn and _BN.is_period_total(quote)) or         bool(not bn and _R._PERIOD.search(quote)) or _R.stock_by_pool(quote)
     ev = {
         "kind": kind, "direction": KINDS[kind], "amount_crore": amount,
         "amount_unverified": unverified,
-        "is_cumulative": bool(raw.get("is_cumulative")) or (bn and _BN.is_period_total(quote)),
+        "nature": _R.nature_of(quote, kind, amount),
+        "is_cumulative": cumulative,
         "event_date": near(raw.get("event_date")), "announced_date": near(raw.get("announced_date")) or (pub if pub else None),
         "status": status if status in STATUSES else None,
         "channel": channel if channel in CHANNELS else None,
@@ -255,6 +264,8 @@ def matters(ev: Dict) -> bool:
     conf = ev.get("confidence")
     if conf is not None and conf < MATTERS_MIN_CONFIDENCE:
         return False
+    if ev.get("nature") in ("ENROLMENT", "BACKGROUND"):
+        return False                  # one bank joining a scheme, or an old fact: stored with its quote, never announced
     if ev["kind"] in ALWAYS_MATTERS:
         # A background sentence is not news: "Despite liquidity injection by the government, the bank has failed to return
         # depositors' money for years" was announced as BB bank support - no amount, a running total over years. A reserve-
@@ -272,8 +283,17 @@ def _cp(s: Optional[str]) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
 
 
+def _fold(s: Optional[str]) -> str:
+    """A counterparty as a comparison key: 'BB' and 'the central bank' are Bangladesh Bank, and 'PLC' / 'Ltd' / 'Limited'
+    do not name a different bank. Used by same_counterparty ONLY: dedupe_key keeps the stored spelling."""
+    t = f" {_cp(s)} "
+    t = re.sub(r" (the )?(bb|central bank) ", " bangladesh bank ", t)
+    t = re.sub(r" (plc|ltd|limited) ", " ", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
 def same_counterparty(a: Optional[str], b: Optional[str]) -> bool:
-    a, b = _cp(a), _cp(b)
+    a, b = _fold(a), _fold(b)
     if not a and not b:
         return True
     return bool(a and b and (a == b or a in b or b in a))
@@ -376,6 +396,7 @@ def merge_or_create(session, ev: Dict, article: Dict, now: datetime.datetime = N
                     setattr(match, f, v)
             match.amount_unverified = bool(ev.get("amount_unverified"))
             match.is_cumulative = bool(ev.get("is_cumulative"))
+            match.nature = ev.get("nature") or match.nature or "ACT"
             match.verified_by, match.confirmed_utc = verified_by, now
         if ev.get("status") and (match.status is None or _RANK[ev["status"]] > _RANK.get(match.status, -1)):
             session.add(LiquidityEventHistory(event_id=match.id, changed_utc=now, field="status",
@@ -388,7 +409,7 @@ def merge_or_create(session, ev: Dict, article: Dict, now: datetime.datetime = N
                                               source_url=article.get("url")))
             match.amount_crore = ev["amount_crore"]
         match.updated_utc = now
-        match.matters = matters({"kind": match.kind, "confidence": match.confidence,
+        match.matters = matters({"kind": match.kind, "confidence": match.confidence, "nature": match.nature,
                                  "amount_crore": match.amount_crore, "is_cumulative": match.is_cumulative})
         session.flush()
         return match, "merged"
@@ -396,7 +417,7 @@ def merge_or_create(session, ev: Dict, article: Dict, now: datetime.datetime = N
     row = LiquidityEvent(
         dedupe_key=dedupe_key(ev, url), kind=ev["kind"], direction=ev["direction"],
         amount_crore=ev.get("amount_crore"), amount_unverified=ev.get("amount_unverified", False),
-        is_cumulative=bool(ev.get("is_cumulative")),
+        is_cumulative=bool(ev.get("is_cumulative")), nature=ev.get("nature") or "ACT",
         event_date=ev.get("event_date"), announced_date=ev.get("announced_date"),
         status=ev.get("status"), channel=ev.get("channel"), counterparty=ev.get("counterparty"),
         summary=ev.get("summary"), evidence_quote=ev["evidence_quote"],
@@ -405,6 +426,259 @@ def merge_or_create(session, ev: Dict, article: Dict, now: datetime.datetime = N
     session.add(row)
     session.flush()
     return row, "created"
+
+
+# ── one story, many outlets ───────────────────────────────────────────────────────────────────────────────────────────
+# dedupe_key hashes the URL and merge_or_create looks 10 days either side, so the SAME scheme announcement from another
+# outlet weeks later became a new row and a new issue, and the same stake purchase described by two papers with differently
+# worded counterparties ("Padma Bank" / "ICB, Sonali ...") was counted twice. link_story marks the later reading
+# redundant_with 'liquidity_events:<id>' of the primary one. It is deliberately narrow for a plain payment (see below).
+STORY_NATURES = ("FACILITY", "ENROLMENT", "BACKGROUND")
+STORY_WINDOW_DAYS = 120
+ACT_STORY_DAYS = 3                   # two equal payments 11 days apart are two events; the same day's story is one
+_LINK = "liquidity_events:"
+_GENERIC_NAMES = {"bank", "banks", "government", "govt", "ministry", "division", "the"}
+
+
+def _nat(row) -> str:
+    return row.nature or "ACT"
+
+
+def _when(row) -> Optional[datetime.date]:
+    d = row.event_date or row.announced_date
+    if d is None and row.first_seen_utc is not None:
+        d = row.first_seen_utc.date()
+    return d
+
+
+def _urls(row) -> set:
+    try:
+        return {x.get("url") for x in json.loads(row.sources_json or "[]") if x.get("url")}
+    except ValueError:
+        return set()
+
+
+def _names(s: Optional[str]) -> set:
+    parts = re.split(r",| and |&|\(|\)|--", s or "", flags=re.I)
+    return {f for f in (_fold(p) for p in parts) if len(f) >= 3 and f not in _GENERIC_NAMES}
+
+
+def _counterparty_compatible(a, b) -> bool:
+    """Same party, by name - or one row's named party is mentioned in the OTHER row's own words (a quote that lists
+    'ICB, Sonali Bank, Janata Bank ...' names the parties another reading calls 'Padma Bank's new owners')."""
+    if not (a.counterparty and b.counterparty):
+        return False
+    if same_counterparty(a.counterparty, b.counterparty):
+        return True
+    for x, y in ((a, b), (b, a)):
+        text_y = f" {_fold(' '.join([y.counterparty or '', y.evidence_quote or '', y.summary or '']))} "
+        if any(f" {n} " in text_y for n in _names(x.counterparty)):
+            return True
+    return False
+
+
+def _amounts_agree(a, b) -> bool:
+    x, y = a.amount_crore, b.amount_crore
+    if x is None and y is None:
+        return True
+    if x is None or y is None:
+        return False
+    return abs(x - y) / max(abs(x), abs(y), 1e-9) <= 0.01
+
+
+def _is_story_row(row) -> bool:
+    return _nat(row) in STORY_NATURES or bool(row.is_cumulative)
+
+
+def _is_same_story(row, c) -> bool:
+    if _urls(row) & _urls(c):
+        return False                  # the same article reading: two events from one article are two facts
+    if _nat(row) != _nat(c) or bool(row.is_cumulative) != bool(c.is_cumulative) or not _amounts_agree(row, c):
+        return False
+    d1, d2 = _when(row), _when(c)
+    gap = abs((d1 - d2).days) if (d1 and d2) else None
+    if _is_story_row(row):
+        if _nat(row) == "ENROLMENT":
+            # one bank joining one scheme is one enrolment, whenever the later outlet wrote it up
+            return bool(row.counterparty and c.counterparty and same_counterparty(row.counterparty, c.counterparty))
+        if gap is not None and gap > STORY_WINDOW_DAYS:
+            return False
+        if row.amount_crore is None:
+            return _counterparty_compatible(row, c)       # no figure to tie them: the named party must
+        return True                   # a scheme is identified by its size within the window
+    # a plain completed payment: the narrowest rule that still catches the double reading
+    done = ("DISBURSED", "COMPLETED")
+    if row.amount_crore is None or row.status not in done or c.status not in done:
+        return False
+    if gap is None or gap > ACT_STORY_DAYS:
+        return False
+    return _counterparty_compatible(row, c)
+
+
+def link_story(session, row, exclude_ids=(), now: datetime.datetime = None):
+    """Mark `row` and an earlier reading of the same story as one. Returns (redundant_row, primary_row) or None.
+
+    The primary is the reading by the stronger reader, then the earlier one; the other gets
+    redundant_with = 'liquidity_events:<primary id>', its sources are added to the primary's, and anything already
+    pointing at the demoted row follows to the primary."""
+    from db import LiquidityEvent, LiquidityEventHistory
+    now = now or datetime.datetime.utcnow()
+    if row.redundant_with or row.superseded_utc is not None:
+        return None
+    skip = set(exclude_ids or ()) | {row.id}
+    other = None
+    for c in session.query(LiquidityEvent).filter(
+            LiquidityEvent.kind == row.kind, LiquidityEvent.superseded_utc.is_(None),
+            LiquidityEvent.redundant_with.is_(None)).order_by(LiquidityEvent.id).all():
+        if c.id in skip:
+            continue
+        if _is_same_story(row, c):
+            other = c
+            break
+    if other is None:
+        return None
+
+    def rank(r):
+        return (-READER_RANK.get(r.verified_by or "llm", 1), r.first_seen_utc or datetime.datetime.max, r.id)
+
+    primary, demoted = sorted((row, other), key=rank)
+    srcs = json.loads(primary.sources_json or "[]")
+    seen = {x.get("url") for x in srcs}
+    for x in json.loads(demoted.sources_json or "[]"):
+        if x.get("url") not in seen:
+            srcs.append(x)
+            seen.add(x.get("url"))
+    primary.sources_json = json.dumps(srcs)
+    if demoted.notified_utc and not primary.notified_utc:
+        primary.notified_utc = demoted.notified_utc     # the story was already announced once: do not announce it again
+    demoted.redundant_with = f"{_LINK}{primary.id}"
+    session.add(LiquidityEventHistory(event_id=demoted.id, changed_utc=now, field="redundant_with", old_value=None,
+                                      new_value=demoted.redundant_with, source_url=None))
+    for r in session.query(LiquidityEvent).filter(LiquidityEvent.redundant_with == f"{_LINK}{demoted.id}").all():
+        r.redundant_with = f"{_LINK}{primary.id}"
+    session.flush()
+    return demoted, primary
+
+
+# ── one-time repair of what was stored before these rules existed ────────────────────────────────────────────────────
+def _fy_start(today: datetime.date) -> datetime.date:
+    return datetime.date(today.year if today.month >= 7 else today.year - 1, 7, 1)
+
+
+def _row_summed(row, use_nature: bool) -> bool:
+    """Would the API add this row into a total? (the API's own test, mirrored; api/routers/news_logic.news_block)"""
+    return bool(row.matters and not row.redundant_with and row.superseded_utc is None
+                and (row.verified_by or "llm") != "rules" and row.direction in ("INJECT", "ABSORB")
+                and row.amount_crore is not None and row.status in ("DISBURSED", "COMPLETED")
+                and not row.is_cumulative and (not use_nature or _nat(row) == "ACT"))
+
+
+def _totals(rows, flags: Dict[int, bool], today: datetime.date) -> Dict[str, float]:
+    fy, month = _fy_start(today), today.strftime("%Y-%m")
+    out = {"month_inject": 0.0, "month_absorb": 0.0, "fy_inject": 0.0, "fy_absorb": 0.0}
+    for r in rows:
+        if not flags.get(r.id):
+            continue
+        d = _when(r)
+        if d is None:
+            continue
+        side = "inject" if r.direction == "INJECT" else "absorb"
+        if d.strftime("%Y-%m") == month:
+            out[f"month_{side}"] += float(r.amount_crore)
+        if d >= fy:
+            out[f"fy_{side}"] += float(r.amount_crore)
+    return {k: round(v, 2) for k, v in out.items()}
+
+
+def period_reason(quote: str) -> Optional[str]:
+    """Why a quote is a running total by code (the matched words), or None."""
+    from engines import news_rules as R
+    q = _BN.normalize(quote or "")
+    if _BN.is_bangla(q):
+        return "Bangla period total" if _BN.is_period_total(q) else None
+    m = R._PERIOD.search(q)
+    if m:
+        return m.group(0)
+    return "approximate sum drawn from a named fund" if R.stock_by_pool(q) else None
+
+
+def reclassify_stored(session, now: datetime.datetime = None, apply: bool = False,
+                      today: datetime.date = None) -> Dict:
+    """Re-run nature, running-total and story rules over every stored, non-superseded event.
+
+    Every change is written to data_changes (class news_nature / news_story_dup) and to liquidity_event_history, and a
+    second run changes nothing. apply=False computes the same report and then ROLLS BACK the session: use it on a
+    throwaway copy (news_triage.py reclassify clones the rows into memory first, so production is never written).
+    Returns {changes, before, after, differences}: each difference in a total is attributed to an id."""
+    from db import DataChange, LiquidityEvent, LiquidityEventHistory
+    from engines import news_rules as R
+    now = now or datetime.datetime.utcnow()
+    today = today or now.date()
+    rows = session.query(LiquidityEvent).filter(LiquidityEvent.superseded_utc.is_(None)).order_by(LiquidityEvent.id).all()
+    before_flags = {r.id: _row_summed(r, use_nature=False) for r in rows}
+    before = _totals(rows, before_flags, today)
+    changes: List[Dict] = []
+
+    def note(cls: str, row, field: str, old, new, why: str):
+        detail = f"ev-{row.id} {field} {old}->{new} ({why})"
+        session.add(DataChange(changed_utc=now, change_class=cls, detail=detail))
+        session.add(LiquidityEventHistory(event_id=row.id, changed_utc=now, field=field[:24], old_value=str(old),
+                                          new_value=str(new), source_url=None))
+        changes.append({"id": row.id, "class": cls, "detail": detail})
+
+    for r in rows:
+        q = r.evidence_quote or ""
+        nat = R.nature_of(q, r.kind, r.amount_crore)
+        if (r.nature or None) != nat:
+            note("news_nature", r, "nature", r.nature, nat, "rule: " + q[:70].replace("\n", " "))
+            r.nature = nat
+        why = period_reason(q)
+        if why and not r.is_cumulative:
+            note("news_nature", r, "is_cumulative", False, True, f"rule: {why}")
+            r.is_cumulative = True
+        m = matters({"kind": r.kind, "confidence": r.confidence, "nature": r.nature,
+                     "amount_crore": r.amount_crore, "is_cumulative": r.is_cumulative})
+        if bool(r.matters) != m:
+            note("news_nature", r, "matters", bool(r.matters), m, f"nature {r.nature}")
+            r.matters = m
+    session.flush()
+    for r in rows:
+        linked = link_story(session, r, now=now)
+        if linked:
+            dem, prim = linked
+            detail = f"ev-{dem.id} redundant_with ev-{prim.id} (same story, kind {dem.kind}, amount {dem.amount_crore})"
+            session.add(DataChange(changed_utc=now, change_class="news_story_dup", detail=detail))
+            changes.append({"id": dem.id, "class": "news_story_dup", "detail": detail})
+    session.flush()
+    after_flags = {r.id: _row_summed(r, use_nature=True) for r in rows}
+    after = _totals(rows, after_flags, today)
+    diffs = [{"id": r.id, "kind": r.kind, "amount_crore": r.amount_crore, "when": str(_when(r)),
+              "was_summed": before_flags[r.id], "now_summed": after_flags[r.id],
+              "why": f"nature {_nat(r)}, cumulative {bool(r.is_cumulative)}, redundant_with {r.redundant_with}"}
+             for r in rows if before_flags[r.id] != after_flags[r.id]]
+    report = {"changes": changes, "before": before, "after": after, "differences": diffs}
+    if apply:
+        session.commit()
+    else:
+        session.rollback()
+    return report
+
+
+def clone_events_to_memory(session):
+    """A throwaway in-memory copy of liquidity_events, read with SELECT only, so a dry run never writes the real DB (and
+    works before the real DB has the `nature` column)."""
+    from sqlalchemy import create_engine, inspect, text
+    from sqlalchemy.orm import sessionmaker
+    import db as dbmod
+    eng = create_engine("sqlite:///:memory:")
+    dbmod.Base.metadata.create_all(eng)
+    mem = sessionmaker(bind=eng)()
+    have = {c["name"] for c in inspect(session.get_bind()).get_columns("liquidity_events")}
+    cols = [c.name for c in dbmod.LiquidityEvent.__table__.columns if c.name in have]
+    for rec in session.execute(text(f"SELECT {', '.join(cols)} FROM liquidity_events")).fetchall():
+        mem.add(dbmod.LiquidityEvent(**dict(zip(cols, rec))))
+    mem.commit()
+    return mem
 
 
 def supersede_rule_reads(session, url: str, kept_ids, now: datetime.datetime = None) -> int:

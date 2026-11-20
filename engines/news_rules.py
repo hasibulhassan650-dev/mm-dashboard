@@ -31,6 +31,7 @@ one article, nuance. The rules are the floor, not the ceiling.
 import re
 from typing import Dict, List, Optional, Tuple
 
+from engines import bangla as _BN
 from engines import liquidity_news as L
 
 RULES_MODEL = "rules-v1"
@@ -65,11 +66,105 @@ _STOCK = re.compile(r"\b(as of|outstanding|so far|to date|cumulative(ly)?)\b", r
 _PERIOD = re.compile(
     r"\b(until|till|in total|a total of|total of|during (these|the|this) \w+( \w+)?( months?| weeks?| quarter| year)?|first quarter|"
     r"first (two|three|four|five|six|\d+) (months?|weeks?)|q[1-4]|this fiscal year|fiscal year|"
-    r"since (july|the start)|"
+    r"since (july|the start|(its|the) (launch|inception))|thus far|"
+    # "By mid-October, banks disbursed about Tk 12,000 crore" is everything disbursed up to that date, not one payment
+    # (it was summed into 'injected this month'). Only the month-anchored and period-anchored forms: "by the end of the
+    # day" is a one-day payment and stays one.
+    r"by (the )?(early|mid|late|end|start)[- ]?(of )?(the )?(july|august|september|october|november|december|january|"
+    r"february|march|april|may|june)|by the end of (the )?(month|quarter|year|fiscal year|fy)|"
     # "in April" is ONE month's payment; "in July and August" is a total over two months.
     r"in (july|august|september|october|november|december|january|february|march|april|may|june) "
     r"(and|to|through) (july|august|september|october|november|december|january|february|march|april|may|june)\b)",
     re.I)
+
+
+# ── what KIND OF FACT a sentence states ──────────────────────────────────────────────────────────────────────────────
+# ACT = new cash moved or a decision taken (summed when disbursed). The other three are real sentences that are not a
+# new payment: a scheme's SIZE ("a Tk 10,000 crore refinance scheme": capacity, not cash), one bank ENROLLING in a
+# scheme ("signed a participation agreement ... Tk 2,000 crore"), and BACKGROUND ("had established ...", "which was
+# launched last year"). Each was announced or summed as if it were a new payment. When no rule fires the answer is ACT:
+# a missed rule shows an extra line, a wrong rule would hide a real event (recall wins).
+NATURES = ("ACT", "FACILITY", "ENROLMENT", "BACKGROUND")
+_SCHEME_WORD = r"(?:scheme|fund|package|facility|window|line)s?"
+_ENROL = re.compile(r"\bparticipat\w*[ -](?:agreements?|deals?)\b|\bsigned (?:an? )?(?:agreement|mou)\b", re.I)
+_SCHEME_NEAR = re.compile(rf"\b{_SCHEME_WORD}\b", re.I)
+# a word between an amount and a scheme noun that makes the amount the cash MOVED, not the scheme's size
+# ("Tk 2,000 crore FROM the fund", "Tk 4.5 crore UNDER the scheme")
+_NOT_SIZE = {"from", "under", "through", "to", "for", "in", "of", "by", "as", "via", "at", "on", "with", "and", "into",
+             "against", "after", "before", "during", "between", "than", "that", "which", "who", "whose", "has", "have",
+             "had", "was", "were", "is", "are", "been", "be", "will", "out", "among", "across"}
+# the cash verbs that hand over an amount ("released Tk 3,000 crore fund ...") - the amount is the payment
+_HANDS_OVER = re.compile(r"\b(released|disbursed|paid|provided|lent|injected|given|received|extended|drawn)\s+(?:\w+\s+){0,2}$", re.I)
+_SIZE_PREFIX = re.compile(rf"\b{_SCHEME_WORD}\s+(?:of|worth|amounting to|totalling|totaling)\s+(?:an? )?$", re.I)
+_DAY_ANCHOR = re.compile(
+    r"\b(yesterday|today|tonight|on (?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|"
+    r"\d{1,2}(?:st|nd|rd|th)?\s+(?:of\s+)?(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*|"
+    r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?\b(?!\d))", re.I)
+_BACKGROUND = re.compile(
+    r"\bhad (?:already )?(?:established|set up|introduced|launched|announced|created)\b|"
+    r"\b(?:which|that) (?:was|were|had been) (?:launched|introduced|set up|established|created)\b", re.I)
+_EARLIER = re.compile(r"\b(earlier|previously|last (?:year|month))\b", re.I)
+# 'up from Tk 2,000 crore last month' compares; it does not date the act
+_COMPARES = re.compile(r"\b(from|than|versus|vs\.?|compared (?:to|with)|against)\b[^.]*$", re.I)
+
+
+def _is_size(quote: str, start: int, end: int) -> bool:
+    """Is the amount at quote[start:end] a scheme's SIZE rather than cash that moved?"""
+    before = quote[:start]
+    if _SIZE_PREFIX.search(before):
+        return True                                        # 'a fund of Tk 10,000 crore'
+    if _HANDS_OVER.search(before):
+        return False                                       # a cash verb hands the amount over: the payment itself
+    for tok in re.findall(r"[A-Za-z][A-Za-z\-]*", quote[end:end + 60])[:4]:
+        low = tok.lower()
+        if low in _NOT_SIZE:
+            return False
+        if re.fullmatch(_SCHEME_WORD, low):
+            return True                                    # 'a Tk 60,000 crore stimulus package'
+    return False
+
+
+def _is_facility_en(quote: str, amount: Optional[float]) -> bool:
+    """The stored amount is the SIZE of a scheme / fund / package. 'Released Tk 2,000 crore from the Tk 10,000 crore
+    fund' is still an ACT: its amount is followed by 'from'. With no stored amount the quote is a facility only when EVERY
+    amount in it is a size ('Tk 4.50 crore under the Tk 10,000 crore scheme' holds a payment, so it is not)."""
+    amts = _amounts_at(quote)
+    if amount is not None:
+        mine = [a for a in amts if abs(a[2] - amount) <= 0.01 * max(abs(amount), 1e-9)]
+        return bool(mine) and any(_is_size(quote, a[0], a[1]) for a in mine)
+    return bool(amts) and all(_is_size(quote, a[0], a[1]) for a in amts)
+
+
+def nature_of(quote: str, kind: str, amount: Optional[float] = None) -> str:
+    """ACT | FACILITY | ENROLMENT | BACKGROUND, by code, from the quote. ACT whenever no rule fires."""
+    q = _BN.normalize(quote or "")
+    if _BN.is_bangla(q):
+        if kind == "BB_REFINANCE" and _BN.is_enrolment(q):
+            return "ENROLMENT"
+        return "FACILITY" if _BN.is_facility(q) else "ACT"
+    if kind == "BB_REFINANCE" and _ENROL.search(q) and _SCHEME_NEAR.search(q):
+        return "ENROLMENT"                                 # never for BB_BANK_SUPPORT: lending to a weak bank is news
+    if _BACKGROUND.search(q):
+        return "BACKGROUND"
+    m = _EARLIER.search(q)
+    if m and not _DAY_ANCHOR.search(q) and not _COMPARES.search(q[:m.start()][-30:]):
+        return "BACKGROUND"                                # 'earlier / previously / last year' with no day: old news
+    if _is_facility_en(q, amount):
+        return "FACILITY"
+    return "ACT"
+
+
+# 'has provided around Tk 12,000 crore from its deposit protection fund': a figure rounded with 'around' and drawn from
+# a named pool is the pool's running total to date, not a payment; a real single release names its day.
+_POOL = re.compile(r"\b(provided|disbursed|released|paid|lent|given|extended|injected)\b(?:\W+\w+){0,3}?\W+"
+                   r"(around|about|approximately|nearly|almost|roughly|over|more than)\b[^.]{0,40}?\bfrom\s+(?:its|the|a)\b"
+                   r"[^.]{0,40}?\b(?:fund|package|scheme|pool|reserve)\b", re.I)
+
+
+def stock_by_pool(quote: str) -> bool:
+    q = _BN.normalize(quote or "")
+    return bool(_POOL.search(q)) and not _DAY_ANCHOR.search(q)
+
 
 _KINDS: List[Tuple[str, re.Pattern]] = [
     # order matters: the first rule that matches decides

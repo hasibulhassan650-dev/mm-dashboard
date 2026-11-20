@@ -115,7 +115,7 @@ export default async function LiquidityWatchPage({
               <Link href={qs(!showRed, showMinor)} style={{ color: "var(--info)", textDecoration: "none" }}>
                 {showRed ? "hide" : "show"} already in BB data ({feed.hidden.redundant})</Link>
               <Link href={qs(showRed, !showMinor)} style={{ color: "var(--info)", textDecoration: "none" }}>
-                {showMinor ? "hide" : "show"} minor ({feed.hidden.minor})</Link>
+                {showMinor ? "hide" : "show"} minor ({feed.hidden.minor + (feed.hidden.background ?? 0)})</Link>
             </span>
           }
         >
@@ -137,8 +137,12 @@ export default async function LiquidityWatchPage({
                     <td className="mono">{e.when ?? "—"}</td>
                     <td>{KIND_LABEL[e.kind] ?? e.kind}
                       {e.is_cumulative && <div style={{ fontSize: 10, color: "var(--fg-mute)" }}>running total — not added</div>}
+                      {e.nature === "FACILITY" && <div style={{ fontSize: 10, color: "var(--fg-mute)" }}>scheme size — capacity, not cash</div>}
+                      {e.nature === "BACKGROUND" && <div style={{ fontSize: 10, color: "var(--fg-mute)" }}>background — an earlier fact</div>}
                       {e.verified_by === "rules" && <div style={{ fontSize: 10, color: "var(--fg-mute)" }}>rule-read</div>}
-                      {e.redundant_with && <div style={{ fontSize: 10, color: "var(--fg-mute)" }}>already in {e.redundant_with}</div>}
+                      {e.redundant_with && <div style={{ fontSize: 10, color: "var(--fg-mute)" }}>
+                        {e.redundant_with.startsWith("liquidity_events:")
+                          ? `same story as ev-${e.redundant_with.split(":")[1]}` : `already in ${e.redundant_with}`}</div>}
                       {!e.matters && !e.redundant_with && <div style={{ fontSize: 10, color: "var(--fg-mute)" }}>below threshold</div>}
                     </td>
                     <td><Dir d={e.direction} /></td>
@@ -175,6 +179,34 @@ export default async function LiquidityWatchPage({
             told the same fact twice.
           </div>
         </Panel>
+
+        {(feed.enrolments ?? []).length > 0 && (
+          <Panel title="Banks joining schemes"
+                 sub="allocations a bank has signed up for, not cash that moved · never counted, never announced one by one"
+                 span={12} pad={false}>
+            <div className="table-wrap" style={{ maxHeight: 320, overflowY: "auto" }}>
+              <table className="dt">
+                <thead><tr><th>Scheme</th><th>Bank</th><th>Date</th><th>What the article says</th><th>Source</th></tr></thead>
+                <tbody>
+                  {feed.enrolments!.flatMap((g) => g.banks.map((b) => (
+                    <tr key={b.id}>
+                      <td>{g.instrument}</td>
+                      <td style={{ whiteSpace: "normal", maxWidth: 160, padding: "6px var(--pad)" }}>{b.bank ?? "—"}</td>
+                      <td className="mono">{b.when ?? "—"}</td>
+                      <td style={{ whiteSpace: "normal", maxWidth: 480, padding: "6px var(--pad)", lineHeight: 1.5, fontStyle: "italic" }}>“{b.evidence_quote}”</td>
+                      <td style={{ whiteSpace: "normal", padding: "6px var(--pad)" }}>
+                        {b.sources.slice(0, 2).map((s, i) => (
+                          <div key={i}><a href={s.url} target="_blank" rel="noreferrer"
+                            style={{ fontSize: 11, textDecoration: "none", color: "var(--info)" }}>{s.source}</a></div>
+                        ))}
+                      </td>
+                    </tr>
+                  )))}
+                </tbody>
+              </table>
+            </div>
+          </Panel>
+        )}
 
         {(feed.unconfirmed ?? []).length > 0 && (
           <Panel title="Unconfirmed leads"

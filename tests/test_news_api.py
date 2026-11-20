@@ -99,7 +99,7 @@ class TestWhatIsShown:
         _ev(s, redundant_with="buyback_events")
         _ev(s, matters=False)
         b = NL.news_block(s, today=TODAY)
-        assert b["count"] == 1 and b["hidden"] == {"redundant": 1, "minor": 1}
+        assert b["count"] == 1 and b["hidden"] == {"redundant": 1, "minor": 1, "background": 0}
 
     def test_they_can_be_asked_for(self):
         s = _mem()

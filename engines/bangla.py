@@ -104,6 +104,23 @@ def is_period_total(sentence: str) -> bool:
     return bool(_PERIOD.search(normalize(sentence)))
 
 
+# A scheme's SIZE, not cash that moved: the amount is directly followed by the scheme noun
+# ("১০ হাজার কোটি টাকার পুনঃঅর্থায়ন স্কিম" = "a Tk 10,000 crore refinance scheme"). Anything else is an act (the default).
+_SCHEME_WORDS = r"(?:স্কিম|তহবিল|প্যাকেজ|সুবিধা|ঋণসুবিধা|প্রকল্প)"
+_FACILITY = re.compile(rf"টাকা(?:র|য়)?\s+(?:[^\s,।]+\s+){{0,2}}?{_SCHEME_WORDS}")
+_ENROLMENT = re.compile(r"অংশগ্রহণ(?:মূলক)?\s*চুক্তি|চুক্তি\s*স্বাক্ষর")
+
+
+def is_facility(sentence: str) -> bool:
+    return bool(_FACILITY.search(normalize(sentence)))
+
+
+def is_enrolment(sentence: str) -> bool:
+    """One bank signing up to a scheme ('অংশগ্রহণ চুক্তি'): an allocation, not cash. False when the code cannot tell."""
+    s = normalize(sentence)
+    return bool(_ENROLMENT.search(s) and re.search(_SCHEME_WORDS, s))
+
+
 # ── the keyword prefilter's Bangla words (cheap, explicit, auditable) ─────────
 ACTORS = ("বাংলাদেশ ব্যাংক", "কেন্দ্রীয় ব্যাংক", "অর্থ বিভাগ", "অর্থ মন্ত্রণালয়", "অর্থমন্ত্রণালয়", "অর্থ উপদেষ্টা",
           "পেট্রোবাংলা", "বিপিডিবি", "বিপিসি", "আইএমএফ", "বিশ্বব্যাংক", "এডিবি", "জ্বালানি বিভাগ", "বিদ্যুৎ বিভাগ")

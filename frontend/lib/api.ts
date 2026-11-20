@@ -468,6 +468,8 @@ export interface NewsEvent {
   status: string | null; channel: string | null; counterparty: string | null;
   summary: string; evidence_quote: string; confidence: number | null; matters: boolean;
   redundant_with: string | null; verified_by: string; is_cumulative?: boolean;
+  /** ACT = cash moved / a decision; FACILITY = a scheme's size; BACKGROUND = an old fact restated. Older APIs omit it (= ACT). */
+  nature?: "ACT" | "FACILITY" | "ENROLMENT" | "BACKGROUND";
   sources: { url: string; source: string; title: string; published?: string }[];
 }
 export interface NewsFeed {
@@ -478,13 +480,17 @@ export interface NewsFeed {
     events_cumulative?: number; events_unconfirmed?: number;
   };
   monthly: { month: string; inject_crore: number; absorb_crore: number; events: number }[];
-  hidden: { redundant: number; minor: number };
+  hidden: { redundant: number; minor: number; background?: number };
   health: { last_fetch_utc: string | null; articles_waiting_for_claude: number;
             articles_by_status: Record<string, number>; reader?: "rules" | "claude" | "llm" | "none yet";
             /** the latest run of every source, from both machines (older APIs omit it) */
             sources?: { source: string; last_run_utc: string; machine: string | null; ok: boolean; items: number;
                         error: string | null; last_ok_utc: string | null; newest_item_utc: string | null }[] };
   events: NewsEvent[];
+  /** banks that joined a scheme, grouped by the scheme: allocations, not cash; never counted. Older APIs omit it. */
+  enrolments?: { instrument: string; limit_crore: number | null;
+                 banks: { id: number; bank: string | null; when: string | null; evidence_quote: string;
+                          sources: { url: string; source: string }[] }[] }[];
   /** read only by the free rule reader: leads, never counted, announced or summed. Older APIs omit it. */
   unconfirmed?: NewsEvent[]; unconfirmed_note?: string;
 }

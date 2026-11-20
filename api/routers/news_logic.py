@@ -15,11 +15,28 @@ from sqlalchemy import text
 _COLS = ("id, kind, direction, amount_crore, amount_unverified, is_cumulative, event_date, announced_date, status, "
          "channel, counterparty, summary, evidence_quote, sources_json, confidence, matters, "
          "redundant_with, first_seen_utc, verified_by")
+# `nature` arrives with the migration that adds the column. Until the database has it every row is read as an ACT (what
+# it was before), so deploying this API ahead of the column degrades to the old behaviour instead of a 500.
+_COLS_NATURE = _COLS + ", nature"
+_COLS_NO_NATURE = _COLS + ", NULL AS nature"
+
+
+def _cols(session) -> str:
+    try:
+        session.execute(text("SELECT nature FROM liquidity_events LIMIT 1"))
+        return _COLS_NATURE
+    except Exception:
+        session.rollback()
+        return _COLS_NO_NATURE
 
 # An event read ONLY by the free rule reader is an unconfirmed lead: listed apart, never added to a total, never
 # announced, until an AI reader confirms it. api/ cannot import engines/, so this is a copy of
 # engines/liquidity_news.CONFIRMED_SQL; tests/test_news_unconfirmed.py fails if the two ever differ.
 CONFIRMED_SQL = "COALESCE(verified_by, 'llm') <> 'rules' AND superseded_utc IS NULL"
+
+# What is ADDED into a total: a single act, never a scheme's size, one bank's enrolment, background, or a running total.
+# Copy of engines/liquidity_news.SUMMABLE_SQL (api/ cannot import it); tests/test_news_noise.py fails if they differ.
+SUMMABLE_SQL = "COALESCE(nature, 'ACT') = 'ACT' AND NOT COALESCE(is_cumulative, FALSE)"
 
 
 def _d(v) -> Optional[datetime.date]:
@@ -51,8 +68,22 @@ def _row(r) -> Dict:
     m["first_seen_utc"] = str(m["first_seen_utc"]) if m.get("first_seen_utc") else None
     m["matters"] = bool(m["matters"])
     m["is_cumulative"] = bool(m.get("is_cumulative"))
+    m["nature"] = m.get("nature") or "ACT"          # an unclassified (old) row is an ACT: it must never vanish
     m["when"] = m["event_date"] or m["announced_date"] or (m["first_seen_utc"] or "")[:10] or None
     return m
+
+
+def _enrolments(rows: List[Dict]) -> List[Dict]:
+    """Banks that joined a scheme, grouped by the scheme (its stated size). Allocations, not cash: never summed."""
+    groups: Dict[str, Dict] = {}
+    for r in rows:
+        key = "unknown" if r["amount_crore"] is None else str(round(float(r["amount_crore"])))
+        g = groups.setdefault(key, {"instrument": ("Scheme of unstated size" if r["amount_crore"] is None
+                                                   else f"Tk {float(r['amount_crore']):,.0f} crore scheme"),
+                                    "limit_crore": r["amount_crore"], "banks": []})
+        g["banks"].append({"id": r["id"], "bank": r["counterparty"], "when": r["when"],
+                           "evidence_quote": r["evidence_quote"], "sources": r["sources"]})
+    return sorted(groups.values(), key=lambda g: -(g["limit_crore"] or 0))
 
 
 def news_block(session, today: datetime.date = None, days: int = 120,
@@ -60,7 +91,7 @@ def news_block(session, today: datetime.date = None, days: int = 120,
     today = today or datetime.date.today()
     since = today - datetime.timedelta(days=days)
     allrows = [_row(r) for r in session.execute(text(
-        f"SELECT {_COLS} FROM liquidity_events WHERE superseded_utc IS NULL "
+        f"SELECT {_cols(session)} FROM liquidity_events WHERE superseded_utc IS NULL "
         "ORDER BY COALESCE(event_date, announced_date) DESC, id DESC"
     )).fetchall()]
     allrows = [r for r in allrows if r["when"] and r["when"] >= str(since)]
@@ -69,13 +100,14 @@ def news_block(session, today: datetime.date = None, days: int = 120,
     rows = [r for r in allrows if r["verified_by"] != "rules"]
 
     counted = [r for r in rows if r["matters"] and not r["redundant_with"]
-               and r["direction"] in ("INJECT", "ABSORB")]
+               and r["direction"] in ("INJECT", "ABSORB") and r["nature"] not in ("ENROLMENT", "BACKGROUND")]
     # A running total ("Tk 47bn until mid-August") is listed but never added: the next
     # article's "Tk 70bn until September" would count the first 47bn twice.
     # Only cash that has MOVED is added: an announced or approved release is a promise, and a
     # status the article never gave is unknown - neither belongs in "injected this month".
+    # A scheme's size (FACILITY) is capacity, not cash: "a Tk 10,000 crore refinance scheme" is not 10,000 crore injected.
     known = [r for r in counted if r["amount_crore"] is not None and not r["is_cumulative"]
-             and r["status"] in ("DISBURSED", "COMPLETED")]
+             and r["nature"] == "ACT" and r["status"] in ("DISBURSED", "COMPLETED")]
 
     monthly: Dict[str, Dict] = {}
     for r in known:
@@ -93,7 +125,11 @@ def news_block(session, today: datetime.date = None, days: int = 120,
         return round(sum(float(r["amount_crore"]) for r in known
                          if r["direction"] == d and sel(r["when"])), 2)
 
-    shown = [r for r in rows if (show_minor or r["matters"]) and (show_redundant or not r["redundant_with"])]
+    # One bank joining a scheme is not an event of its own: it is listed under its scheme (`enrolments`), never announced.
+    # Background (an old fact restated) is hidden with the minor ones.
+    shown = [r for r in rows if r["nature"] != "ENROLMENT" and (show_minor or (r["matters"] and r["nature"] != "BACKGROUND"))
+             and (show_redundant or not r["redundant_with"])]
+    enrolments = _enrolments([r for r in rows if r["nature"] == "ENROLMENT" and not r["redundant_with"]])
 
     # the heartbeat is the last RUN (recorded per source), falling back to the newest article before the first one
     sources = []
@@ -141,7 +177,9 @@ def news_block(session, today: datetime.date = None, days: int = 120,
         },
         "monthly": [monthly[k] for k in sorted(monthly)],
         "hidden": {"redundant": sum(1 for r in rows if r["redundant_with"]),
-                   "minor": sum(1 for r in rows if not r["matters"] and not r["redundant_with"])},
+                   "minor": sum(1 for r in rows if not r["matters"] and not r["redundant_with"]
+                                and r["nature"] not in ("ENROLMENT", "BACKGROUND")),
+                   "background": sum(1 for r in rows if r["nature"] == "BACKGROUND" and not r["redundant_with"])},
         "health": {
             "last_fetch_utc": str(last) if last else None,
             "sources": sources,
@@ -151,6 +189,7 @@ def news_block(session, today: datetime.date = None, days: int = 120,
         },
         "count": len(shown),
         "events": shown[:limit],
+        "enrolments": enrolments,
         "unconfirmed": unconfirmed[:50],
         "unconfirmed_note": ("Read only by the free rule reader: leads, not figures. They are not counted, not "
                              "announced and not in any total until an AI reader reads the same article and "
@@ -165,5 +204,5 @@ def events_on(session, day) -> List[Dict]:
     """Matters-and-not-redundant events dated `day`, for the day page. Listed, never summed."""
     d = str(_d(day))
     return [_row(r) for r in session.execute(text(
-        f"SELECT {_COLS} FROM liquidity_events WHERE matters IS TRUE AND redundant_with IS NULL "
+        f"SELECT {_cols(session)} FROM liquidity_events WHERE matters IS TRUE AND redundant_with IS NULL "
         f"AND {CONFIRMED_SQL} AND COALESCE(event_date, announced_date) = :d ORDER BY id"), {"d": d}).fetchall()]
