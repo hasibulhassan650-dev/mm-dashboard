@@ -106,3 +106,44 @@ tenor_corrections:
     reason: >-
       BB's 11-Nov release prints an AR maturity of 311.01 = 309.88 + 14 days' profit at 9.50%, and its 29-Oct release
       prints no maturity for this tranche, so it was a 14-day operation although the 28-Oct release prints "1-Day".
+
+# Per-tenor gaps between BB's printed maturity and the tranches we hold, that a person has proven or labelled. Read by
+# engines/absences.py::judge_ledger_day for BOTH validate.py's omo-ledger rule and deep_audit.py. An entry excuses ONLY the
+# tenor row whose gap still equals gap_crore (within tolerance_crore); any other amount on that day, or a BB correction,
+# is judged normally. Every excused entry is REPORTED as a notice on every run - nothing here is invisible, and nothing is
+# written to the production tables (no invented tranche). status: lost_deal = ours, proved from BB's own figures;
+# unexplained = a BB maturity no deal in our record explains. gap_crore = BB printed minus our grown tranches (profit for
+# the days actually elapsed, maturity rolled to a working day).
+ledger_exceptions:
+  # 1-Nov-2026 AR 180D. BB (pr14362) prints a 180-day AR maturity of 2,903.34; the one 180-day tranche we hold maturing
+  # that day is the 3-May deal of 2,065.63 at 10.00% (182 days after the roll to Sunday 1-Nov = 2,168.63). The gap is 734.71.
+  # 4-May-2026 is the day it was lost: the release stored as "as on 04 May" (pr14062) was a stale republish of 5-Apr, so the
+  # real 4-May operation was never read. An AR 180D deal of exactly 700.00 at 10.00% for the 181 days 4-May -> 1-Nov
+  # grows to 700.00 x (1 + 0.10 x 181/365) = 734.71, and 2,168.63 + 734.71 = 2,903.34 to the paisa. No tranche is
+  # written for it: the principal is arithmetic on BB's own figure, and the 4-May release itself cannot be re-read.
+  - dataset: omo
+    instrument: AR
+    date: 2026-11-01
+    tenor_days: 180
+    gap_crore: 734.71
+    tolerance_crore: 0.10
+    status: lost_deal
+    reason: >-
+      Lost 4-May-2026 AR 180D deal of 700.00 cr at 10.00%: 700.00 x (1 + 0.10 x 181/365) = 734.71, and our 3-May tranche
+      2,065.63 x (1 + 0.10 x 182/365) = 2,168.63, together 2,903.34 = BB's printed 180D maturity to the paisa. The 4-May
+      release (pr14062) was a stale republish of 5-Apr, so the 4-May operation was never stored. Principal is arithmetic,
+      not a stored tranche.
+  # 27-Oct-2026 AR 7D 36.73 - UNEXPLAINED. BB printed a maturity-only row "AR 7D 36.73" (row 87152). 27-Oct minus 7 days is
+  # 20-Oct, a closed day (GAZETTED), and the 17-Oct absence + 7 rolls to 25-Oct, not 27-Oct, so no deal in our record and no
+  # recorded absence explains it. Left as a standing notice rather than guessed at.
+  - dataset: omo
+    instrument: AR
+    date: 2026-10-27
+    tenor_days: 7
+    gap_crore: 36.73
+    tolerance_crore: 0.10
+    status: unexplained
+    reason: >-
+      BB's own print (maturity-only row "AR 7D 36.73", row 87152) that no deal in our record explains: a 7-day deal would have
+      been struck 20-Oct, a closed day, and the recorded 17-Oct absence + 7 days rolls to 25-Oct. Historical (matured 27-Oct),
+      no effect on the current stock. Owner may review.

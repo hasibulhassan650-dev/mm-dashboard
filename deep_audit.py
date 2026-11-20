@@ -25,8 +25,8 @@ from sqlalchemy import text
 
 from db import get_session
 
-# BB pays principal plus profit/interest, so grow each tranche before comparing.
-LEDGER_TOL_PCT, LEDGER_TOL_ABS = 0.015, 10.0
+# BB pays principal plus profit/interest, so each tranche is grown before comparing
+# (engines.absences.grown_principal, by the days actually elapsed; tolerance lives beside it).
 # Known BB-side quirks: real, understood, and not ours to fix. They are still
 # REPORTED, as a separate section — never silently dropped, or this list becomes
 # the place mistakes go to hide.
@@ -43,36 +43,60 @@ def _d(v):
     return datetime.date.fromisoformat(v[:10]) if isinstance(v, str) else v
 
 
-def omo_ledger_full(s) -> tuple:
-    printed = {}
-    for inst, day, tot in s.execute(text(
-            "SELECT instrument, transaction_date, SUM(COALESCE(maturity_bdt_crore,0)) "
-            "FROM omo_transactions GROUP BY instrument, transaction_date")):
-        if tot and float(tot) > 0:
-            printed[(inst, _d(day))] = float(tot)
+def omo_ledger_full(s, absent_dates=None, exceptions=None) -> tuple:
+    """-> (mismatches, known, unexplained). `known` and `unexplained` are REPORTED, never dropped.
 
-    live = collections.defaultdict(float)
-    for inst, mat, acc, rate, ten in s.execute(text(
-            "SELECT instrument, maturity_date, accepted_bdt_crore, rate_pct, tenor_days "
+    A shortfall is excused only by `engines.absences.judge_ledger_day`: a recorded absent deal day + the tenor of
+    BB's maturity row, rolled to a working day, must be this very day, bounded to that row's own gap - or a recorded
+    ledger exception whose gap still matches. Before this, the audit never consulted the absences at all, so the
+    18-Oct gap it reported for six weeks was one the gate had already explained, while the gate's own loose window
+    hid two real ones."""
+    from engines.absences import (absent_dates as _absent_dates, grown_principal, judge_ledger_day,
+                                  known_ledger_exceptions)
+    if absent_dates is None:
+        absent_dates = _absent_dates(s, "omo")
+    if exceptions is None:
+        exceptions = known_ledger_exceptions()
+
+    # {(instrument, day): {tenor_days: crore}} - which absent deal can explain a gap depends on BB's tenor row.
+    printed = collections.defaultdict(dict)
+    for inst, day, ten, tot in s.execute(text(
+            "SELECT instrument, transaction_date, tenor_days, SUM(COALESCE(maturity_bdt_crore,0)) "
+            "FROM omo_transactions GROUP BY instrument, transaction_date, tenor_days")):
+        if tot and float(tot) > 0:
+            t = printed[(inst, _d(day))]
+            t[int(ten or 0)] = t.get(int(ten or 0), 0.0) + float(tot)
+
+    live = collections.defaultdict(dict)
+    for inst, mat, acc, rate, ten, txn in s.execute(text(
+            "SELECT instrument, maturity_date, accepted_bdt_crore, rate_pct, tenor_days, transaction_date "
             "FROM omo_transactions WHERE accepted_bdt_crore > 0")):
-        live[(inst, _d(mat))] += float(acc) * (1 + float(rate or 0) / 100 * int(ten or 0) / 365)
+        t = live[(inst, _d(mat))]
+        t[int(ten or 0)] = t.get(int(ten or 0), 0.0) + grown_principal(acc, rate, ten, _d(txn), _d(mat))
 
     hist_start = _d(s.execute(text("SELECT MIN(transaction_date) FROM omo_transactions")).scalar())
-    out, known = [], []
-    for (inst, day), bb in sorted(printed.items(), key=lambda x: (x[0][1], x[0][0])):
+    out, known, unexplained = [], [], []
+    for (inst, day), pt in sorted(printed.items(), key=lambda x: (x[0][1], x[0][0])):
         # MLS is repaid in parts as remittance claims settle, so a per-day match
         # is meaningless for it (verified against BB's own prints, Aug-Sep 2026).
         if inst == "MLS":
             continue
-        ours = live.get((inst, day), 0.0)
+        ot = live.get((inst, day), {})
+        bb, ours = sum(pt.values()), sum(ot.values())
+        ok, notes, excused = judge_ledger_day(inst, day, pt, ot, absent_dates, exceptions)
+        if ok:
+            for sev, msg in notes:
+                (unexplained if sev == "unexplained" else known).append(msg)
+            continue
         if ours < bb and hist_start and day - datetime.timedelta(days=PRE_WINDOW_DAYS) < hist_start:
             continue
-        if abs(ours - bb) > max(LEDGER_TOL_PCT * bb, LEDGER_TOL_ABS):
-            kind = "missing/misdated injection" if ours < bb else "phantom tranche"
-            msg = f"{day} {inst}: our tranches {ours:,.0f} cr vs BB printed {bb:,.0f} cr — {kind}"
-            why = KNOWN_EXCEPTIONS.get((str(day), inst))
-            (known if why else out).append(msg + (f" · KNOWN: {why}" if why else ""))
-    return out, known
+        kind = "missing/misdated injection" if ours < bb else "phantom tranche"
+        msg = f"{day} {inst}: our tranches {ours:,.0f} cr vs BB printed {bb:,.0f} cr — {kind}"
+        if excused:
+            msg += f" (after excusing {excused:,.2f} cr that recorded absences/exceptions explain)"
+        why = KNOWN_EXCEPTIONS.get((str(day), inst))
+        (known if why else out).append(msg + (f" · KNOWN: {why}" if why else ""))
+    return out, known, unexplained
 
 
 def flows_full(s) -> list:
@@ -107,7 +131,7 @@ def flows_full(s) -> list:
 def main() -> int:
     s = get_session()
     try:
-        (ledger, known), flows = omo_ledger_full(s), flows_full(s)
+        (ledger, known, unexplained), flows = omo_ledger_full(s), flows_full(s)
     finally:
         s.close()
 
@@ -129,6 +153,12 @@ def main() -> int:
             lines.append(f"_{note}_")
         lines.append("")
 
+    if unexplained:
+        # Loud on purpose, every week: a BB figure nobody can explain is not a failure but must never go quiet.
+        lines.append(f"### ⚠️ {len(unexplained)} UNEXPLAINED BB print(s) — standing notice, not a failure")
+        lines.append("_BB's own figure that no deal in our record explains; kept in view until someone reviews it_\n")
+        lines += [f"- {x}" for x in unexplained]
+        lines.append("")
     if known:
         lines.append(f"### {len(known)} known exception(s) — understood, not ours to fix")
         lines += [f"- {x}" for x in known]

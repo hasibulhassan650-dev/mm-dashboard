@@ -397,39 +397,48 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
         _rhi = today - datetime.timedelta(days=2)
         _d = lambda v: datetime.date.fromisoformat(v[:10]) if isinstance(v, str) else v
         try:
-            from engines.absences import known_print_errors
+            from engines.absences import (grown_principal, judge_ledger_day, known_ledger_exceptions,
+                                          known_print_errors)
             _print_errors = known_print_errors()
+            _ledger_exc = known_ledger_exceptions()
+            # {(instrument, day): {tenor_days: crore}} - BB prints a maturity PER TENOR ROW, and which absent
+            # deal can explain a shortfall depends on that tenor, so the tenor is kept, not summed away.
             printed = {}
-            for r in q("SELECT instrument, transaction_date, SUM(COALESCE(maturity_bdt_crore,0)) "
+            for r in q("SELECT instrument, transaction_date, tenor_days, SUM(COALESCE(maturity_bdt_crore,0)) "
                        "FROM omo_transactions WHERE transaction_date BETWEEN :lo AND :hi "
-                       "GROUP BY instrument, transaction_date", lo=_rlo, hi=_rhi):
-                if r[2] and float(r[2]) > 0:
-                    printed[(r[0], _d(r[1]))] = float(r[2])
+                       "GROUP BY instrument, transaction_date, tenor_days", lo=_rlo, hi=_rhi):
+                if r[3] and float(r[3]) > 0:
+                    _t = printed.setdefault((r[0], _d(r[1])), {})
+                    _t[int(r[2] or 0)] = _t.get(int(r[2] or 0), 0.0) + float(r[3])
             live = {}
-            for r in q("SELECT instrument, maturity_date, accepted_bdt_crore, rate_pct, tenor_days "
+            for r in q("SELECT instrument, maturity_date, accepted_bdt_crore, rate_pct, tenor_days, transaction_date "
                        "FROM omo_transactions WHERE accepted_bdt_crore > 0 "
                        "AND maturity_date BETWEEN :lo AND :hi", lo=_rlo, hi=_rhi):
-                k = (r[0], _d(r[1]))
-                p, rate, ten = float(r[2] or 0), float(r[3] or 0), int(r[4] or 0)
-                live[k] = live.get(k, 0.0) + p * (1 + rate / 100 * ten / 365)
+                _t = live.setdefault((r[0], _d(r[1])), {})
+                _t[int(r[4] or 0)] = _t.get(int(r[4] or 0), 0.0) + grown_principal(r[2], r[3], r[4], r[5], r[1])
             # A tranche placed before our OMO history began (up to 180 days for
             # AR/SLS/SRF) can mature inside the window with no record of the
             # injection — that is the history boundary, not a missing release.
             hs = q("SELECT MIN(transaction_date) FROM omo_transactions")[0][0]
             hist_start = _d(hs) if hs else None
-            for (inst, d), bb in sorted(printed.items(), key=lambda x: (x[0][1], x[0][0])):
+            for (inst, d), _pt in sorted(printed.items(), key=lambda x: (x[0][1], x[0][0])):
                 if inst == "MLS":
                     # Mudaraba Liquidity Support is repaid in PARTS as remittance
                     # claims settle (Aug/Sep-2026: 1,340 placed 09-Aug came back as
                     # 83 on 25-Aug + 1,262.40 on 06-Sep = 1,345.40 = principal +
                     # profit). Per-day matching is meaningless for it.
                     continue
-                ours = live.get((inst, d), 0.0)
-                # A shortfall that only a deal on a day BB never posted can explain (a 1-day repo dealt
-                # on the missing day matures the next; a 7-day one a week later, rolled past holidays)
-                # is BB's omission, already on record - not a tranche of ours that went missing.
-                if ours < bb and any(0 <= (d - a).days - tn <= 6 for a in omo_absent for tn in
-                                     (1, 2, 3, 7, 14, 28, 30, 91, 182, 364)):
+                _ot = live.get((inst, d), {})
+                bb, ours = sum(_pt.values()), sum(_ot.values())
+                # A shortfall that only a deal on a day BB never posted can explain is BB's omission, already
+                # on record - not a tranche of ours that went missing. "Can explain" is exact: the deal day plus
+                # the tenor of BB's maturity row, rolled to a working day, must BE this day, and only the row's
+                # own shortfall is excused (a loose "within 6 days" window once excused 27-Oct and a 180-day
+                # tranche for weeks). Whatever is excused is reported as a notice, never dropped.
+                _ok, _notes, _excused = judge_ledger_day(inst, d, _pt, _ot, omo_absent, _ledger_exc, hol)
+                if _ok:
+                    for _sev, _msg in _notes:
+                        add("omo-ledger", _msg, "notice")
                     continue
                 if ours < bb and hist_start and d - datetime.timedelta(days=180) < hist_start:
                     continue                          # possibly pre-window — can't judge
@@ -444,7 +453,9 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
                         continue
                     kind = "missing/misdated injection" if ours < bb else "phantom tranche"
                     add("omo-ledger", f"{d} {inst}: tranches maturing {ours:,.0f} cr != BB printed "
-                                      f"{bb:,.0f} cr — {kind}; outstanding is wrong until fixed")
+                                      f"{bb:,.0f} cr — {kind}; outstanding is wrong until fixed"
+                                      + (f" (after excusing {_excused:,.2f} cr that recorded absences/exceptions explain)"
+                                         if _excused else ""))
         except Exception as exc:
             add("omo-ledger", f"reconciliation failed ({exc})")
         # ---- duplicate-content releases (BB re-published a stale table) ----

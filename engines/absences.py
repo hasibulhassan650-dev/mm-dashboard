@@ -354,6 +354,119 @@ def sync_tenor_corrections(session, path: str = None) -> dict:
     return out
 
 
+LEDGER_TOL_PCT, LEDGER_TOL_ABS = 0.015, 10.0
+
+
+def grown_principal(accepted, rate_pct, tenor_days, deal_date=None, maturity_date=None) -> float:
+    """What BB pays back on a tranche: principal plus profit for the days it actually ran.
+
+    BB pays profit for the ELAPSED days, and a maturity rolled over a weekend or closure runs longer than its
+    tenor: the 3-May AR "180D" matured 1-Nov, 182 days later, and BB's 1-Nov print only reconciles to the paisa
+    with 182 days. Growing by the label (180) leaves a 1.13 cr hole that was being read as a missing deal."""
+    days = int(tenor_days or 0)
+    d, m = _as_date(deal_date), _as_date(maturity_date)
+    if d and m and m > d:
+        days = (m - d).days
+    return float(accepted or 0) * (1 + float(rate_pct or 0) / 100 * days / 365)
+
+
+def absence_maturity_day(absent_day, tenor_days: int, holidays=None) -> datetime.date:
+    """The day a deal struck on a day BB never published would mature: deal date + tenor, rolled to the next
+    working day exactly as every stored maturity is (calendar_utils.roll_date). Without the roll a 14-day deal of
+    Saturday 17-Oct lands on Saturday 31-Oct, a day nothing matures, and the 1-Nov shortfall goes unexplained."""
+    import calendar_utils
+    return calendar_utils.roll_date(absent_day + datetime.timedelta(days=int(tenor_days)), holidays)[0]
+
+
+def known_ledger_exceptions(path: str = None) -> list:
+    """Per-tenor ledger gaps a person has proven or labelled, from known_absences.yaml `ledger_exceptions`:
+    {dataset, instrument, date, tenor_days, gap_crore, tolerance_crore, status, reason}.
+
+    status `lost_deal` = a deal of OURS that BB's own figures prove existed and that we lost (arithmetic in the
+    reason); status `unexplained` = a BB maturity no deal in our record explains. Neither is a mute button: an
+    entry excuses ONLY the tenor row whose gap still equals gap_crore (within tolerance_crore) - another amount on
+    that day, or a BB correction, is judged normally. An entry lacking a reason, date, tenor or amount is dropped."""
+    import os
+
+    import yaml
+    path = path or KNOWN_ABSENCES_PATH
+    if not path or not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh) or {}
+    out = []
+    for e in doc.get("ledger_exceptions") or []:
+        day = _as_date(e.get("date"))
+        try:
+            tenor, gap = int(e.get("tenor_days")), float(e.get("gap_crore"))
+            tol = float(e.get("tolerance_crore", 1.0))
+        except (TypeError, ValueError):
+            continue
+        if (day and e.get("instrument") and gap > 0 and tenor > 0 and e.get("status") in ("lost_deal", "unexplained")
+                and (e.get("reason") or "").strip()):
+            out.append({"dataset": e.get("dataset") or "omo", "instrument": e["instrument"], "date": day,
+                        "tenor_days": tenor, "gap_crore": gap, "tolerance_crore": tol,
+                        "status": e["status"], "reason": " ".join(str(e["reason"]).split())})
+    return out
+
+
+def judge_ledger_day(inst: str, day: datetime.date, printed: dict, ours: dict, absent_dates,
+                     exceptions=(), holidays=None) -> tuple:
+    """One instrument, one day: do the tranches we hold maturing on `day` match what BB printed?
+
+    `printed` and `ours` are {tenor_days: crore} (BB's figure is principal + profit; ours is grown with
+    `grown_principal`). Returns (ok, notes, excused): `notes` = [(severity, text)] for every shortfall that was
+    excused and WHY (severity "known" or "unexplained"), so the caller reports them - excusing is never silent.
+
+    A shortfall is excused only by proof that fits it exactly, never by "some absence is near":
+      * a recorded ledger exception whose tenor row still has the recorded gap;
+      * a recorded absent deal day `a` whose `a + tenor`, rolled to a working day, IS `day`, for the tenor of
+        BB's maturity row - and only up to that row's own shortfall. Tranches of ours at a tenor BB did not print
+        (BB printed the 2-day CB Repo under 7D) first cover those shortfalls, so a mislabelled print cannot let an
+        absence swallow a real hole elsewhere.
+    What is excused is then taken off BB's figure and the remainder must still reconcile, so a surplus (a phantom
+    tranche) is never hidden behind an excused shortfall."""
+    bb, mine = sum(printed.values()), sum(ours.values())
+    tol = max(LEDGER_TOL_PCT * bb, LEDGER_TOL_ABS)
+    if abs(mine - bb) <= tol:
+        return True, [], 0.0
+    if mine > bb:
+        return False, [], 0.0
+    short = {t: v - ours.get(t, 0.0) for t, v in printed.items() if v - ours.get(t, 0.0) > 0}
+    notes, excused, handled = [], 0.0, set()
+    for e in exceptions:
+        t = e["tenor_days"]
+        if e["instrument"] != inst or e["date"] != day or t not in short or t in handled:
+            continue
+        if abs(short[t] - e["gap_crore"]) <= e["tolerance_crore"]:
+            excused += short[t]
+            handled.add(t)
+            tag = "UNEXPLAINED" if e["status"] == "unexplained" else "KNOWN (lost deal, proved from BB's own figures)"
+            notes.append(("unexplained" if e["status"] == "unexplained" else "known",
+                          f"{day} {inst} {t}D: BB printed {short[t]:,.2f} cr more than our tranches - {tag}: {e['reason']}"))
+    credit = sum(v for t, v in ours.items() if t not in printed)
+    explained = {}
+    for t, g in short.items():
+        if t in handled:
+            continue
+        for a in sorted(_as_date(x) for x in absent_dates):
+            if a and absence_maturity_day(a, t, holidays) == day:
+                explained[t] = (g, a)
+                break
+    # Unmatched tranches of ours first cover the shortfalls NO absence explains (the mislabelled print's own row);
+    # only what is left over can eat into an absence-explained shortfall.
+    unexplained_short = sum(g for t, g in short.items() if t not in handled and t not in explained)
+    credit = max(0.0, credit - unexplained_short)
+    cap = max(0.0, sum(g for g, _ in explained.values()) - credit)
+    if cap > 0:
+        excused += cap
+        for t, (g, a) in sorted(explained.items()):
+            notes.append(("known", f"{day} {inst} {t}D: shortfall {g:,.2f} cr is what a {t}-day deal struck on {a} (a day BB "
+                                   f"never published, on record) would mature on {day} after the working-day roll - BB's "
+                                   f"omission, amount not independently provable; excused up to the gap only"))
+    return abs(mine - (bb - excused)) <= tol, notes, excused
+
+
 def summary(session, kind: Optional[str] = "bb_omission") -> dict:
     """What is on record, for the digest. Never a bare count: the newest one
     matters, because a cluster of fresh absences is a story about BB."""
