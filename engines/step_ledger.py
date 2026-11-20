@@ -21,10 +21,12 @@ _STEP_PREFIX = re.compile(r"^([A-Za-z0-9_\-]+):")
 
 # record_step_runs deletes rows older than this, so a failure streak that reaches this edge began at an unknown earlier time.
 RETENTION_DAYS = 30
-# Steps that WRITE a row when they succeed (weekly_fetch.note_step, plus the Doctor's heartbeat). Every other step writes a row
-# only when it errors, so its failure could never be seen to end and would hold the alert open for the whole retention window.
-# A test fails if weekly_fetch reports a step that is not listed here.
-REPORTING_STEPS = DAILY_BB_STEPS | {"bgiib", "doctor"}
+# EVERY step weekly_fetch runs writes a row each run it runs (ok when clean, failed/blocked/empty otherwise; weekly_fetch._settle),
+# plus the Doctor's own heartbeat. That is what lets a failure be seen to END: a step that wrote a row only when it errored
+# (remittance, reserves, ...) would hold the alert open for the whole retention window. A test fails if weekly_fetch runs a
+# step that is not listed here, or lists one that never settles.
+REPORTING_STEPS = DAILY_BB_STEPS | {"bgiib", "doctor", "self_heal", "pipeline", "secondary-gap-fill", "fx", "remittance",
+                                    "reserves", "policy", "monetary", "sukuk", "holidays", "known_absences", "circulars"}
 # step_health's window: a machine that has not reported inside it is not the one being judged.
 PC_RECENT_HOURS = 14.0
 # GitHub refuses an issue body over 65,536 characters; the bundle leaves room for the header around it.
@@ -39,11 +41,25 @@ def step_of(error: str) -> str:
 
 
 def build_rows(errors: Iterable[str], step_stats: Dict[str, Dict], run_utc: datetime.datetime,
-               machine: str) -> list:
-    """The StepRun field dicts for one run. Pure: no database. Steps appear if they failed or reported what they did."""
+               machine: str, step_errors: Optional[Dict[str, list]] = None) -> list:
+    """The StepRun field dicts for one run. Pure: no database. Steps appear if they failed or reported what they did.
+
+    `step_errors` is {step: the error lines that step's own block appended} (weekly_fetch._settle). A line is filed under the step
+    its `<step>:` prefix names when that is a known step (a runner's line about another step stays with that step), else under the
+    block that produced it: runners such as the holiday and sukuk fetchers prefix their lines with names of their own
+    ('holiday_calendar:', none at all), which would otherwise land on a step that never writes an 'ok' and so never recovers.
+    A line in `errors` that no block claimed falls back to its prefix, as before."""
     by_step: Dict[str, list] = {}
-    for e in errors or []:
-        by_step.setdefault(step_of(e), []).append(str(e))
+    unclaimed = [str(e) for e in errors or []]
+    for block, lines in (step_errors or {}).items():
+        for e in lines:
+            e = str(e)
+            if e in unclaimed:
+                unclaimed.remove(e)
+            p = step_of(e)
+            by_step.setdefault(p if p in REPORTING_STEPS else block, []).append(e)
+    for e in unclaimed:
+        by_step.setdefault(step_of(e), []).append(e)
     out = []
     for step in sorted(set(by_step) | set(step_stats or {})):
         errs = by_step.get(step, [])
@@ -65,13 +81,17 @@ def build_rows(errors: Iterable[str], step_stats: Dict[str, Dict], run_utc: date
 
 
 def record_step_runs(session, errors, step_stats, run_utc: Optional[datetime.datetime] = None,
-                     machine: Optional[str] = None) -> int:
-    """Persist build_rows(...). Returns how many rows were written. Never raises into the run."""
+                     machine: Optional[str] = None, step_errors: Optional[Dict[str, list]] = None) -> int:
+    """Persist build_rows(...). Returns how many rows were written. Never raises into the run.
+
+    Volume: about 20 rows per run per machine, with hourly runs on the PC and a backup run on GitHub, so roughly 1,000 a day and
+    30,000 inside the 30-day retention (a few MB; both columns the Doctor filters on are indexed). That is small enough that every
+    run records every step: 'record only on change' would make an ok row mean 'unchanged', and a recovery could not be dated."""
     from db import StepRun
     if machine is None:
         from fetchers.news import machine as _machine
         machine = _machine()
-    rows = build_rows(errors, step_stats, run_utc or datetime.datetime.utcnow(), machine)
+    rows = build_rows(errors, step_stats, run_utc or datetime.datetime.utcnow(), machine, step_errors)
     for r in rows:
         session.add(StepRun(**r))
     # a month of history is plenty for the checks; the table must not grow for ever
@@ -187,13 +207,18 @@ def open_failures(session, now: Optional[datetime.datetime] = None) -> list:
     Raises when step_runs cannot be read: the caller must treat that as 'unknown', never as 'nothing open'."""
     from db import StepRun
     now = now or datetime.datetime.utcnow()
-    rows = session.query(StepRun).filter(StepRun.run_utc >= now - datetime.timedelta(days=RETENTION_DAYS)) \
+    since = now - datetime.timedelta(days=RETENTION_DAYS)
+    # Every step now writes an ok row every run (~30,000 rows a month). A step with no non-ok row in the window cannot be failing,
+    # so only the others are loaded in full; the 'doctor' heartbeat is always needed for the 'what was tried' line.
+    suspect = {r[0] for r in session.query(StepRun.step).filter(StepRun.run_utc >= since, StepRun.status != "ok").distinct()}
+    rows = session.query(StepRun).filter(StepRun.run_utc >= since, StepRun.step.in_(suspect | {"doctor"})) \
         .order_by(StepRun.run_utc).all()
     by_step: Dict[str, list] = {}
     for r in rows:
         by_step.setdefault(r.step, []).append(r)
     out = []
     for step in sorted(by_step):
+        # Rows under a name weekly_fetch never settles (legacy rows, a stray unclaimed error line) cannot be seen to recover.
         if step not in REPORTING_STEPS:
             continue
         st = current_streak(by_step[step], now)

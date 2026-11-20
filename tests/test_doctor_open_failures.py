@@ -102,11 +102,44 @@ class TestOwnerActionRegistry:
         line = "freshness: repo: stale [" + F.diagnosis("interbank_repo", F.DB_CONSTRAINT, "pc", NOW, "boom") + "]"
         assert F.diagnosis_step(line) == "interbank_repo" and F.diagnosis_step("freshness: repo: stale") is None
 
-    def test_every_step_weekly_fetch_reports_can_be_seen_to_recover(self):
-        """A step outside REPORTING_STEPS writes a row only when it errors, so its failure could never end."""
+    @staticmethod
+    def _weekly_problems(src: str) -> list:
+        """What is wrong with weekly_fetch's step registry, as readable lines (empty when it is sound)."""
+        bad = []
+        settled = re.findall(r'_settle\("([A-Za-z_\-]+)"', src)
+        if len(settled) != len(set(settled)):
+            bad.append(f"a step is settled twice: {sorted(s for s in set(settled) if settled.count(s) > 1)}")
+        if set(settled) != SL.REPORTING_STEPS - {"doctor"}:       # the Doctor writes its own heartbeat row
+            bad.append(f"settled steps differ from REPORTING_STEPS: {sorted(set(settled) ^ (SL.REPORTING_STEPS - {'doctor'}))}")
+        if src.count("_m = len(errors)") != len(settled):
+            bad.append("a step takes its error mark without settling (or settles without one)")
+        # every numbered step banner must be followed by a settle before the next banner
+        for chunk in src.split('log.info("--- Step')[1:]:
+            if "_settle(" not in chunk and "SKIPPED" not in chunk.split("\n")[0]:     # the light-mode 'skipped' notice is not a step
+                bad.append(f"step banner without a settle: Step{chunk[:40]!r}")
+        # a step that files errors under a name of its own must have that name in the registry (errors appended AFTER the ledger
+        # is written, such as the guardian's, are not step outcomes)
+        for p in set(re.findall(r'errors\.append\(f"([A-Za-z_\-]+):', src.split("import record_step_runs")[0])):
+            if p not in SL.REPORTING_STEPS:
+                bad.append(f"errors filed under '{p}:' which is not a registered step")
+        return bad
+
+    def test_every_step_weekly_fetch_runs_writes_a_row_so_its_failure_can_be_seen_to_end(self):
+        """A step that wrote a row only when it errored (remittance, reserves ...) could never be seen to recover and would hold the
+        data-integrity alert open for the whole 30-day retention. Adding a step to weekly_fetch without settling it must fail."""
         src = open(os.path.join(_ROOT, "weekly_fetch.py"), encoding="utf-8").read()
-        reported = set(re.findall(r'note_step\("([a-z_]+)"', src))
-        assert reported and reported <= SL.REPORTING_STEPS, reported - SL.REPORTING_STEPS
+        assert self._weekly_problems(src) == []
+        assert SL.DAILY_BB_STEPS <= SL.REPORTING_STEPS
+        noted = set(re.findall(r'note_step\("([A-Za-z_\-]+)"', src))
+        assert noted and noted <= SL.REPORTING_STEPS, noted - SL.REPORTING_STEPS
+
+    def test_the_registry_guard_can_fail(self):
+        """A guard that cannot fail is wrong: drop a settle, add an unsettled step, or file errors under a new name and it must say so."""
+        src = open(os.path.join(_ROOT, "weekly_fetch.py"), encoding="utf-8").read()
+        assert self._weekly_problems(src.replace('_settle("remittance", errors, _m)', "pass")), "dropped settle not caught"
+        new_step = src.replace('    # ── Summary ──', '    log.info("--- Step 99: A new feed ---")\n    errors.append(f"newfeed: x")\n    # ── Summary ──')
+        assert new_step != src and self._weekly_problems(new_step), "a new unsettled step was not caught"
+        assert self._weekly_problems(src.replace('errors.append(f"remittance: {exc}")', 'errors.append(f"remit: {exc}")'))
 
 
 class TestOpenFailures:
@@ -131,12 +164,84 @@ class TestOpenFailures:
         assert any("no automatic repair" in t for t in f["tried"])
         assert any("the Doctor last ran" in t for t in f["tried"])
 
-    def test_a_step_that_never_writes_an_ok_row_cannot_hold_the_issue_open(self):
-        """'remittance: ...' errors write a row, but a later clean run writes nothing, so the failure would look permanent."""
+    def test_a_monthly_step_is_open_while_failing_and_closes_on_its_next_clean_run(self):
+        """remittance/reserves/policy/... used to write a row only on error: the failure was invisible to the alert (excluded) or,
+        if included, could never end. Now every run writes a row, so a clean run is what closes it."""
         eng, s = _mem()
         _add(s, "pc", "failed", 40, step="remittance", cls=F.UNKNOWN)
+        assert [f["step"] for f in SL.open_failures(s, NOW)] == ["remittance"]
+        _add(s, "pc", "ok", 1, step="remittance")
         assert SL.open_failures(s, NOW) == []
 
+    def test_a_row_under_a_name_weekly_fetch_never_settles_cannot_hold_the_issue_open(self):
+        """Legacy rows / a stray error line ('other', 'holiday_calendar') have no ok row to end them."""
+        eng, s = _mem()
+        _add(s, "pc", "failed", 40, step="other", cls=F.UNKNOWN)
+        assert SL.open_failures(s, NOW) == []
+
+    def test_a_healthy_ledger_of_ok_rows_loads_nothing_and_lists_nothing(self):
+        eng, s = _mem()
+        for h in range(1, 40):
+            for step in ("remittance", "omo", "doctor"):
+                _add(s, "pc", "ok", h, step=step)
+        assert SL.open_failures(s, NOW) == []
+
+
+class TestEveryStepRecordsARow:
+    def _run(self, steps, errors, step_errors=None):
+        import weekly_fetch as W
+        W.STEP_STATS.clear()
+        W.STEP_ERRORS.clear()
+        for name, fn in steps:
+            mark = len(errors)
+            fn(errors)
+            W._settle(name, errors, mark)
+        return {r["step"]: r for r in SL.build_rows(errors, W.STEP_STATS, NOW, "pc", W.STEP_ERRORS)}
+
+    def test_a_clean_monthly_step_is_ok_with_unknown_counts_never_empty(self):
+        """reserves/monetary/remittance legitimately read nothing on most days: 0 rows is 'ok' for them, 'empty' only for a daily BB feed."""
+        import weekly_fetch as W
+        rows = self._run([("circulars", lambda e: W.note_step("circulars", 0, 0)),
+                          ("reserves", lambda e: None),
+                          ("callmoney", lambda e: W.note_step("callmoney", 0, 0))], [])
+        assert rows["circulars"]["status"] == "ok" and rows["reserves"]["status"] == "ok"
+        assert rows["reserves"]["rows_fetched"] is None, "unknown counts are None, never a made-up 0"
+        assert rows["callmoney"]["status"] == "empty" and rows["callmoney"]["error_class"] == F.EMPTY
+
+    def test_a_failed_step_is_failed_and_its_neighbours_stay_ok(self):
+        rows = self._run([("remittance", lambda e: e.append("remittance: boom")), ("reserves", lambda e: None)], [])
+        assert rows["remittance"]["status"] == "failed" and rows["reserves"]["status"] == "ok"
+
+    def test_lines_a_runner_prefixes_with_its_own_name_are_filed_under_the_step_that_ran(self):
+        """The holiday fetcher says 'holiday_calendar: ...' and the circular watch says 'calendar_decisions.yaml entry 3: ...'. Filed by
+        prefix they land on names that never write an ok row, so they could never end; filed by block they recover with 'holidays'."""
+        rows = self._run([("holidays", lambda e: e.append("holiday_calendar: 2 rows refused")),
+                          ("circulars", lambda e: e.append("calendar_decisions.yaml entry 3: needs decision"))], [])
+        assert rows["holidays"]["status"] == "failed" and rows["circulars"]["status"] == "failed"
+        assert "holiday_calendar" not in rows and "other" not in rows
+
+    def test_a_line_that_names_another_known_step_stays_with_that_step(self):
+        """A CheckViolation for the repo must stay on 'interbank_repo' wherever in the run it was raised: that is the 12-16 Nov incident."""
+        rows = self._run([("pipeline", lambda e: e.append("interbank_repo: CheckViolation ck_repo_rate_band")),
+                          ("interbank_repo", lambda e: __import__("weekly_fetch").note_step("interbank_repo", 5, 5))], [])
+        assert rows["interbank_repo"]["status"] == "failed" and rows["pipeline"]["status"] == "ok"
+
+    def test_a_failure_is_closed_by_the_next_runs_clean_row_end_to_end(self):
+        eng, s = _mem()
+        SL.record_step_runs(s, ["policy: policy fetch returned nothing (page unparseable)"], {}, NOW - datetime.timedelta(hours=3), "pc",
+                            step_errors={"policy": ["policy: policy fetch returned nothing (page unparseable)"]})
+        s.commit()
+        assert [f["step"] for f in SL.open_failures(s, NOW)] == ["policy"]
+        SL.record_step_runs(s, [], {"policy": {"fetched": 1, "stored": 0, "rejected": None}}, NOW - datetime.timedelta(hours=1), "pc",
+                            step_errors={"policy": []})
+        s.commit()
+        assert SL.open_failures(s, NOW) == []
+
+    def test_error_lines_that_no_block_claimed_still_fall_back_to_their_prefix(self):
+        rows = SL.build_rows(["doctor: lost-day repair failed: x"], {}, NOW, "pc", {})
+        assert [(r["step"], r["status"]) for r in rows] == [("doctor", "failed")]
+
+class TestKnownAbsences:
     def test_a_recorded_known_absence_does_not_hold_the_issue_open(self):
         """BB published nothing and we hold the evidence: an empty read on those days is the explained hole, not a failure."""
         eng, s = _mem()

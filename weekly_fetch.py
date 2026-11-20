@@ -70,6 +70,20 @@ def note_step(step: str, fetched=None, stored=None, rejected=None) -> None:
     STEP_STATS[step] = {"fetched": fetched, "stored": stored, "rejected": rejected}
 
 
+# The error lines each step's own block appended this run. engines/step_ledger.py files a line under its `<step>:` prefix when that
+# names a known step, else under the block that produced it (runners prefix with names of their own, or not at all).
+STEP_ERRORS: dict = {}
+
+
+def _settle(step: str, errors: list, mark: int) -> None:
+    """Close a step: EVERY step that ran writes a step_runs row (ok when clean, failed when it errored), so a failure can be seen to
+    END. Call it after the step's try/except with `mark = len(errors)` taken before the step. It changes nothing in `errors`; a step
+    that already reported its counts (note_step) keeps them, any other is recorded 'ok' with the counts unknown (None, never 0).
+    engines/step_ledger.REPORTING_STEPS lists every name used here; tests/test_doctor_open_failures.py keeps the two in step."""
+    STEP_ERRORS[step] = [str(e) for e in errors[mark:]]
+    STEP_STATS.setdefault(step, {"fetched": None, "stored": None, "rejected": None})
+
+
 def _stored(st: dict) -> int:
     return (st.get("inserted", 0) + st.get("updated", 0)) if st else 0
 
@@ -137,6 +151,7 @@ def main():
 
 def _run():
     STEP_STATS.clear()
+    STEP_ERRORS.clear()
     start = datetime.datetime.now()
     log.info("=" * 60)
     log.info("Weekly fetch started  %s", start.strftime("%Y-%m-%d %H:%M"))
@@ -192,12 +207,14 @@ def _run():
     # Detection alone left 32 flagged rows sitting untouched for two weeks; every
     # run now fixes what is derivable with certainty and reports the rest.
     healed = {}
+    _m = len(errors)
     try:
         from engines.repair import self_heal
         session = get_session()
         healed = self_heal(session)
         session.commit()
         session.close()
+        note_step("self_heal", None, healed.get("total", 0))
         if healed.get("total"):
             log.warning("Self-heal repaired %d row(s): %s", healed["total"], healed["repaired"])
             # A repair that MOVES A DATE leaves the ladder stale by
@@ -221,12 +238,14 @@ def _run():
     except Exception as exc:
         log.exception("Self-heal failed: %s", exc)
         errors.append(f"self_heal: {exc}")
+    _settle("self_heal", errors, _m)
 
     # ── 3. Treasury yield history — runs BEFORE the GSOM pipeline so today's
     #      auction results are linked to the calendar (confirm_auctions_from_
     #      results) and daily_net_flow is rebuilt with actual accepted amounts
     #      in the same run, not the next one.
     log.info("--- Step 3: Treasury yield history (%d months) ---", TREASURY_MONTHS)
+    _m = len(errors)
     try:
         result = run_primary_yield_history(months_back=TREASURY_MONTHS)
         log.info("Treasury OK | new_rows=%s", result.get("rows"))
@@ -235,6 +254,7 @@ def _run():
     except Exception as exc:
         log.exception("Treasury fetch failed: %s", exc)
         errors.append(f"treasury: {exc}")
+    _settle("treasury", errors, _m)
 
     # ── 1. GSOM pipeline ──────────────────────────────────────────────────────
     # Heavy (~27 min: ~7,600 MTM rows + event regen) and BB only updates GSOM
@@ -244,6 +264,7 @@ def _run():
         log.info("--- Step 1: GSOM pipeline — SKIPPED (light/hourly mode) ---")
     else:
         log.info("--- Step 1: GSOM pipeline ---")
+        _m = len(errors)
         try:
             # +400d: every stored future flow row is rebuilt each run. With
             # +120d the Feb–Jul 2027 rows (written once by an older +365 run)
@@ -262,9 +283,13 @@ def _run():
         except Exception as exc:
             log.exception("Pipeline failed: %s", exc)
             errors.append(f"pipeline: {exc}")
+        else:
+            note_step("pipeline", summary.get("securities"))      # securities processed; what was stored is not reported
+        _settle("pipeline", errors, _m)
 
         # A working day this run (or an earlier one) never saw is re-read from BB's date picker, which still
         # serves past days; it was filled by hand on 31-Oct and must not need a person again.
+        _m = len(errors)
         try:
             from engines.pipeline import backfill_secondary_gaps
             _s = get_session()
@@ -274,16 +299,19 @@ def _run():
                 _s.close()
             if gap["filled"]:
                 log.info("Secondary gaps filled: %s", gap["filled"])
+            note_step("secondary-gap-fill", None, sum(gap["filled"].values()) if gap["filled"] else 0)
             errors.extend(gap["errors"])
         except Exception as exc:
             log.exception("Secondary gap fill failed: %s", exc)
             errors.append(f"secondary-gap-fill: {exc}")
+        _settle("secondary-gap-fill", errors, _m)
 
     # ── 2. OMO fetch (last 200 days — covers AR 180D + all outstanding positions) ─
     # AR 180D transactions from ~6 months ago are still outstanding today.
     # 14 days misses them. 200 days ensures the full outstanding picture is
     # always complete. Upserts skip already-stored rows so re-fetching is safe.
     log.info("--- Step 2: OMO fetch (%d days) ---", OMO_DAYS_BACK)
+    _m = len(errors)
     try:
         result = run_omo_fetch(days_back=OMO_DAYS_BACK, max_files=OMO_MAX_FILES)
         log.info("OMO OK | new_rows=%s", result.get("rows"))
@@ -293,9 +321,11 @@ def _run():
     except Exception as exc:
         log.exception("OMO fetch failed: %s", exc)
         errors.append(f"omo: {exc}")
+    _settle("omo", errors, _m)
 
     # ── 4. Call money market rates (last 35 days) ────────────────────────────
     log.info("--- Step 4: Call money market rates (%d days) ---", CALLMONEY_DAYS)
+    _m = len(errors)
     try:
         from fetchers.callmoney import fetch_call_money
         from db import CallMoneyRate
@@ -318,9 +348,11 @@ def _run():
     except Exception as exc:
         log.exception("Call money fetch failed: %s", exc)
         errors.append(f"callmoney: {exc}")
+    _settle("callmoney", errors, _m)
 
     # ── 5. FX auction results ─────────────────────────────────────────────────
     log.info("--- Step 5: FX auction results ---")
+    _m = len(errors)
     try:
         from fetchers.fx import fetch_fx_auctions
         from db import FxAuctionResult
@@ -340,12 +372,15 @@ def _run():
         session.commit()
         session.close()
         log.info("FX OK | new_rows=%d (fetched %d)", saved_fx, len(rows_fx))
+        note_step("fx", len(rows_fx), saved_fx)
     except Exception as exc:
         log.exception("FX fetch failed: %s", exc)
         errors.append(f"fx: {exc}")
+    _settle("fx", errors, _m)
 
     # ── 6. Money market reference rates (DOMMR + BOFR, today only) ───────────
     log.info("--- Step 6: Money market reference rates ---")
+    _m = len(errors)
     try:
         from fetchers.refrate import fetch_refrate
         from db import RefRate
@@ -366,9 +401,11 @@ def _run():
     except Exception as exc:
         log.exception("RefRate fetch failed: %s", exc)
         errors.append(f"refrate: {exc}")
+    _settle("refrate", errors, _m)
 
     # ── 7. Wage-earner remittance (monthly, BB econdata) ─────────────────────
     log.info("--- Step 7: Wage-earner remittance ---")
+    _m = len(errors)
     try:
         from fetchers.remittance import fetch_remittance
         from db import RemittanceMonthly
@@ -390,12 +427,15 @@ def _run():
         session.commit()
         session.close()
         log.info("Remittance OK | new_rows=%d (fetched %d)", saved_rm, len(rows_rm))
+        note_step("remittance", len(rows_rm), saved_rm)
     except Exception as exc:
         log.exception("Remittance fetch failed: %s", exc)
         errors.append(f"remittance: {exc}")
+    _settle("remittance", errors, _m)
 
     # ── 8. Foreign-exchange reserves (monthly, BB econdata) ──────────────────
     log.info("--- Step 8: FX reserves ---")
+    _m = len(errors)
     try:
         from fetchers.reserves import fetch_reserves
         from db import ReservesMonthly
@@ -417,15 +457,18 @@ def _run():
         session.commit()
         session.close()
         log.info("Reserves OK | new_rows=%d (fetched %d)", saved_rs, len(rows_rs))
+        note_step("reserves", len(rows_rs), saved_rs)
     except Exception as exc:
         log.exception("Reserves fetch failed: %s", exc)
         errors.append(f"reserves: {exc}")
+    _settle("reserves", errors, _m)
 
     # ── 9. Policy-rate corridor (BB homepage POLICY RATES box) ───────────────
     # Authoritative & self-updating: an MPC rate change is picked up within a
     # day. A CHANGE vs the last stored corridor is logged LOUD (surfaces in the
     # run summary + integrity gate) so it's never silently missed.
     log.info("--- Step 9: Policy-rate corridor ---")
+    _m = len(errors)
     try:
         from fetchers.policy_rates import fetch_policy_rates
         from db import PolicyRateSnapshot
@@ -460,15 +503,18 @@ def _run():
             session.commit()
             log.info("Policy corridor stored | repo=%s SLF=%s SDF=%s bank=%s", pr["repo"], pr["slf"], pr["sdf"], pr["bank_rate"])
         session.close()
+        note_step("policy", 1, 0 if same else 1)
     except Exception as exc:
         log.exception("Policy-rate fetch failed: %s", exc)
         errors.append(f"policy: {exc}")
+    _settle("policy", errors, _m)
 
     # ── 10. Monetary & prices (CPI, bank rates, M2/credit — BB econdata) ─────
     # Monthly indicators; upsert by month so BB revisions are picked up and only
     # real, sourced fields overwrite (a month with rates but no CPI yet must not
     # null out a CPI figure fetched earlier).
     log.info("--- Step 10: Monetary & prices indicators ---")
+    _m = len(errors)
     try:
         from fetchers.monetary import fetch_monetary
         from db import MonetaryMonthly
@@ -494,15 +540,18 @@ def _run():
         session.commit()
         session.close()
         log.info("Monetary OK | new_rows=%d (fetched %d)", saved_mo, len(rows_mo))
+        note_step("monetary", len(rows_mo), saved_mo)
     except Exception as exc:
         log.exception("Monetary fetch failed: %s", exc)
         errors.append(f"monetary: {exc}")
+    _settle("monetary", errors, _m)
 
     # ── 11. Interbank FX market — spot / forward / swap turnover ─────────────
     # BB's page is a live daily table, so replace-by-date (never insert-only):
     # an insert-only writer froze intraday call-money rows at their first
     # snapshot for weeks before anyone noticed.
     log.info("--- Step 11: Interbank FX market (%d months) ---", IBFX_MONTHS)
+    _m = len(errors)
     try:
         from fetchers.interbank_fx import fetch_interbank_fx
         from db import InterbankFx
@@ -548,11 +597,13 @@ def _run():
     except Exception as exc:
         log.exception("Interbank FX fetch failed: %s", exc)
         errors.append(f"interbank_fx: {exc}")
+    _settle("interbank_fx", errors, _m)
 
     # ── 12. Exchange rate of the Taka — all currencies ───────────────────────
     # One snapshot per run; rate_date is the PREVIOUS business day (BB's note),
     # not the publication date — see fetchers/fxrates.py.
     log.info("--- Step 12: Exchange rates (all currencies) ---")
+    _m = len(errors)
     try:
         from fetchers.fxrates import fetch_fx_rates
         from db import FxRateDaily
@@ -575,9 +626,11 @@ def _run():
     except Exception as exc:
         log.exception("FX rates fetch failed: %s", exc)
         errors.append(f"fxrates: {exc}")
+    _settle("fxrates", errors, _m)
 
     # ── 13. Interbank repo — the secured money market ────────────────────────
     log.info("--- Step 13: Interbank repo ---")
+    _m = len(errors)
     try:
         from fetchers.interbank_repo import fetch_interbank_repo_range
         from db import InterbankRepo
@@ -607,6 +660,7 @@ def _run():
     except Exception as exc:
         log.exception("Interbank repo fetch failed: %s", exc)
         errors.append(f"interbank_repo: {exc}")
+    _settle("interbank_repo", errors, _m)
 
     # BB's press-release listing is NOT fetched as its own step: the OMO step
     # already downloads that exact page and stores the whole classified listing
@@ -621,6 +675,7 @@ def _run():
     # immediately when nothing is pending, so in a normal week it costs one
     # PDF download and no browser at all.
     log.info("--- Step 13b: Islamic window (BGIIB) ---")
+    _m = len(errors)
     try:
         from engines.pipeline import run_bgiib_fetch
         bg = run_bgiib_fetch()
@@ -631,6 +686,7 @@ def _run():
     except Exception as exc:
         log.exception("BGIIB fetch failed: %s", exc)
         errors.append(f"bgiib: {exc}")
+    _settle("bgiib", errors, _m)
 
     # ── 13c. BGIS Sukuk ──────────────────────────────────────────────────────
     # BB's government sukuk: the outstanding table (a product we held none of)
@@ -642,11 +698,13 @@ def _run():
     if LIGHT:
         log.info("Sukuk: skipped in light/hourly mode (read in the full runs)")
     else:
+        _m = len(errors)
         try:
             from engines.pipeline import run_sukuk_fetch
             sk = run_sukuk_fetch()
             log.info("Sukuk OK | %d issue(s) (%d new), %d new document(s)", sk.get("rows", 0),
                      sk.get("added", 0), sk.get("documents_added", 0))
+            note_step("sukuk", sk.get("rows", 0), sk.get("added", 0))
             for e in sk.get("errors") or []:
                 errors.append(e)
             # A new issue, a changed amount or a moved maturity changes cash on specific days:
@@ -661,6 +719,7 @@ def _run():
         except Exception as exc:
             log.exception("Sukuk fetch failed: %s", exc)
             errors.append(f"sukuk: {exc}")
+        _settle("sukuk", errors, _m)
 
     # ── 14. BB's gazetted holiday list ───────────────────────────────────────
     # Weekly, because this is the one feed whose VALUE IS IN THE FUTURE: every
@@ -676,12 +735,14 @@ def _run():
     if LIGHT:
         log.info("Holidays: skipped in light/hourly mode (read in the full runs)")
     else:
+        _m = len(errors)
         try:
             from engines.pipeline import run_holiday_fetch
             hol = run_holiday_fetch()
             log.info("Holidays OK | %d parsed, %d added, %d upgraded, %d conflict(s)",
                      hol.get("rows", 0), hol.get("added", 0), hol.get("upgraded", 0),
                      hol.get("conflicts", 0))
+            note_step("holidays", hol.get("rows", 0), hol.get("added", 0))
             for e in hol.get("errors") or []:
                 errors.append(e)
             if hol.get("refused"):
@@ -690,8 +751,10 @@ def _run():
         except Exception as exc:
             log.exception("Holiday fetch failed: %s", exc)
             errors.append(f"holidays: {exc}")
+        _settle("holidays", errors, _m)
 
     # ── 14a. Holes in the record that no fetch can fill, written down with their evidence ──
+    _m = len(errors)
     try:
         from engines.absences import sync_known_absences, sync_tenor_corrections
         session = get_session()
@@ -704,16 +767,19 @@ def _run():
             session.close()
         for line in ka["recorded"]:
             log.warning("Known absence recorded: %s", line)
+        note_step("known_absences", None, len(ka["recorded"]))
         errors.extend(ka["errors"])
     except Exception as exc:
         log.exception("Known absences failed: %s", exc)
         errors.append(f"known_absences: {exc}")
+    _settle("known_absences", errors, _m)
 
     # ── 14b. BB circulars that close the banks ───────────────────────────────
     # The gazetted list does not carry everything: Sharadiya Durga Puja 2026 closed the banks on
     # 20-22 Oct by circular and the calendar only knew 20 and 21. One page, one request; a page that
     # is not served changes nothing and is reported.
     log.info("--- Step 14b: BB closure circulars ---")
+    _m = len(errors)
     try:
         from engines.calendar_notices import run_circular_watch
         cw = run_circular_watch()
@@ -721,11 +787,13 @@ def _run():
                  cw.get("rows", 0), cw.get("applied", 0), cw.get("pending", 0), cw.get("rejected", 0))
         for line in cw.get("lines") or []:
             log.warning("Calendar: %s", line)
+        note_step("circulars", cw.get("rows", 0), cw.get("applied", 0))
         for e in cw.get("errors") or []:
             errors.append(e)
     except Exception as exc:
         log.exception("Circular watch failed: %s", exc)
         errors.append(f"circulars: {exc}")
+    _settle("circulars", errors, _m)
 
     # ── Summary ───────────────────────────────────────────────────────────────
     elapsed = (datetime.datetime.now() - start).seconds
@@ -761,7 +829,7 @@ def _run():
     try:
         from engines.step_ledger import record_step_runs
         session = get_session()
-        n_steps = record_step_runs(session, errors, STEP_STATS)
+        n_steps = record_step_runs(session, errors, STEP_STATS, step_errors=STEP_ERRORS)
         session.commit()
         session.close()
         log.info("Step ledger: %d step row(s) recorded", n_steps)
