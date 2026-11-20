@@ -18,6 +18,7 @@ from typing import Dict, List, Optional, Tuple
 
 MODEL = "claude-sonnet-5-5"
 BRIEF_MAX_ATTEMPTS_PER_DAY = 6
+BRIEF_MIN_GAP_MINUTES = 30      # a provider outage (503s) must not burn the day's attempts in five-minute retries
 MIN_SENTENCES, MAX_SENTENCES = 4, 6
 MAX_TEMPLATE_CHARS = 700
 MAX_TEXT_CHARS = 1700
@@ -257,9 +258,13 @@ def run(session, client=None, now: Optional[datetime.datetime] = None, facts: Op
     if base.filter(MorningBrief.model != "code", MorningBrief.status == "accepted").count():
         out["ai"] = "already have an AI brief for these facts"
         return out
-    attempts = session.query(MorningBrief).filter(MorningBrief.brief_date == today, MorningBrief.model != "code").count()
-    if attempts >= BRIEF_MAX_ATTEMPTS_PER_DAY:
+    tried = session.query(MorningBrief).filter(MorningBrief.brief_date == today, MorningBrief.model != "code")
+    if tried.count() >= BRIEF_MAX_ATTEMPTS_PER_DAY:
         out["ai"] = f"daily limit of {BRIEF_MAX_ATTEMPTS_PER_DAY} AI attempts reached"
+        return out
+    last = tried.order_by(MorningBrief.generated_utc.desc()).first()
+    if last is not None and (now - last.generated_utc) < datetime.timedelta(minutes=BRIEF_MIN_GAP_MINUTES):
+        out["ai"] = f"waiting: the last AI attempt was under {BRIEF_MIN_GAP_MINUTES} minutes ago"
         return out
     try:
         template, tag = draft(client, slots)

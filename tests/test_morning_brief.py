@@ -166,9 +166,20 @@ class TestARunWritesTheBriefAndKeepsTheRecord:
         s = _mem()
         c = _Client("bad one {regime}")
         for i in range(M.BRIEF_MAX_ATTEMPTS_PER_DAY + 3):
-            M.run(s, c, NOW, facts={**FACTS, "call_pct": 9.0 + i / 100})     # facts keep changing, so each pass wants a new draft
+            M.run(s, c, NOW + datetime.timedelta(minutes=31 * i), facts={**FACTS, "call_pct": 9.0 + i / 100})   # facts keep changing
             s.commit()
         assert c.calls == M.BRIEF_MAX_ATTEMPTS_PER_DAY
+
+    def test_a_failing_provider_is_not_retried_every_five_minutes(self):
+        """The 5-minute PC task hit Gemini 503s five times in 25 minutes and spent the day's attempts before the outage ended."""
+        s = _mem()
+        c = _Client("bad one {regime}")
+        for i in range(6):
+            M.run(s, c, NOW + datetime.timedelta(minutes=5 * i), facts={**FACTS, "call_pct": 9.0 + i / 100})
+            s.commit()
+        assert c.calls == 1
+        M.run(s, c, NOW + datetime.timedelta(minutes=35), facts={**FACTS, "call_pct": 9.5})
+        assert c.calls == 2
 
 
 class TestABriefIsServedOnlyWhileItsFactsHold:
