@@ -606,6 +606,26 @@ def confirm_auctions_from_results(session) -> dict:
             "orphans_removed": len(orphans), "twins_merged": twins}
 
 
+def _label_nearer_remaining(existing, row: dict) -> dict:
+    """Of the stored row's label and the incoming one, the label whose tenor-grid point is nearest the bond's remaining life.
+
+    Order-independent. With no readable remaining life, or equal distance, the stored label stays (a stable answer beats a flip)."""
+    import re
+    m = re.search(r"(\d+(?:\.\d+)?)", str(row.get("reissue_remaining") or existing.reissue_remaining or ""))
+    stored = {"tenor_label": existing.tenor_label, "tenor_years": existing.tenor_years}
+    incoming = {"tenor_label": row["tenor_label"], "tenor_years": row.get("tenor_years", existing.tenor_years)}
+
+    def grid_years(c):          # the label IS the grid point ('2Y' -> 2); fall back to the stored years for labels without one
+        g = re.match(r"(\d+)Y", str(c["tenor_label"]))
+        return float(g.group(1)) if g else (float(c["tenor_years"]) if c["tenor_years"] is not None else None)
+
+    a, b = grid_years(stored), grid_years(incoming)
+    if not m or a is None or b is None:
+        return stored
+    left = float(m.group(1))
+    return incoming if abs(b - left) < abs(a - left) else stored
+
+
 def upsert_primary_yield(session, row: dict):
     """THE single supported way to write a yield row. Every writer must use it.
 
@@ -656,10 +676,15 @@ def upsert_primary_yield(session, row: dict):
         ).scalar_one_or_none()
         if by_isin is not None:
             if by_isin.tenor_label != row["tenor_label"]:
-                log.warning("yield row for %s on %s was stored as %s and BB now reads %s "
-                            "— relabelling in place rather than adding a second row",
-                            row["isin"], row["auction_date"], by_isin.tenor_label,
-                            row["tenor_label"])
+                # BB's page can list one auction under two labels (3-Feb-2026: 2Y and 5Y, 2.60 years remaining). Whichever was written
+                # LAST used to win, so the label flipped on every re-read, and each flip made the auction ledger book it twice. Pick by
+                # the bond's own remaining life - the nearer tenor-grid point - so the answer no longer depends on the order read.
+                keep = _label_nearer_remaining(by_isin, row)
+                log.warning("yield row for %s on %s was stored as %s and BB also reads %s — keeping %s "
+                            "(nearer to the %s remaining), one row, never two",
+                            row["isin"], row["auction_date"], by_isin.tenor_label, row["tenor_label"], keep["tenor_label"],
+                            row.get("reissue_remaining") or by_isin.reissue_remaining)
+                row = {**row, "tenor_label": keep["tenor_label"], "tenor_years": keep["tenor_years"]}
             existing = by_isin
     if existing:
         existing.snapshot_date      = row["snapshot_date"]

@@ -242,11 +242,13 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
         # one side, because that row exists only because a result row did.
         _dt = lambda v: datetime.date.fromisoformat(v[:10]) if isinstance(v, str) else v
         _booked: dict = {}
+        # The key carries the security TYPE but not the tenor label: BB re-files a re-issue onto its tenor grid between reads (3-Feb-2026
+        # was read as 2Y, then 5Y), so the same auction can sit under two labels - exactly how that twin slipped past a tenor key.
         for r in q("SELECT tenor_label, auction_date, settlement_date, accepted_amount_bdt_mill, "
-                   "weighted_avg_yield_pct, COALESCE(source, '') FROM auction_events "
+                   "weighted_avg_yield_pct, COALESCE(source, ''), security_type FROM auction_events "
                    "WHERE accepted_amount_bdt_mill IS NOT NULL AND weighted_avg_yield_pct "
                    "IS NOT NULL AND auction_date IS NOT NULL ORDER BY auction_date"):
-            key = (r[0], r[3], r[4])
+            key = (r[6], r[3], r[4])
             for prev in _booked.get(key, ()):
                 if abs((_dt(r[1]) - _dt(prev[0])).days) <= 7 and ("uncalendared" in r[5]
                                                                   or "uncalendared" in prev[2]):
