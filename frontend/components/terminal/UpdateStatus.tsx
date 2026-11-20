@@ -46,7 +46,7 @@ export default function UpdateStatus() {
       {open && (
         <>
           <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 79 }} />
-          <div style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 80, width: 320, background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 12, boxShadow: "0 16px 50px rgba(0,0,0,.45)", padding: 14, animation: "drillIn .14s ease" }}>
+          <div style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 80, width: 360, background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 12, boxShadow: "0 16px 50px rgba(0,0,0,.45)", padding: 14, animation: "drillIn .14s ease" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
               <h3 className="panel-title">Data Updates</h3>
               <span style={{ fontSize: 11, color: "var(--fg-mute)" }}>{s?.cadence || "Auto-refreshed"}</span>
@@ -108,11 +108,22 @@ export default function UpdateStatus() {
                       </span>
                       <span style={{ fontSize: 10.5, color: "var(--fg-mute)", marginLeft: 13 }}>{d.rows.toLocaleString()} rows</span>
                     </span>
-                    <span style={{ textAlign: "right" }}>
+                    <span style={{ textAlign: "right" }} suppressHydrationWarning>
                       <b className="mono" style={{ fontSize: 11.5, color: tone }}>{current ? "Current" : "Behind"}</b>
-                      {d.latest_data && (
-                        <span className="mono" style={{ display: "block", fontSize: 11, color: "var(--fg-dim)" }}>
-                          latest {fmtDate(d.latest_data)}
+                      <span className="mono" style={{ display: "block", fontSize: 11, color: "var(--fg-dim)" }}
+                        title="The newest date Bangladesh Bank has published that we hold">
+                        {d.latest_data ? <>data to {fmtDate(d.latest_data)}</> : "no data date"}
+                      </span>
+                      <span className="mono" style={{ display: "block", fontSize: 10.5, color: d.last_run_status === "ok" || !d.last_run ? "var(--fg-mute)" : "var(--warn)" }}
+                        title="When this dataset's refresh last ran (whether or not Bangladesh Bank had anything new)">
+                        {d.last_run
+                          ? <>run {timeAgo(d.last_run)}{d.last_run_status && d.last_run_status !== "ok" ? ` · ${d.last_run_status}` : ""}</>
+                          : "run not recorded"}
+                      </span>
+                      {d.ingested && (
+                        <span className="mono" style={{ display: "block", fontSize: 10.5, color: "var(--fg-mute)" }}
+                          title="When a new row was last stored">
+                          new row {timeAgo(d.ingested)}
                         </span>
                       )}
                     </span>

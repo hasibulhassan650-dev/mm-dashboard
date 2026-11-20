@@ -24,6 +24,11 @@ def _last_working_day(today: datetime.date) -> datetime.date:
     return previous_working_day(today)
 
 
+def _run_facts(key: str, runs: dict) -> dict:
+    from .status_logic import for_dataset            # lazy: tests import this module top-level
+    return for_dataset(key, runs)
+
+
 def _hours_since(ts) -> float:
     if ts is None:
         return float("inf")
@@ -185,6 +190,8 @@ def get_status():
             f"CAST({'MAX(' + d + ')' if d else 'NULL'} AS TEXT) AS d FROM {t}"
             for k, (t, c, d, _l) in _SOURCES.items())
         got = {r[0]: r[1:] for r in session.execute(text(union)).fetchall()}
+        from .status_logic import last_runs
+        runs = last_runs(session)
         for key, (table, col, datecol, label) in _SOURCES.items():
             ing_t, n, d_t = got[key]
             ing = datetime.datetime.fromisoformat(ing_t) if ing_t else None
@@ -202,6 +209,7 @@ def get_status():
                 current = checked_recently
 
             datasets[key] = {
+                **_run_facts(key, runs),
                 "label": label,
                 "ingested": ing.isoformat() if ing is not None else None,
                 "latest_data": latest,

@@ -341,6 +341,11 @@ export interface DatasetStatus {
   rows: number;
   current?: boolean;        // cadence-aware: up to date for what BB has published
   kind?: "daily" | "event"; // daily series vs auction/operation series
+  /** When this dataset's refresh step last RAN (found something new or not), from the step ledger. */
+  last_run?: string | null;
+  last_run_status?: string | null;
+  last_run_machine?: string | null;
+  last_ok_run?: string | null;
 }
 export interface DataHealth {
   ok: boolean | null;
