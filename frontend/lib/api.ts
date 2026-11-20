@@ -517,6 +517,8 @@ export interface Insights {
     call_change_bp: number | null;
   };
   calendar: InsightDay[];
+  /** the brief for EXACTLY the current facts; null until one is written (the ranked statements are shown alone) */
+  brief?: { text: string; model: string; by: "code" | "an AI model"; generated_utc: string; hash: string } | null;
   news: { events: NewsEvent[]; unconfirmed: number; note?: string };
   knowledge: { omo_known_to: string | null; auction_calendar_to: string | null; last_fx_auction: string | null };
   insights: InsightStatement[];

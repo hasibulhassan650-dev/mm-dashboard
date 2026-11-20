@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { Insights, InsightStatement } from "@/lib/api";
+import { parseTs } from "@/lib/format";
 import { Panel } from "@/components/terminal/ui";
 
 /**
@@ -62,6 +63,17 @@ export default function LiquidityInsights({ data }: { data: Insights }) {
   const sec = d.securities;
   return (
     <>
+      {data.brief && (
+        <div className="grid12" style={{ marginBottom: "var(--gap)" }}>
+        <Panel title="Liquidity brief" span={12}
+               sub={`${data.brief.by === "code" ? "composed from the facts by code" : "drafted by an AI model from the facts; every number written and checked by code"} · ${parseTs(data.brief.generated_utc).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`}>
+          <p style={{ margin: 0, fontSize: 14, lineHeight: 1.75, color: "var(--fg)" }}>{data.brief.text}</p>
+          <div style={{ marginTop: 8, fontSize: 11, color: "var(--fg-mute)" }}>
+            Shown only while the figures below are the ones it describes; it is rewritten when they change. Press-reported events are not part of it.
+          </div>
+        </Panel>
+        </div>
+      )}
       <div className="grid12" style={{ marginBottom: "var(--gap)" }}>
         <Panel title="Liquidity today" span={5}
                sub={`from Bangladesh Bank's own data · ${data.as_of}`}>

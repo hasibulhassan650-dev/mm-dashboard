@@ -91,6 +91,11 @@ def main(argv=None) -> int:
         s.close()
     from engines import news_triage
     rc = news_triage.main(["run"])
+    try:                                   # the liquidity brief: never allowed to fail the news job
+        from engines import morning_brief
+        morning_brief.main()
+    except Exception as exc:
+        print(f"morning brief skipped: {type(exc).__name__}: {exc}")
     if "announce" in argv:
         from engines import announce
         rc = max(rc, announce.main(["publish"]))

@@ -17,6 +17,8 @@ Rules this module keeps (project rules, not choices):
 api/ deploys rooted at api/: stdlib and sqlalchemy only; sibling logic modules are reused, nothing is re-derived.
 """
 import datetime
+import hashlib
+import json
 from typing import Dict, List, Optional
 
 from sqlalchemy import text
@@ -284,6 +286,54 @@ def rank_insights(reg: dict, drivers: dict, calendar: List[dict], omo: Optional[
     return sorted(out, key=lambda s: order[s["severity"]])
 
 
+# ── the brief: the facts it may describe, and which brief matches them ───────────────────────────────────────────────
+def brief_facts(block: dict) -> dict:
+    """The small, rounded, stable set of facts a liquidity brief describes. Rounding keeps the hash from changing on noise; every figure the
+    brief can state is in here, and nothing from the news enters it except a COUNT (a press figure must not be restated as a BB fact)."""
+    r = block.get("regime") or {}
+    ins = r.get("inputs") or {}
+    call, cor, fresh = ins.get("call") or {}, ins.get("corridor") or {}, ins.get("fresh") or {}
+    d = block.get("drivers") or {}
+    rnd = lambda v, n=0: None if v is None else round(float(v), n)
+    cal = [c for c in block.get("calendar") or [] if c.get("securities_net_crore") is not None and not c.get("holiday")]
+    drains = sorted((c for c in cal if c["securities_net_crore"] <= -LARGE_DAY_CRORE), key=lambda c: c["securities_net_crore"])[:2]
+    k = block.get("knowledge") or {}
+    return {
+        "date": block.get("as_of"), "regime": r.get("label"), "segmented": bool(r.get("segmented")),
+        "call_pct": rnd(call.get("rate"), 2), "call_provisional": bool(call.get("provisional")), "call_date": call.get("date"),
+        "repo_pct": rnd(cor.get("repo"), 2), "slf_pct": rnd(cor.get("slf"), 2), "sdf_pct": rnd(cor.get("sdf"), 2),
+        "fresh_date": fresh.get("date"), "fresh_injection_crore": rnd(fresh.get("injection_crore")), "fresh_sdf_crore": rnd(fresh.get("sdf_crore")),
+        "net_lending_crore": rnd(d.get("bb_net_lending_now_crore")), "net_lending_change_crore": rnd(d.get("bb_net_lending_change_crore")),
+        "call_change_bp": rnd(d.get("call_change_bp")),
+        "movers": [{"instrument": m["instrument"], "change_crore": rnd(m["change_crore"])} for m in (d.get("movers") or [])[:3]],
+        "securities_week_crore": rnd((d.get("securities") or {}).get("crore")),
+        "fx_week_crore": rnd((d.get("fx") or {}).get("crore")),
+        "drain_days": [{"date": c["date"], "weekday": c["weekday"], "net_crore": rnd(c["securities_net_crore"])} for c in drains],
+        "omo_known_to": k.get("omo_known_to"), "auction_calendar_to": k.get("auction_calendar_to"),
+        "news_events": len((block.get("news") or {}).get("events") or []),
+    }
+
+
+def facts_hash(facts: dict) -> str:
+    return hashlib.sha256(json.dumps(facts, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def latest_brief(session, h: str) -> Optional[dict]:
+    """The brief for EXACTLY these facts: an AI-drafted one if it passed the checks, else the code-composed one. None if the table is
+    missing or no brief has been written for them yet (the page then shows the ranked statements alone)."""
+    try:
+        row = session.execute(text(
+            "SELECT text, model, generated_utc FROM morning_briefs WHERE facts_hash = :h AND status = 'accepted' "
+            "ORDER BY CASE WHEN model = 'code' THEN 1 ELSE 0 END, generated_utc DESC LIMIT 1"), {"h": h}).fetchone()
+    except Exception:
+        session.rollback()
+        return None
+    if not row:
+        return None
+    return {"text": row[0], "model": row[1], "generated_utc": str(row[2]),
+            "by": "code" if row[1] == "code" else "an AI model", "hash": h[:10]}
+
+
 # ── glue: the only place that touches the database ───────────────────────────────────────────────────────────────
 def dhaka_today(now: Optional[datetime.datetime] = None) -> datetime.date:
     return ((now or datetime.datetime.utcnow()) + datetime.timedelta(hours=6)).date()
@@ -346,7 +396,7 @@ def insights_block(session, today: Optional[datetime.date] = None) -> dict:
     recent = [e for e in nb.get("events", []) if e.get("when") and e["when"] >= str(today - datetime.timedelta(days=NEWS_LOOKBACK_DAYS))]
     news = {"events": recent, "unconfirmed": len(nb.get("unconfirmed") or []), "note": nb.get("note")}
     cal = flow_calendar(days, holidays, horizon, today, HORIZON_WORKING_DAYS, events=nb.get("events"))
-    return {
+    block = {
         "as_of": str(today), "unit": "BDT crore",
         "sign_convention": "flows: + adds cash to the banks, - drains it. BB net lending is a stock, not a flow.",
         "regime": reg, "drivers": drivers, "calendar": cal, "news": news,
@@ -355,3 +405,5 @@ def insights_block(session, today: Optional[datetime.date] = None) -> dict:
         "insights": rank_insights(reg, drivers, cal, omo_now, news, str(_d(fx_last)) if fx_last else None,
                                   str(as_of) if as_of else None, str(horizon) if horizon else None),
     }
+    block["brief"] = latest_brief(session, facts_hash(brief_facts(block)))
+    return block

@@ -739,6 +739,26 @@ class TenorOverride(Base):
     evidence       = Column(Text)
 
 
+class MorningBrief(Base):
+    """The liquidity brief: a few sentences on what is happening to liquidity, built from the insights FACTS (engines/morning_brief.py).
+
+    `facts_hash` ties a brief to the exact facts it describes: the API serves a brief only while the live facts still hash to it, so a
+    sentence about yesterday's call rate can never sit under today's number. `template` holds the sentences with {slots}; every number
+    in `text` was written by CODE into a slot, and the model (when one drafted the template) was never allowed to type one.
+    model = 'code' marks the deterministic brief that always exists; a rejected draft is kept, with its reason, so a failing model is visible."""
+    __tablename__ = "morning_briefs"
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    brief_date    = Column(Date, nullable=False, index=True)
+    facts_hash    = Column(String(64), nullable=False, index=True)
+    facts_json    = Column(Text)
+    model         = Column(String(80))                 # 'code' or the model tag
+    template      = Column(Text)
+    text          = Column(Text)
+    status        = Column(String(10), nullable=False)  # accepted | rejected
+    reject_reason = Column(Text)
+    generated_utc = Column(DateTime, nullable=False)
+
+
 class NewsSourceRun(Base):
     """One source, one run, one outcome - including the sources that could NOT be reached.
 

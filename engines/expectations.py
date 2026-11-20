@@ -232,6 +232,8 @@ NOT_WATCHED: Dict[str, str] = {
                   "auction day; not a BB feed, so it cannot go stale",
     "news_articles": "every article the Liquidity Watch read, stored with its filter "
                      "score; freshness is checked by a dedicated heartbeat, not a cadence",
+    "morning_briefs": "the liquidity brief, regenerated whenever the insight facts change; judged by its facts hash, "
+                      "not a cadence (a missing brief falls back to the ranked statements)",
     "tenor_overrides": "tranche tenors the Doctor corrected from BB's own later maturity print; an event table "
                        "(its rows mean a repair happened), so silence is the healthy state",
     "step_runs": "one row per refresh step per machine per run (the Doctor's ledger); judged by "

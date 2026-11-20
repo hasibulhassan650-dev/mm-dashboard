@@ -245,6 +245,16 @@ def build() -> tuple:
                 lines.append("**Doctor (last 24h):** " + "; ".join(parts) + ". Each repair carries its proof on the Guardian page.\n")
         except Exception:
             s.rollback()
+        try:
+            # The liquidity brief (engines/morning_brief.py): the latest accepted one, AI-drafted if a draft passed the checks, else composed by code.
+            from sqlalchemy import text as _t2
+            b = s.execute(_t2("SELECT text, model, generated_utc FROM morning_briefs WHERE status = 'accepted' "
+                              "ORDER BY generated_utc DESC LIMIT 1")).fetchone()
+            if b and b[0] and (datetime.datetime.utcnow() - (b[2] if isinstance(b[2], datetime.datetime) else datetime.datetime.fromisoformat(str(b[2])[:19]))).total_seconds() < 36 * 3600:
+                lines.append("**Liquidity brief** " + ("(composed by code)" if b[1] == "code" else "(AI-drafted; numbers written by code)") + f": {b[0]}
+")
+        except Exception:
+            s.rollback()
         if q.get("repaired"):
             fixed = ", ".join(f"{k}={v}" for k, v in q["repaired"].items())
             lines.append(f"**Self-heal (last run):** repaired {fixed}.\n")
