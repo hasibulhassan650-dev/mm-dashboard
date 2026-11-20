@@ -19,6 +19,18 @@ from engines import failures as F
 DAILY_BB_STEPS = {"callmoney", "refrate", "interbank_fx", "fxrates", "interbank_repo", "omo", "treasury"}
 _STEP_PREFIX = re.compile(r"^([A-Za-z0-9_\-]+):")
 
+# record_step_runs deletes rows older than this, so a failure streak that reaches this edge began at an unknown earlier time.
+RETENTION_DAYS = 30
+# Steps that WRITE a row when they succeed (weekly_fetch.note_step, plus the Doctor's heartbeat). Every other step writes a row
+# only when it errors, so its failure could never be seen to end and would hold the alert open for the whole retention window.
+# A test fails if weekly_fetch reports a step that is not listed here.
+REPORTING_STEPS = DAILY_BB_STEPS | {"bgiib", "doctor"}
+# step_health's window: a machine that has not reported inside it is not the one being judged.
+PC_RECENT_HOURS = 14.0
+# GitHub refuses an issue body over 65,536 characters; the bundle leaves room for the header around it.
+BUNDLE_LIMIT = 60000
+BODY_LIMIT = 65000
+
 
 def step_of(error: str) -> str:
     """The step an error line belongs to ('interbank_repo: ...' -> 'interbank_repo'), or 'other'."""
@@ -64,7 +76,7 @@ def record_step_runs(session, errors, step_stats, run_utc: Optional[datetime.dat
         session.add(StepRun(**r))
     # a month of history is plenty for the checks; the table must not grow for ever
     session.query(StepRun).filter(StepRun.run_utc < (run_utc or datetime.datetime.utcnow())
-                                  - datetime.timedelta(days=30)).delete()
+                                  - datetime.timedelta(days=RETENTION_DAYS)).delete()
     return len(rows)
 
 
@@ -95,3 +107,130 @@ def step_health(session, step: str, now: Optional[datetime.datetime] = None, max
     last_bad = bad[-1] if bad else None
     healthy = last_ok is not None and not (last_bad is not None and last_bad.run_utc > last_ok)
     return True, healthy, last_bad
+
+
+# ── Open failures: a failing step is an EPISODE, not a row ───────────────────────────────────────────────────────────────────
+
+def current_streak(rows, now: Optional[datetime.datetime] = None) -> Optional[dict]:
+    """The failure episode a step is in right now, from that ONE step's StepRun rows - or None when it is not failing.
+
+    Pure: rows only need run_utc / machine / status / error_class / error / step. Judged like step_health, so the two cannot
+    disagree about whether a step is healthy: while the PC (the real BB reader) has reported recently, only the PC's rows
+    count; GitHub's rows stand in only when the PC has not. A GitHub 'blocked' or 'empty' read (BB's firewall does that to its
+    runners as a matter of course) neither starts a streak nor breaks one. A run that is 'ok' ends it.
+
+    `truncated` is True when the streak runs unbroken back to the retention edge: the real start is older than the ledger
+    remembers, so a caller must say 'at least', never present the edge as the start.
+    """
+    rows = sorted(rows or [], key=lambda r: r.run_utc)
+    if not rows:
+        return None
+    now = now or rows[-1].run_utc
+    pc_reporting = any(r.machine != "github" and r.run_utc >= now - datetime.timedelta(hours=PC_RECENT_HOURS) for r in rows)
+    judged = [r for r in rows if r.machine != "github"] if pc_reporting else rows
+    run: list = []
+    ended = False
+    for r in judged:
+        if r.status == "ok":
+            run, ended = [], True
+        elif r.machine == "github" and r.status in ("blocked", "empty"):
+            continue
+        else:
+            run.append(r)
+    if not run:
+        return None
+    first, last = run[0], run[-1]
+    step = last.step
+    cls = last.error_class or (F.EMPTY if last.status == "empty" else F.classify(last.error, step))
+    truncated = (not ended) and first.run_utc <= now - datetime.timedelta(days=RETENTION_DAYS - 1)
+    return {"step": step, "class": cls, "machine": last.machine, "first_failed_utc": first.run_utc,
+            "last_failed_utc": last.run_utc, "attempts": len(run), "truncated": truncated, "last_error": last.error}
+
+
+_SECRETS = re.compile(r"postgres(?:ql)?(?:\+\w+)?://\S+|sk-ant-[A-Za-z0-9_\-]+", re.I)
+
+
+def redact(text: Optional[str]) -> str:
+    """The repo is PUBLIC and an issue body is public: a connection string (password included) or an API key must never reach one."""
+    return _SECRETS.sub("[redacted]", str(text or ""))
+
+
+def _excused(session, st: dict) -> bool:
+    """A streak a RECORDED known absence explains is not an open failure: BB did not publish and we hold the evidence
+    (data/seeds/known_absences.yaml). Only classes a missing publication can cause; a failure we could fix is never excused."""
+    if st["class"] not in (F.EMPTY, F.PDF_UNSERVED):
+        return False
+    try:
+        from engines.absences import absent_dates
+        lo, hi = st["first_failed_utc"].date(), st["last_failed_utc"].date()
+        return any(lo <= d <= hi for d in absent_dates(session, st["step"]))
+    except Exception:
+        return False                    # cannot prove it, so it stays open
+
+
+def _tried(st: dict, pol: F.Policy, doctor_rows: list) -> list:
+    """What the Doctor has done about this class, from its own heartbeat: the playbook, and whether it ran since this began."""
+    out = [f"playbook '{pol.playbook}'" if pol.playbook else "no automatic repair exists for this class (diagnose only)"]
+    since = [r for r in doctor_rows if r.run_utc >= st["first_failed_utc"]]
+    if not since:
+        out.append("the Doctor has not run since this began")
+    else:
+        d = since[-1]
+        said = f"repaired {d.rows_stored or 0} item(s)" if d.status == "ok" else f"itself failed: {redact(d.error)[:200]}"
+        out.append(f"the Doctor last ran {str(d.run_utc)[:16]} UTC on {d.machine or '?'} ({len(since)} run(s) since) and {said}")
+    return out
+
+
+def open_failures(session, now: Optional[datetime.datetime] = None) -> list:
+    """Every reporting step that is failing right now, with its class, owner action and what the Doctor tried.
+
+    Raises when step_runs cannot be read: the caller must treat that as 'unknown', never as 'nothing open'."""
+    from db import StepRun
+    now = now or datetime.datetime.utcnow()
+    rows = session.query(StepRun).filter(StepRun.run_utc >= now - datetime.timedelta(days=RETENTION_DAYS)) \
+        .order_by(StepRun.run_utc).all()
+    by_step: Dict[str, list] = {}
+    for r in rows:
+        by_step.setdefault(r.step, []).append(r)
+    out = []
+    for step in sorted(by_step):
+        if step not in REPORTING_STEPS:
+            continue
+        st = current_streak(by_step[step], now)
+        if st is None or _excused(session, st):
+            continue
+        pol = F.policy(st["class"])
+        out.append({"step": step, "class": st["class"], "owner": pol.owner, "machine": st["machine"],
+                    "first_failed_utc": str(st["first_failed_utc"]), "last_failed_utc": str(st["last_failed_utc"]),
+                    "attempts": st["attempts"], "truncated": st["truncated"],
+                    "owner_action": F.OWNER_ACTION.get(st["class"], F.OWNER_ACTION[F.UNKNOWN]),
+                    "tried": _tried(st, pol, by_step.get("doctor", [])),
+                    "last_error": redact(re.sub(r"\s+", " ", st["last_error"] or "")).strip()[:600]})
+    return out
+
+
+def render_bundle(failures: list, limit: int = BUNDLE_LIMIT) -> str:
+    """The issue body for open failures. Pure. Secrets redacted, and cut to `limit` characters (GitHub rejects a body over 65,536)."""
+    if not failures:
+        return ""
+    parts = [f"## Open failures ({len(failures)})",
+             "Integrity checks may be clean, but these steps are still failing. This issue stays open until each has a clean "
+             "run on the PC."]
+    for f in failures:
+        since = ("at least " if f.get("truncated") else "") + str(f.get("first_failed_utc", "?"))[:16] + " UTC"
+        parts += ["", f"### {f.get('step')}: {f.get('class')} (since {since}; {f.get('attempts')} failed run(s); "
+                      f"last on {f.get('machine') or '?'})",
+                  f"- What to do: {f.get('owner_action')}",
+                  f"- What the Doctor tried: " + "; ".join(f.get("tried") or ["nothing recorded"]),
+                  f"- Last error: {str(f.get('last_error') or '(none recorded)').replace('`', chr(39))}"]
+    text = redact("\n".join(parts))
+    if len(text) > limit:
+        text = text[:limit - 60].rstrip() + "\n\n[cut: this list is longer than a GitHub issue body allows]"
+    return text
+
+
+def may_close(report: dict) -> bool:
+    """May the integrity alert issue be auto-closed? Only when the data checks pass AND the failure ledger was READ and holds
+    nothing open. An unreadable ledger (open_failures is None) is not 'nothing open'."""
+    of = (report or {}).get("open_failures")
+    return (report or {}).get("ok") is True and isinstance(of, list) and not of

@@ -40,6 +40,24 @@ CLASS_POLICY: Dict[str, Policy] = {
     UNKNOWN: Policy("unknown", False, 0, None),
 }
 
+# What the OWNER should do about a class that is still failing, in the words the integrity issue shows. A class BB owns is
+# not the owner's to fix, and saying so is the point: an issue that keeps asking for action nobody can take gets ignored.
+# Every class in CLASS_POLICY must have an entry (tests/test_doctor_open_failures.py).
+OWNER_ACTION: Dict[str, str] = {
+    DB_CONSTRAINT: ("nothing: BB side (the Doctor blanks the field the database refused). If this is still failing a day "
+                    "later, the writer is not isolating the row: paste this issue into Claude Code."),
+    BB_DOWN: "nothing: BB side (BB's site is under maintenance or serving errors; the next read after it recovers fixes it).",
+    PDF_UNSERVED: "nothing: BB side (BB lists a PDF it does not serve; the Doctor records it and retires the record when BB publishes).",
+    BB_BLOCKED: "nothing unless the PC refresh also fails (BB's firewall CAPTCHAs GitHub's runners as a matter of course).",
+    NETWORK: "nothing unless the PC refresh also fails (a timeout or reset between the machine and BB).",
+    EMPTY: ("nothing yet: BB may have published nothing. If it persists past 2 working days, paste this issue into Claude "
+            "Code to tell a block from a real gap."),
+    PARSE_DEGRADED: ("BB changed a page layout and our parse got worse, so this step is not being updated correctly: paste "
+                     "this issue into Claude Code to fix the parser."),
+    UNKNOWN: ("a failure nobody has classified yet: paste this issue into Claude Code and ask it to read the step's last "
+              "error in step_runs and teach engines/failures.py the class."),
+}
+
 # Order matters: the first rule that matches decides. Each pattern is a fact that appeared in a real error.
 _RULES = (
     (DB_CONSTRAINT, re.compile(r"CheckViolation|violates check constraint|IntegrityError|UniqueViolation|NotNullViolation|"
@@ -76,6 +94,16 @@ def classify(text: Optional[str], step: str = "") -> str:
 
 def policy(cls: str) -> Policy:
     return CLASS_POLICY.get(cls, CLASS_POLICY[UNKNOWN])
+
+
+_DIAGNOSIS_STEP = re.compile(r"last failure of ([A-Za-z0-9_\-]+):")
+
+
+def diagnosis_step(text: Optional[str]) -> Optional[str]:
+    """The step a validate line's `diagnosis()` names, or None when the line carries no diagnosis. Kept beside diagnosis() so
+    the wording it parses cannot drift from the wording it writes (a test round-trips them)."""
+    m = _DIAGNOSIS_STEP.search(text or "")
+    return m.group(1) if m else None
 
 
 def diagnosis(step: str, cls: str, machine: Optional[str], when, error: Optional[str]) -> str:

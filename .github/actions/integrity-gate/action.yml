@@ -56,11 +56,37 @@ runs:
         ok=$(python -c "import json;print(json.load(open('integrity.json'))['ok'])")
 
         n=$(gh issue list --repo "$GITHUB_REPOSITORY" --label data-integrity --state open --json number --jq '.[0].number // empty')
-        if [ "$ok" = "True" ]; then
+        # The alert closes only when the data checks pass AND the step ledger was read and holds no open failure class
+        # (engines/step_ledger.py::may_close). A ledger that could not be read is "unknown", never "clear"; if this python call
+        # itself fails, the answer is "do not close".
+        can_close=$(python -c "import json;from engines.step_ledger import may_close;print(may_close(json.load(open('integrity.json'))))" 2>/dev/null || echo False)
+        if [ "$can_close" = "True" ]; then
           echo "Integrity OK"
           if [ -n "$n" ]; then
             gh issue close "$n" --repo "$GITHUB_REPOSITORY" \
               --comment "Integrity checks passing again as of ${CONTEXT} run ${GITHUB_RUN_ID}. Auto-closing."
+          fi
+          exit 0
+        fi
+        if [ "$ok" = "True" ]; then
+          # Data checks pass but a failure class is still open (or the ledger is unreadable): keep the issue, and replace its body
+          # with the bundle so it says what is failing, who owns it and what was tried. An edit does not email; no issue is created.
+          echo "Integrity checks pass but the step ledger has open failures (or could not be read) - not closing"
+          if [ -n "$n" ]; then
+            python - <<'PY' > alert_body.md
+        import json
+        from engines.step_ledger import render_bundle, redact, BODY_LIMIT
+        rep = json.load(open("integrity.json"))
+        of = rep.get("open_failures")
+        if isinstance(of, list):
+            body = render_bundle(of)
+        else:
+            body = ("## Step ledger could not be read\n"
+                    "Integrity checks pass, but the open failures could not be read, so this issue is not closed: "
+                    + redact(rep.get("open_failures_error") or "unknown error"))
+        print(body[:BODY_LIMIT])
+        PY
+            gh issue edit "$n" --repo "$GITHUB_REPOSITORY" --body-file alert_body.md || true
           fi
           exit 0
         fi
@@ -100,6 +126,13 @@ runs:
         # A new comment is an email: add one only when the set of problems changed, not every run.
         sha=$(python -c "import json,hashlib;r=json.load(open('integrity.json'));print(hashlib.sha1('|'.join(sorted(r.get('issues') or [])).encode()).hexdigest()[:10])")
         body="$body$(printf '\n\nissues-sha: %s' "$sha")"
+        # Say what is failing, who owns it and what was tried (empty when no failure class is open), and never exceed GitHub's
+        # 65,536-character body limit: the sha line above stays, the tail is what gets cut.
+        bundle=$(python -c "import json;from engines.step_ledger import render_bundle;print(render_bundle(json.load(open('integrity.json')).get('open_failures') or []))" 2>/dev/null || true)
+        if [ -n "$bundle" ]; then
+          body="$body"$'\n\n'"$bundle"
+        fi
+        body=$(printf '%s' "$body" | python -c "import sys;from engines.step_ledger import BODY_LIMIT;sys.stdout.write(sys.stdin.read()[:BODY_LIMIT])" 2>/dev/null || printf '%s' "${body:0:65000}")
         if [ -n "$n" ]; then
           # Keep the title current: a stale title describing a resolved problem
           # while a worse one is open is how an alert stops being read.

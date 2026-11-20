@@ -33,6 +33,32 @@ def fingerprint(text_: str) -> str:
     return _DIGITS.sub("#", text_.strip())[:80]
 
 
+def _episodes(session, seen: dict, now: datetime.datetime) -> dict:
+    """{fingerprint: streak} for the seen issues whose text names a failing step (failures.diagnosis_step) and whose step is in
+    a failure episode now. Any trouble reading the ledger returns {} (the fingerprint age stands): ageing must never break the run."""
+    from engines import failures as F
+    from engines.step_ledger import RETENTION_DAYS, current_streak
+    steps = {fp: F.diagnosis_step(line) for fp, (_sev, _table, line) in seen.items()}
+    wanted = {s for s in steps.values() if s}
+    if not wanted:
+        return {}
+    try:
+        from db import StepRun
+        rows = session.query(StepRun).filter(StepRun.step.in_(wanted),
+                                             StepRun.run_utc >= now - datetime.timedelta(days=RETENTION_DAYS)).all()
+    except Exception as exc:
+        session.rollback()
+        log.warning("Guardian: step_runs unreadable, issues keep their fingerprint age: %s", exc)
+        return {}
+    streaks = {s: current_streak([r for r in rows if r.step == s], now) for s in wanted}
+    return {fp: streaks[s] for fp, s in steps.items() if s and streaks.get(s)}
+
+
+def _since_note(ep: dict) -> str:
+    """A streak that reaches the retention edge began at an unknown earlier time: say 'at least', never the edge as the start."""
+    return f" (failing since at least {str(ep['first_failed_utc'])[:10]})" if ep.get("truncated") else ""
+
+
 def record(session, report: dict, now: datetime.datetime | None = None) -> dict:
     """Fold one integrity report into the ledger. Returns what changed."""
     now = now or datetime.datetime.utcnow()
@@ -45,17 +71,26 @@ def record(session, report: dict, now: datetime.datetime | None = None) -> dict:
             table = line.split(":", 1)[0].strip()
             seen[fingerprint(line)] = (sev, table, line)
 
+    # An issue that names the step behind it (validate appends the Doctor's diagnosis) is aged from that step's FAILURE EPISODE,
+    # not from its fingerprint: a fingerprint outlives a recovery, so 'waiting 45d' was 45 days of the text recurring, not 45
+    # days of this failure. Every other issue keeps the fingerprint's age.
+    episode = _episodes(session, seen, now)
     existing = {r.fingerprint: r for r in session.query(DataIssue).all()}
     opened = reopened = closed = 0
 
     for fp, (sev, table, line) in seen.items():
         row = existing.get(fp)
+        ep = episode.get(fp)
+        if ep:
+            line = line + _since_note(ep)
         if row is None:
             session.add(DataIssue(fingerprint=fp, table_name=table, severity=sev,
-                                  message=line, first_seen=now, last_seen=now,
+                                  message=line, first_seen=ep["first_failed_utc"] if ep else now, last_seen=now,
                                   occurrences=1))
             opened += 1
             continue
+        if ep:
+            row.first_seen = ep["first_failed_utc"]
         if row.resolved_at is not None:
             # It came back. Keep the original first_seen so the history shows a
             # recurring problem rather than a brand-new one each time.

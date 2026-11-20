@@ -1654,6 +1654,21 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
     finally:
         s.close()
 
+    # Failure classes still open in the step ledger (engines/step_ledger.py). Beside `ok`, never inside it: the data can be clean
+    # while a step is failing, and the alert issue must not auto-close on that. None means the ledger could not be READ, which
+    # is "unknown", not "nothing open" - the gate never closes on it.
+    open_failures, open_failures_error = None, None
+    try:
+        from engines.step_ledger import open_failures as _open_failures
+        _s2 = get_session()
+        try:
+            open_failures = _open_failures(_s2)
+        finally:
+            _s2.close()
+    except Exception as exc:
+        from engines.step_ledger import redact as _redact
+        open_failures_error = _redact(f"{type(exc).__name__}: {exc}")[:300]
+
     # `ok` / `issues` / `by_table` keep their existing meaning — OUR defects —
     # so the gate and every current consumer react to exactly what they always
     # did. Waiting-on-BB travels beside them, never inside them.
@@ -1670,6 +1685,8 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
         "notices": notices,
         "notice_count": sum(by_table_notice.values()),
         "by_table_notice": by_table_notice,
+        "open_failures": open_failures,
+        "open_failures_error": open_failures_error,
     }
 
 
