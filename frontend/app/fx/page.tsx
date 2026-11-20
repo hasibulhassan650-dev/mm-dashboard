@@ -8,12 +8,13 @@ import DownloadButton from "@/components/DownloadButton";
 import Freshness from "@/components/Freshness";
 import RelatedLinks from "@/components/RelatedLinks";
 import { DataWarning } from "@/components/DataWarning";
+import SourceLink from "@/components/SourceLink";
 
 export const revalidate = 300;
 
 export default async function FxPage({ searchParams }: { searchParams: Promise<{ from?: string; to?: string }> }) {
   const sp = await searchParams;
-  const [allRows, fresh] = await Promise.all([api.fx(3650).catch(() => []), api.freshness()]);
+  const [allRows, fresh, news] = await Promise.all([api.fx(3650).catch(() => []), api.freshness(), api.fxNewsCheck()]);
   const range = resolveRange(sp, allRows.map((r) => r.auction_date), 365);
   const rows = allRows.filter((r) => inRange(r.auction_date, range.from, range.to));
 
@@ -30,6 +31,27 @@ export default async function FxPage({ searchParams }: { searchParams: Promise<{
         <Freshness updated={fresh.fx} />
         <DateRangeControl min={range.min} max={range.max} from={range.from} to={range.to} />
       </div>
+
+      {news.checks.length > 0 && (
+        <div className="panel" style={{ padding: 14, marginBottom: "var(--gap)", borderColor: "var(--warn)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
+            <b style={{ fontSize: 13 }}>Reported by the press, not yet on Bangladesh Bank&apos;s page</b>
+            <span style={{ fontSize: 11, color: "var(--fg-mute)" }}>news, not BB data · never totalled or charted · {news.matched} other press reports agree with BB&apos;s table</span>
+          </div>
+          {news.checks.map((c, i) => (
+            <div key={i} style={{ fontSize: 12.5, padding: "5px 0", borderTop: i ? "1px solid var(--border)" : "none" }}>
+              <span className="mono">{fmtDate(c.date)}</span>{" · BB "}{c.side === "sell" ? "sold" : "bought"}{" "}
+              <b className="mono">${c.amount_usd_mn.toLocaleString()}m</b>{" "}
+              <span style={{ color: "var(--warn)" }}>{c.verdict === "WAITING" ? "awaiting BB's page" : c.verdict === "CONFLICT" ? "differs from BB's row" : "still not on BB's page"}</span>
+              {c.bb_amount_usd_mn != null && <> (BB row {c.bb_date}: <span className="mono">${c.bb_amount_usd_mn.toLocaleString()}m</span>)</>}
+              <div style={{ fontSize: 11, color: "var(--fg-mute)" }}>
+                {c.note}
+                {c.urls.slice(0, 3).map((u, j) => <a key={j} href={u} target="_blank" rel="noreferrer" style={{ marginLeft: 8 }}>press report {j + 1} ↗</a>)}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="kpi-strip" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
         <div className="kpi">
@@ -83,6 +105,7 @@ export default async function FxPage({ searchParams }: { searchParams: Promise<{
           </div>
         </Panel>
       </div>
+      <SourceLink k="fxauction" />
       <RelatedLinks items={[
         { href: "/macro", label: "External Sector", why: "reserves the interventions defend" },
         { href: "/monetary", label: "Monetary", why: "policy backdrop" },

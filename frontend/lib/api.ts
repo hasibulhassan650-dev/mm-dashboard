@@ -80,6 +80,10 @@ export const api = {
   flows:           (months = 6) => get<FlowRow[]>("/api/flows", { months }),
   callmoney:       (days = 90)  => get<CallMoneyResult>("/api/callmoney", { days }),
   fx:              (days = 365) => get<FxAuctionRow[]>("/api/fx", { days }),
+  fxNewsCheck:     async (): Promise<FxNewsCheck> => {
+    try { return await get<FxNewsCheck>("/api/fx/news-check"); }
+    catch { return { checks: [], matched: 0 }; }
+  },
   refrate:         (days = 90)  => get<RefRateRow[]>("/api/refrate", { days }),
   // New endpoints — degrade to empty until the backend redeploys with them.
   interbankFx:     async (days = 365): Promise<InterbankFxRow[]> => {
@@ -1100,6 +1104,19 @@ export interface RefRateRow {
   amount_crore: number | null; rate_pct: number | null; num_deals: number | null;
 }
 
+/** A dollar sale the press reports, read against BB's FX auction table. News is shown, never stored as BB data. */
+export interface FxNewsCheckRow {
+  verdict: "WAITING" | "UNCONFIRMED" | "CONFLICT";
+  side: "sell" | "buy";
+  date: string;
+  amount_usd_mn: number;
+  bb_amount_usd_mn: number | null;
+  bb_date: string | null;
+  urls: string[];
+  titles: string[];
+  note: string;
+}
+export interface FxNewsCheck { checks: FxNewsCheckRow[]; matched: number; error?: string }
 export interface FxAuctionRow {
   auction_date: string; settlement_date: string | null; auction_type: string;
   num_bids: number | null; bid_amount_usd_mill: number | null;

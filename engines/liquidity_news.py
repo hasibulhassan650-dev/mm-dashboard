@@ -730,7 +730,9 @@ def redundancy(session, ev: Dict, article: Dict) -> Optional[str]:
         return (str(when - datetime.timedelta(days=days)), str(when + datetime.timedelta(days=days)))
 
     if ev["kind"] in ("BB_FX_BUY", "BB_FX_SELL"):
-        lo, hi = within(3)
+        # +-1 day, not 3: BB's table lags, so a sale reported on the 16th must not read as 'already held' because the
+        # 12th is in it (that hid two missing sales; see api/routers/reconcile_logic.py)
+        lo, hi = within(1)
         n = session.execute(text("SELECT COUNT(*) FROM fx_auction_results WHERE auction_date "
                                  "BETWEEN :a AND :b AND LOWER(auction_type) = :t"),
                             {"a": lo, "b": hi, "t": "buy" if ev["kind"] == "BB_FX_BUY" else "sell"}).scalar()

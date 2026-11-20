@@ -1579,6 +1579,25 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
         except Exception:
             pass  # table not created yet (first pipeline run makes it)
 
+        # ---- news vs BB's FX auction table: a dollar sale the press reports that BB's page does not list ----
+        # BB posts these late and in batches. Never a defect (BB also sells outside auctions) and never written into a BB
+        # table: 'waiting' while BB is late, 'notice' when it stays absent or the amounts disagree.
+        try:
+            import importlib.util, os
+            _p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "api", "routers", "reconcile_logic.py")
+            _sp = importlib.util.spec_from_file_location("reconcile_logic", _p)
+            _rl = importlib.util.module_from_spec(_sp)
+            _sp.loader.exec_module(_rl)
+            for _r in _rl.reconcile_fx_news(s, datetime.date.today()):
+                if _r["verdict"] == "MATCH":
+                    continue
+                _w = (f"the press reports BB {_r['side']}ing ${_r['amount_usd_mn']:g}m on {_r['date']} "
+                      f"({_r['urls'][0]}); BB's FX auction page: {_r['note']}")
+                add("fx-news", _w, "waiting" if _r["verdict"] == "WAITING" else "notice")
+        except Exception as _e:
+            s.rollback()
+            add("fx-news", f"the news-vs-BB FX check could not run ({type(_e).__name__})", "notice")
+
         # ---- cross-source consistency (the same fact from two feeds must agree) ----
         # The strongest kind of integrity check: when two independent BB feeds
         # describe the same rate, a disagreement means one of them is wrong —
