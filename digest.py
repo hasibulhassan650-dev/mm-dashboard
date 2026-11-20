@@ -251,8 +251,8 @@ def build() -> tuple:
             b = s.execute(_t2("SELECT text, model, generated_utc FROM morning_briefs WHERE status = 'accepted' "
                               "ORDER BY generated_utc DESC LIMIT 1")).fetchone()
             if b and b[0] and (datetime.datetime.utcnow() - (b[2] if isinstance(b[2], datetime.datetime) else datetime.datetime.fromisoformat(str(b[2])[:19]))).total_seconds() < 36 * 3600:
-                lines.append("**Liquidity brief** " + ("(composed by code)" if b[1] == "code" else "(AI-drafted; numbers written by code)") + f": {b[0]}
-")
+                kind = "(composed by code)" if b[1] == "code" else "(AI-drafted; numbers written by code)"
+                lines.append(f"**Liquidity brief** {kind}: {b[0]}\n")
         except Exception:
             s.rollback()
         if q.get("repaired"):
