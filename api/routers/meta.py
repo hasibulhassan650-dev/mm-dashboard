@@ -20,12 +20,8 @@ _EVENT_SERIES = {"yields", "omo", "fx"}      # auctions / OMO / FX interventions
 
 
 def _last_working_day(today: datetime.date) -> datetime.date:
-    """Most recent Bangladesh working day strictly before `today`.
-    BD weekend = Friday (4) and Saturday (5)."""
-    d = today - datetime.timedelta(days=1)
-    while d.weekday() in (4, 5):
-        d -= datetime.timedelta(days=1)
-    return d
+    from .freshness_logic import previous_working_day
+    return previous_working_day(today)
 
 
 def _hours_since(ts) -> float:
@@ -198,7 +194,8 @@ def get_status():
             # "current" = up to date for what BB has actually published.
             if key in _DAILY_SERIES:
                 # daily series: current iff we hold at least the last working day
-                current = latest_d is not None and latest_d >= lwd
+                from .freshness_logic import required_date
+                current = latest_d is not None and latest_d >= required_date(key, today)
             else:
                 # event/master series: nothing is "due" daily — current iff the
                 # job checked recently (so anything published would be captured)
