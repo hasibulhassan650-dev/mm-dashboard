@@ -149,3 +149,17 @@ Two optional upgrades, both repository **secrets** (Settings → Secrets and var
   as already announced, so it sends no emails).
 
 News-derived events are never added to a ladder, cumulative or model total.
+
+## Backups and restore
+
+The desk PC's full refresh (19:00) writes a local backup of every table once a day to
+`%LOCALAPPDATA%\mm_dashboard\backups\<date>\` (gzip CSV + `manifest.json` with row counts and SHA-256), keeping 14 days. It is
+never written to the repo or to GitHub (the repo is public). For an off-site copy set `MM_BACKUP_DIR` to a folder your cloud
+drive syncs.
+
+- Check a backup: `python backup_db.py --verify <folder>`
+- Restore into an empty database: `python -c "import db; db.init_db()"`, then
+  `python backup_db.py --restore <folder> --tables desk_marks,desk_buyback_marks,data_absences,calendar_notices,tenor_overrides,liquidity_events`
+  (dry run) and add `--apply` to write. Rows already present (by id) are skipped, so it is safe to re-run.
+- What is NOT recomputable from BB and so matters most: `desk_marks`, `desk_buyback_marks`, `data_absences`, `calendar_notices`,
+  `tenor_overrides`, `liquidity_events` (news-derived, with their evidence).

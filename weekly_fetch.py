@@ -837,6 +837,23 @@ def _run():
         errors.append(f"circulars: {exc}")
     _settle("circulars", errors, _m)
 
+    # ── Step 15: a local backup of every table (the desk's own entries cannot be re-read from BB) ──
+    log.info("--- Step 15: local backup ---")
+    if LIGHT:
+        log.info("Backup: skipped in light/hourly mode (taken once a day by the full run)")
+    else:
+        _m = len(errors)
+        try:
+            from backup_db import run_backup
+            bk = run_backup()
+            log.info("Backup OK | %s", "already taken today" if bk.get("skipped") else
+                     f"{bk['tables']} tables, {bk['rows']:,} rows -> {bk['path']}")
+            note_step("backup", bk.get("rows", 0), bk.get("rows", 0))
+        except Exception as exc:
+            log.exception("Backup failed: %s", exc)
+            errors.append(f"backup: {type(exc).__name__}: {str(exc)[:200]}")
+        _settle("backup", errors, _m)
+
     # ── Summary ───────────────────────────────────────────────────────────────
     elapsed = (datetime.datetime.now() - start).seconds
     if errors:

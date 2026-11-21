@@ -26,7 +26,7 @@ RETENTION_DAYS = 30
 # (remittance, reserves, ...) would hold the alert open for the whole retention window. A test fails if weekly_fetch runs a
 # step that is not listed here, or lists one that never settles.
 REPORTING_STEPS = DAILY_BB_STEPS | {"bgiib", "doctor", "self_heal", "pipeline", "secondary-gap-fill", "fx", "remittance",
-                                    "reserves", "policy", "monetary", "sukuk", "holidays", "known_absences", "circulars"}
+                                    "reserves", "policy", "monetary", "sukuk", "holidays", "known_absences", "circulars", "backup"}
 # step_health's window: a machine that has not reported inside it is not the one being judged.
 PC_RECENT_HOURS = 14.0
 # GitHub refuses an issue body over 65,536 characters; the bundle leaves room for the header around it.
