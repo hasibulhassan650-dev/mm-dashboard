@@ -38,14 +38,22 @@ DEPLOY_GRACE_MIN = 45   # time to allow Vercel to build+deploy a new commit
 RUN_STALE_HOURS = 6
 
 
-def _http(url, timeout=25):
-    try:
-        r = urllib.request.urlopen(url, timeout=timeout)
-        return r.status, r.read().decode("utf-8", "replace")
-    except urllib.error.HTTPError as e:
-        return e.code, ""
-    except Exception as e:                       # noqa: BLE001 — any failure = unreachable
-        return None, str(e)[:80]
+def _http(url, timeout=25, tries=2):
+    """One blip is not an outage: an unreachable answer is retried once before it is reported (every blip used to open an
+    UPTIME issue, the next run closed it, and each was an email). An HTTP error status is an answer and is not retried."""
+    last = (None, "")
+    for attempt in range(tries):
+        try:
+            r = urllib.request.urlopen(url, timeout=timeout)
+            return r.status, r.read().decode("utf-8", "replace")
+        except urllib.error.HTTPError as e:
+            return e.code, ""
+        except Exception as e:                   # noqa: BLE001 — any failure = unreachable
+            last = (None, str(e)[:80])
+            if attempt + 1 < tries:
+                import time
+                time.sleep(5)
+    return last
 
 
 def _hours_since_iso(ts):

@@ -147,7 +147,8 @@ def acquire_lock(path: str = None, now: float = None) -> str:
         # PC slept, Chrome took the console down with it) left its lock behind, and every hourly run for the next three hours
         # then 'stepped aside' for a run that no longer existed.
         try:
-            holder = int(open(path).read().strip() or 0)
+            raw = open(path).read().strip()
+            holder = int(raw) if raw else None      # an empty lock is being written this instant by a live run: never stale by pid
         except (OSError, ValueError):
             holder = None
         if now - os.path.getmtime(path) > LOCK_STALE_SECONDS or (holder is not None and not _pid_alive(holder)):
@@ -193,21 +194,33 @@ def _run():
     from engines.pipeline import run_pipeline, run_omo_fetch, run_primary_yield_history
 
     # ── Init ──────────────────────────────────────────────────────────────────
-    init_db()
-    fix_all_sequences()   # bulletproof: a stale id-sequence can never block a write
+    today = datetime.date.today()
+    errors = []
+    # Start-up is guarded: a malformed seed file or a database hiccup used to raise out of _run before any step, any ledger
+    # row or any run record existed, so the failure was invisible. Now it is a 'pipeline: init' error and the steps still try.
+    try:
+        init_db()
+        from db import MIGRATION_ERRORS
+        errors.extend(f"pipeline: init - migration did not apply: {m}" for m in MIGRATION_ERRORS)
+    except Exception as exc:
+        errors.append(f"pipeline: init - database initialisation failed: {type(exc).__name__}: {str(exc)[:200]}")
+    try:
+        fix_all_sequences()   # bulletproof: a stale id-sequence can never block a write
+    except Exception as exc:
+        errors.append(f"pipeline: init - id sequences not re-synced: {type(exc).__name__}: {str(exc)[:200]}")
 
     # Every fiscal-year seed file, not just one: the 2026-27 closures (1-Jul
     # bank closing, 5-Aug, 26-Aug) were reaching the DB only by hand.
-    for seed in sorted((ROOT / "data" / "seeds").glob("holidays_*.yaml")):
-        load_holiday_file(str(seed))
-
-    session = get_session()
-    rows = session.query(HolidayCalendar).all()
-    load_calendar_rows(rows)
-    session.close()
-
-    today = datetime.date.today()
-    errors = []
+    try:
+        for seed in sorted((ROOT / "data" / "seeds").glob("holidays_*.yaml")):
+            load_holiday_file(str(seed))
+        session = get_session()
+        try:
+            load_calendar_rows(session.query(HolidayCalendar).all())
+        finally:
+            session.close()
+    except Exception as exc:
+        errors.append(f"pipeline: init - holiday calendar not loaded: {type(exc).__name__}: {str(exc)[:200]}")
 
     # ── 00. Is BB's website up at all? ───────────────────────────────────────
     # Three plain GETs, a couple of seconds, BEFORE any browser is launched.

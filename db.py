@@ -1167,9 +1167,16 @@ def fix_all_sequences():
     for tname in id_tables:
         try:
             with engine.connect() as conn:
+                # NEVER move a sequence backwards. Another process (the GitHub backup run beside the PC's) may have
+                # taken ids from it and not yet committed their rows, so MAX(id) is behind the sequence; setting it to
+                # MAX(id) handed the same ids out twice and the next insert died on 'duplicate key (id)=N' (a whole
+                # pipeline step lost, 17-Nov and 20-Nov). The target is the larger of MAX(id) and the sequence's own position.
+                seq = conn.execute(text(f"SELECT pg_get_serial_sequence('{tname}','id')")).scalar()
+                if not seq:
+                    continue
+                last = conn.execute(text(f"SELECT last_value FROM {seq}")).scalar() or 1
                 conn.execute(text(
-                    f"SELECT setval(pg_get_serial_sequence('{tname}','id'), "
-                    f"GREATEST((SELECT COALESCE(MAX(id),1) FROM {tname}),1))"
+                    f"SELECT setval('{seq}', GREATEST((SELECT COALESCE(MAX(id),1) FROM {tname}), {int(last)}, 1))"
                 ))
                 conn.commit()
         except Exception as exc:
@@ -1193,6 +1200,9 @@ CONSTRAINT_FIELDS: Dict[str, Tuple[str, ...]] = {
     "ck_fx_bid_le_ask":           ("bid_rate", "ask_rate"),
     "ck_ibfx_rate_band":          ("low_rate", "war_rate", "high_rate"),
 }
+
+
+MIGRATION_ERRORS: list = []     # the DDL statements of the last init_db() that failed for a reason other than 'already there'
 
 
 def init_db():
@@ -1330,11 +1340,18 @@ def init_db():
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_policy_rate_history_key "
         "ON policy_rate_history (effective_date)",
     ]
+    MIGRATION_ERRORS.clear()
     for ddl in migrations:
         try:
             with engine.connect() as conn:
                 conn.execute(text(ddl))
                 conn.commit()
-        except Exception:
-            pass  # column already exists / SQLite (no IF NOT EXISTS) — harmless
+        except Exception as exc:
+            # 'already exists' / 'duplicate column' / SQLite's missing IF NOT EXISTS are the expected, harmless failures.
+            # Anything else (a lock timeout, a permission error, a typo) used to vanish here, and code reading the new
+            # column then failed far away with UndefinedColumn: it is recorded, logged and reported by the caller.
+            msg = str(exc).lower()
+            if not any(k in msg for k in ("already exists", "duplicate column", "duplicate_column", "no such table")):
+                MIGRATION_ERRORS.append(f"{ddl[:70]} -> {type(exc).__name__}: {str(exc).splitlines()[0][:120]}")
+                log.warning("migration did not apply: %s", MIGRATION_ERRORS[-1])
     log.info("Database initialised at %s", DB_PATH)

@@ -1356,6 +1356,28 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
         except Exception:
             s.rollback()
 
+        # ── the PC must itself be reading ───────────────────────────────────────
+        # BB's firewall shows GitHub's runners a CAPTCHA, so the owner's PC is the only machine that reads BB. GitHub's blocked
+        # runs keep refreshing pipeline_runs every hour, so 'the refresh ran' stayed true while the PC was asleep for 21 hours
+        # and pages that keep only the latest day (repo, FX rates) lost a day for good. Judged here on the PC's OWN rows.
+        try:
+            _last_pc = q("SELECT MAX(run_utc) FROM step_runs WHERE machine = 'pc'")[0][0]
+            if _last_pc is None:
+                add("pc-silent", "no step has ever been recorded by the desk PC - nothing is reading Bangladesh Bank", "notice")
+            else:
+                if not hasattr(_last_pc, "year"):
+                    _last_pc = datetime.datetime.fromisoformat(str(_last_pc)[:19])
+                _dhaka = datetime.timedelta(hours=6)
+                _silent_h = (datetime.datetime.utcnow() - _last_pc).total_seconds() / 3600.0
+                _wd = _EXPECT.working_days_between((_last_pc + _dhaka).date(), (datetime.datetime.utcnow() + _dhaka).date(),
+                                                   _holidays_set())
+                if _silent_h > 10 and _wd >= 1:
+                    add("pc-silent", f"the desk PC has not read Bangladesh Bank for {_silent_h:.0f}h ({_wd} working day(s)) - it is off, "
+                                     f"asleep or signed out; daily pages that keep only the latest day lose it for good",
+                        "defect" if _wd >= 2 else "notice")
+        except Exception:
+            s.rollback()
+
         # ── the Doctor must itself be alive ─────────────────────────────────────
         # It runs at the end of every refresh and writes a 'doctor' row to step_runs. A repair system that has silently stopped
         # looks exactly like a healthy one, so its heartbeat is checked here, by a rule that does not depend on it. (Judged only

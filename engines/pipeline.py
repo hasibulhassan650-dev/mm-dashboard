@@ -1759,6 +1759,7 @@ def run_omo_fetch(days_back: int = 28, max_files: int = 20) -> dict:
         # taken a week to notice the first buyback, which is about how long it
         # took to notice by hand.
         press_added = press_revised = 0
+        press_error = None
         try:
             from fetchers.press import classify_links
             if meta.get("all_links"):
@@ -1770,6 +1771,8 @@ def run_omo_fetch(days_back: int = 28, max_files: int = 20) -> dict:
         except Exception as exc:
             session.rollback()
             log.warning("  press listing not stored: %s", exc)
+            # BB announcements (buybacks, auction notices) ride on this listing: not storing it is a failed step, not a warning.
+            press_error = f"press listing not stored: {type(exc).__name__}: {str(exc)[:160]}"
         meta.pop("all_links", None)
 
         if not txns:
@@ -1777,8 +1780,8 @@ def run_omo_fetch(days_back: int = 28, max_files: int = 20) -> dict:
             # pipeline run records it.
             msg = f"omo: fetched nothing — {reason or 'no reason reported'}"
             log.error(msg)
-            return {"rows": 0, "pdfs": 0, "errors": [msg], "empty_reason": reason,
-                    **watch, **meta}
+            return {"rows": 0, "pdfs": 0, "errors": [msg] + ([press_error] if press_error else []),
+                    "empty_reason": reason, **watch, **meta}
 
         store_stats: dict = {}
         saved, superseded = _store_omo_txns(session, txns, datetime.datetime.utcnow(), store_stats)
@@ -1787,7 +1790,7 @@ def run_omo_fetch(days_back: int = 28, max_files: int = 20) -> dict:
                  saved, superseded, len(txns))
         recon = sorted({t["recon_mismatch"] for t in txns if t.get("recon_mismatch")})
         return {"rows": saved, "txns": len(txns), "pdfs": meta.get("pdfs", max_files),
-                "errors": recon + omo_store_errors(store_stats),
+                "errors": recon + omo_store_errors(store_stats) + ([press_error] if press_error else []),
                 "rejected_days": store_stats.get("rejected", []), **watch, **meta}
     except Exception as exc:
         session.rollback()
