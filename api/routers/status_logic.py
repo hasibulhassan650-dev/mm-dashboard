@@ -51,7 +51,8 @@ def for_dataset(key: str, runs: dict) -> dict:
             "last_ok_run": r.get("last_ok")}
 
 
-PC_RECENT_HOURS = 14.0     # mirrors engines/step_ledger.PC_RECENT_HOURS (api/ cannot import engines/): the PC reads BB, GitHub is the backup
+PC_RECENT_HOURS = 36.0     # the PC reads BB, GitHub is the backup. Wider than step_ledger's 14h on purpose: steps that run only in the
+                           # full runs (holidays, sukuk, policy) report a few times a day, and GitHub's blocked row must not outrank them
 
 
 def current_problems(session, now=None) -> list:

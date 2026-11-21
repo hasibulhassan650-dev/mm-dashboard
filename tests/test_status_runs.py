@@ -1,7 +1,7 @@
 """The Data Updates panel shows, per dataset, when its refresh step last RAN. That only means something if every
 dataset maps to a step the pipeline really records - an unmapped one would read 'run not recorded' for ever."""
 import sys, pathlib
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "api"))
+sys.path.append(str(pathlib.Path(__file__).resolve().parents[1] / "api"))   # appended: api/db.py must not shadow the root db
 
 from routers import status_logic as S, meta
 from engines.step_ledger import REPORTING_STEPS
@@ -48,5 +48,5 @@ def test_githubs_blocked_run_is_not_the_headline_when_the_pc_read_the_page_fine(
 
 def test_without_a_recent_pc_row_the_newest_row_of_any_machine_speaks():
     import datetime
-    s = _ledger([(30, "pc", "policy", "ok", None), (1, "github", "policy", "failed", "returned nothing")])
+    s = _ledger([(40, "pc", "policy", "ok", None), (1, "github", "policy", "failed", "returned nothing")])
     assert S.current_problems(s, datetime.datetime(2026, 11, 21, 12)) == ["policy: failed (github) - returned nothing"]
