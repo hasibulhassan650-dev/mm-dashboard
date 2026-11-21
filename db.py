@@ -998,6 +998,11 @@ class PressRelease(Base):
     release nobody read is worse than admitting it is unread.
     """
     __tablename__ = "press_releases"
+    # The release's own text, read from its PDF ONCE and kept, so a parser can be written, fixed and re-run from what we
+    # hold instead of going back to BB (whose firewall CAPTCHAs repeated fetches). Bijoy-font Bangla extracts as noise;
+    # the digits and Latin tokens beside it are intact, which is what the parsers anchor on.
+    body_text        = Column(Text)
+    body_fetched_utc = Column(DateTime)
     __table_args__ = (UniqueConstraint("serial"),)
     id             = Column(Integer, primary_key=True, autoincrement=True)
     serial         = Column(String(20), nullable=False)   # pr14322
@@ -1209,6 +1214,10 @@ def init_db():
         "ALTER TABLE omo_transactions ADD COLUMN IF NOT EXISTS source_serial VARCHAR(40)",
         "ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS quality TEXT",
         "ALTER TABLE press_releases ADD COLUMN IF NOT EXISTS notified_utc TIMESTAMP",
+        "ALTER TABLE press_releases ADD COLUMN IF NOT EXISTS body_text TEXT",
+        "ALTER TABLE press_releases ADD COLUMN IF NOT EXISTS body_fetched_utc TIMESTAMP",
+        "ALTER TABLE press_releases ADD COLUMN body_text TEXT",
+        "ALTER TABLE press_releases ADD COLUMN body_fetched_utc TIMESTAMP",
         # SQLite has no IF NOT EXISTS for columns, and the local file is a live
         # database. Without this a stale local copy fails every press query with
         # "no such column"; on Postgres this errors harmlessly (column exists).

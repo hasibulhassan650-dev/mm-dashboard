@@ -1606,41 +1606,71 @@ def run_sukuk_fetch() -> dict:
         session.close()
 
 
-def read_sukuk_notices(session, now, limit: int = 10) -> dict:
-    """Read each sukuk press release we hold but have not yet read (BB's page lists an issue only after it settles).
+BODY_CATEGORIES = ("SUKUK", "AUCTION_NOTICE", "POLICY")   # releases no other step reads; OMO/results/BGIIB/buyback have their own parsers
+BODY_RETRY_DAYS = 7                                      # a dead link (BB lists it, never serves it) is retried weekly, not hourly
 
-    A release that will not parse, or whose figures disagree, is REPORTED (an error line naming the serial and why),
-    never stored half-read. `press_releases` already holds the listing, so this only downloads the PDF."""
+
+def store_press_bodies(session, now, categories=BODY_CATEGORIES, limit: int = 6) -> dict:
+    """Read each not-yet-read release's PDF ONCE and keep its text in press_releases.body_text.
+
+    Why: parsers are then written and re-run from what we hold, and BB's firewall (which CAPTCHAs repeated fetches, and did
+    so after a handful of manual reads) is asked once per release, never per parser change. `limit` newest first per run
+    keeps the traffic low; a release that will not download is stored empty and retried after BODY_RETRY_DAYS."""
     from sqlalchemy import text as _t
-    out = {"added": 0, "errors": []}
+    out = {"stored": 0, "errors": []}
+    cutoff = now - datetime.timedelta(days=BODY_RETRY_DAYS)
+    marks = ", ".join(f":c{i}" for i in range(len(categories)))
+    params = {f"c{i}": c for i, c in enumerate(categories)}
+    params.update({"cut": cutoff, "n": limit})
     pending = session.execute(_t(
-        "SELECT p.serial, p.title, p.url FROM press_releases p WHERE p.category = 'SUKUK' AND NOT EXISTS "
-        "(SELECT 1 FROM sukuk_auctions a WHERE a.source_serial = p.serial) ORDER BY p.published_date DESC LIMIT :n"),
-        {"n": limit}).fetchall()
+        f"SELECT serial, url FROM press_releases WHERE category IN ({marks}) AND (body_text IS NULL OR "
+        f"(body_text = '' AND body_fetched_utc < :cut)) ORDER BY published_date DESC LIMIT :n"), params).fetchall()
     if not pending:
         return out
     try:
         from config import BB_PRESS_URL
         from fetchers.bb_session import bb_get_bytes, get_f5_cookies
-        from fetchers.sukuk_notice import parse_sukuk_notice
         import io
         import pdfplumber
         ck, ua = get_f5_cookies(BB_PRESS_URL)
     except Exception as exc:
-        out["errors"].append(f"sukuk_notice: could not reach BB's press releases ({type(exc).__name__}: {exc})")
+        out["errors"].append(f"press_bodies: could not reach BB's press releases ({type(exc).__name__}: {exc})")
         return out
-    for serial, title, url in pending:
+    for serial, url in pending:
+        body = ""
         try:
             data = bb_get_bytes(url, ck, ua)
-            if not data[:5].startswith(b"%PDF"):
-                out["errors"].append(f"sukuk_notice {serial}: not a PDF")
-                continue
-            with pdfplumber.open(io.BytesIO(data)) as pdf:
-                text = "\n".join((p.extract_text() or "") for p in pdf.pages)
+            if data[:5].startswith(b"%PDF"):
+                with pdfplumber.open(io.BytesIO(data)) as pdf:
+                    body = "\n".join((p.extract_text() or "") for p in pdf.pages)
+            else:
+                out["errors"].append(f"press_bodies {serial}: not a PDF")
         except Exception as exc:
-            out["errors"].append(f"sukuk_notice {serial}: download failed ({type(exc).__name__})")
-            continue
-        rep = parse_sukuk_notice(text, serial, title or "", url)
+            out["errors"].append(f"press_bodies {serial}: download failed ({type(exc).__name__})")
+        session.execute(_t("UPDATE press_releases SET body_text = :b, body_fetched_utc = :t WHERE serial = :s"),
+                        {"b": body, "t": now, "s": serial})
+        session.commit()
+        if body:
+            out["stored"] += 1
+    return out
+
+
+def read_sukuk_notices(session, now, limit: int = 10) -> dict:
+    """Parse each sukuk press release whose text we hold and whose auction we have not yet stored (BB's sukuk page lists
+    an issue only after it settles). A release that will not parse, or whose figures disagree, is REPORTED (an error line
+    naming the serial and why), never stored half-read."""
+    from sqlalchemy import text as _t
+    from fetchers.sukuk_notice import parse_sukuk_notice
+    out = {"added": 0, "errors": []}
+    got = store_press_bodies(session, now, categories=("SUKUK",), limit=limit)
+    out["errors"] += [e.replace("press_bodies", "sukuk_notice", 1) for e in got["errors"]]
+    pending = session.execute(_t(
+        "SELECT p.serial, p.title, p.url, p.body_text FROM press_releases p WHERE p.category = 'SUKUK' AND "
+        "p.body_text IS NOT NULL AND p.body_text <> '' AND NOT EXISTS "
+        "(SELECT 1 FROM sukuk_auctions a WHERE a.source_serial = p.serial) ORDER BY p.published_date DESC LIMIT :n"),
+        {"n": limit}).fetchall()
+    for serial, title, url, body in pending:
+        rep = parse_sukuk_notice(body, serial, title or "", url)
         if rep["row"] is None:
             out["errors"].append(f"sukuk_notice {serial}: refused - {rep['refused']}")
             continue
