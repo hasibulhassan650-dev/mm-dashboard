@@ -27,6 +27,20 @@ _YIELD_TENORS = {"14D", "28D", "91D", "182D", "364D", "2Y", "3Y", "3Y_FRTB",
 
 import calendar_utils as _cal
 import engines.expectations as _EXPECT
+
+
+def _load_freshness_logic():
+    """api/routers/freshness_logic.py, by path: api/ is a deploy root of its own and is not importable as a package."""
+    import importlib.util
+    import os
+    spec = importlib.util.spec_from_file_location(
+        "freshness_logic_for_validate", os.path.join(os.path.dirname(os.path.abspath(__file__)), "api", "routers", "freshness_logic.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_LAG = _load_freshness_logic()
 import engines.absences as _absences
 
 
@@ -924,6 +938,11 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
             _ds = _EXPECT.BY_KEY.get(name)
             if _ds is not None and _ds.stale_after_days and min_ok <= today:
                 min_ok = today - datetime.timedelta(days=_ds.stale_after_days)
+            # A daily series is judged against what BB can have published by now (the same definition the status endpoint
+            # uses). Against 'today minus N days' interbank repo / FX / OMO, which BB posts a working day late, sat in
+            # 'waiting' for 42-51 days: the age of a state that is simply always true, so a real stall could not show.
+            if _ds is not None and _ds.cadence == _EXPECT.WORKING_DAY and name in _LAG.DAILY_KEYS:
+                min_ok = _LAG.required_date(name, today)
             try:
                 mx = _max_date(sql)
             except Exception as exc:

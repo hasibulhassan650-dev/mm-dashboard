@@ -337,7 +337,7 @@ SETTLE_SIGHTINGS = 3
 SETTLE_DAYS = 2
 
 
-def established(session, source: str) -> Optional[dict]:
+def established(session, source: str, structure_hash: Optional[str] = None) -> Optional[dict]:
     """The shape BB has held long enough to count as normal.
 
     Not "last time": comparing against the previous fetch lets a broken shape
@@ -353,7 +353,8 @@ def established(session, source: str) -> Optional[dict]:
         "       rows_skipped, skip_reasons, unmapped, mapped, structure_hash, "
         "       seen_count, first_seen, last_seen "
         "FROM source_snapshots WHERE source = :s AND verdict <> 'degraded' "
-        "ORDER BY last_seen DESC"), {"s": source}).fetchall()
+        + ("AND structure_hash = :h " if structure_hash else "") +
+        "ORDER BY last_seen DESC"), {"s": source, "h": structure_hash} if structure_hash else {"s": source}).fetchall()
     if not rows:
         return None
 
@@ -397,7 +398,11 @@ def record(session, snap: dict, now: datetime.datetime = None) -> Tuple[str, Lis
     """
     from db import SourceSnapshot
     now = now or datetime.datetime.utcnow()
-    prev = established(session, snap["source"])
+    # A shape that has itself settled is BB's normal, even when another settled shape was seen more recently. The
+    # owner's PC (Chrome) and GitHub's runners (plain HTTP) read one page two ways; comparing each read with whichever
+    # settled shape was newest made every run 'a change' from the other for 26 days.
+    prev = (established(session, snap["source"], snap.get("structure_hash"))
+            or established(session, snap["source"]))
     verdict, reasons = compare(prev, snap)
 
     if verdict == "unread":

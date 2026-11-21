@@ -154,10 +154,37 @@ export function EscalationBanner() {
  */
 export function SourceChangeNotice() {
   const s = useStatus();
-  const items = s?.notices ?? [];
-  if (!items.length) return null;
+  const all = s?.notices ?? [];
+  if (!all.length) return null;
+  // Only a `source` notice means Bangladesh Bank changed a page. Ledger notices (omo-ledger) and BB-side holes already
+  // recorded with evidence (bgiib) are a different meaning, and filing them under 'changed a page' made the banner lie.
+  const items = all.filter((n) => n.table === "source");
+  const onRecord = all.filter((n) => n.table !== "source");
   const src = (m: string) => m.replace(/^source:\s*/, "").split(":")[0];
+  const onRecordBanner = onRecord.length > 0 && (
+    <div style={{
+      background: "var(--panel)", border: "1px solid var(--border)",
+      borderRadius: "var(--radius-sm)", padding: "7px 12px", marginBottom: "var(--gap)",
+      fontSize: 11.5, color: "var(--fg-dim)", display: "flex", gap: 8, flexWrap: "wrap", alignItems: "baseline",
+    }}>
+      <span style={{ fontWeight: 600 }}>On record, not a defect:</span>
+      <span>
+        {onRecord.map((n, i) => (
+          <span key={i} title={n.message}>
+            {i > 0 && " · "}
+            {n.message.split(":").slice(0, 3).join(":").slice(0, 60)}
+            {n.age_days != null && n.age_days > 0 &&
+              <span style={{ color: "var(--fg-mute)" }}> ({n.age_days}d)</span>}
+          </span>
+        ))}
+      </span>
+      <span style={{ color: "var(--fg-mute)" }}>— BB-side gaps and ledger differences, each explained or recorded with evidence (hover for the reason).</span>
+    </div>
+  );
+  if (!items.length) return <>{onRecordBanner}</>;
   return (
+    <>
+    {onRecordBanner}
     <div style={{
       background: "color-mix(in oklab, var(--accent) 8%, var(--panel))",
       border: "1px solid color-mix(in oklab, var(--accent) 34%, transparent)",
@@ -180,6 +207,7 @@ export function SourceChangeNotice() {
         — columns are read by header, so the figures still line up.
       </span>
     </div>
+    </>
   );
 }
 

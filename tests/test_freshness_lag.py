@@ -39,3 +39,12 @@ def test_the_lagged_set_matches_the_dataset_declared_as_previous_day_in_expectat
     from engines import expectations
     fx = next(d for d in expectations.DATASETS if d.key == "fxrates")
     assert "PREVIOUS business day" in fx.note and "fxrates" in F.PUBLISHED_NEXT_WORKING_DAY
+
+
+def test_omo_is_posted_a_working_day_late_and_validate_uses_the_same_definition():
+    """pr14397 ('as on 18 November') was posted on 19 November. validate.py judged repo/FX/OMO against 'today minus N days', so they sat in
+    'waiting' for 42-51 days - the age of a state that is always true - and a real stall could not stand out. It must use required_date."""
+    assert F.required_date("omo", FRI) == datetime.date(2026, 11, 18)
+    assert "omo" in F.PUBLISHED_NEXT_WORKING_DAY and F.DAILY_KEYS >= {"repo", "fxmarket", "omo", "callmoney"}
+    src = open(os.path.join(_ROOT, "validate.py"), encoding="utf-8").read()
+    assert "_LAG.required_date(name, today)" in src

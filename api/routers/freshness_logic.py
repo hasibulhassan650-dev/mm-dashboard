@@ -9,7 +9,13 @@ fresh uptime alert every weekend and every morning.
 import datetime
 
 # Datasets whose pages are posted one working day after the day they describe (see module docstring).
-PUBLISHED_NEXT_WORKING_DAY = frozenset({"fxmarket", "fxrates", "repo"})
+# OMO too: its release for 'as on 18 November' (pr14397) is posted on 19 November, so the newest operation we can hold is always the
+# previous working day's.
+PUBLISHED_NEXT_WORKING_DAY = frozenset({"fxmarket", "fxrates", "repo", "omo"})
+
+
+# Every daily series the freshness rules judge by `required_date` (validate.py and the status endpoint use this one list).
+DAILY_KEYS = frozenset({"callmoney", "refrate", "secondary", "fxmarket", "fxrates", "repo", "omo"})
 
 
 def previous_working_day(day: datetime.date) -> datetime.date:

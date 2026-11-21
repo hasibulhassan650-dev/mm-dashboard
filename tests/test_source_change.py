@@ -292,6 +292,19 @@ class TestTheBaselineCannotBeHijacked:
         assert seen[-1] == "ok", f"a persistent BB layout must stop being news: {seen}"
         assert "allotment ratio" in SW.established(s, "treasury")["headers"]
 
+    def test_two_readers_that_each_see_a_settled_shape_do_not_report_each_other(self):
+        """The PC (Chrome) and GitHub (plain HTTP) read one page two ways. 'The newest settled shape' flipped between them, so
+        omo_press showed 'BB changed a page' for 26 days although BB had changed nothing."""
+        s = _mem()
+        a = SW.fingerprint("omo_press", selector="chrome-fallback", rows_seen=40, rows_parsed=9)
+        b = SW.fingerprint("omo_press", selector="a.pdf-list[onclick]", rows_seen=40, rows_parsed=9)
+        t0 = datetime.datetime(2026, 9, 1, 6, 0)
+        for d in range(6):
+            self._see(s, a, t0 + datetime.timedelta(days=d))
+            self._see(s, b, t0 + datetime.timedelta(days=d, hours=1))
+        later = [self._see(s, snap, t0 + datetime.timedelta(days=7, hours=h))[0] for h, snap in enumerate((b, a, b, a))]
+        assert later == ["ok"] * 4, later
+
     def test_several_pages_in_one_run_do_not_settle_it_the_same_day(self):
         """One refresh reads eight monthly pages. If sightings alone settled a
         shape, a change would be accepted before the morning digest named it."""
