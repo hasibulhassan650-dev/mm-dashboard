@@ -57,9 +57,12 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run reconciliation (Chrome under virtual display)
+        env:
+          START_YEAR: ${{ inputs.start_year }}
+          END_YEAR: ${{ inputs.end_year }}
         run: |
           xvfb-run -a --server-args="-screen 0 1920x1080x24 -ac" \
-            python reconcile.py ${{ inputs.start_year }} ${{ inputs.end_year }}
+            python reconcile.py "$START_YEAR" "$END_YEAR"
 
       - name: Data integrity gate
         if: always()

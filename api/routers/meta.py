@@ -1,5 +1,5 @@
 import datetime
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from sqlalchemy import text
 from db import get_session
 
@@ -258,7 +258,7 @@ def get_status():
 
 
 @router.get("/guardian")
-def get_guardian(limit: int = 40):
+def get_guardian(limit: int = Query(40, ge=1, le=500)):
     """The issue ledger: what is open, what was resolved, what was auto-repaired.
 
     `integrity_check()` only ever answers "what is wrong now" and is overwritten

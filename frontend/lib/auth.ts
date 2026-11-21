@@ -45,15 +45,29 @@ async function hmac(msg: string, secret: string): Promise<string> {
   return b64url(await crypto.subtle.sign("HMAC", key, enc.encode(msg)));
 }
 
+/** Comparison whose time does not depend on where two strings first differ (so a guess cannot be refined byte by byte). */
+export function safeEqual(a: string, b: string): boolean {
+  const x = enc.encode(a), y = enc.encode(b);
+  let diff = x.length ^ y.length;
+  const n = Math.max(x.length, y.length);
+  for (let i = 0; i < n; i++) diff |= (x[i] ?? 0) ^ (y[i] ?? 0);
+  return diff === 0;
+}
+
 /** True if `input` is the site password (env override, else the baked-in hash). */
 export async function verifyPassword(input: string): Promise<boolean> {
   if (!input) return false;
   const env = process.env.SITE_PASSWORD;
-  if (env) return input === env;
-  return (await sha256hex(input)) === PASSWORD_SHA256;
+  if (env) return safeEqual(input, env);
+  return safeEqual(await sha256hex(input), PASSWORD_SHA256);
 }
 
-/** Signing key for session tokens — never empty, so the gate is always active. */
+/**
+ * Signing key for session tokens - never empty, so the gate is always active.
+ * SECURITY: the fallbacks are derivable from this PUBLIC repo (PASSWORD_SHA256 is committed). Set a random AUTH_SECRET in the
+ * Vercel project, otherwise anyone can forge a session cookie. It is not made mandatory here only because an unset variable
+ * would then lock the owner out of the site; the login route logs a warning on every login while it is missing.
+ */
 export function authSecret(): string {
   return process.env.AUTH_SECRET || process.env.SITE_PASSWORD || PASSWORD_SHA256;
 }
@@ -70,5 +84,5 @@ export async function verifyToken(token: string | undefined, secret: string): Pr
   const exp = token.slice(0, dot);
   const sig = token.slice(dot + 1);
   if (!/^\d+$/.test(exp) || parseInt(exp, 10) < Math.floor(Date.now() / 1000)) return false;
-  return (await hmac(exp, secret)) === sig;
+  return safeEqual(await hmac(exp, secret), sig);
 }

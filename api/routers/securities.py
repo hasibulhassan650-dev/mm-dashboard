@@ -209,8 +209,8 @@ def get_next_auction(limit: int = Query(3, ge=1, le=10)):
 @router.get("/auction-sheet")
 def get_auction_sheet(date_from: str = Query(None, description="YYYY-MM-DD"),
                       date_to: str = Query(None, description="YYYY-MM-DD"),
-                      limit: int = Query(None, description="rows per page; omit for every row"),
-                      offset: int = Query(0)):
+                      limit: int = Query(None, ge=1, le=5000, description="rows per page; omit for every row"),
+                      offset: int = Query(0, ge=0)):
     """Every auction in the desk's own T-Bill / T-Bond spreadsheet layout."""
     from .auction_logic import auction_format_sheet, page_of_sheet
     session = get_session()

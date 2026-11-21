@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { safeHref } from "@/lib/safeHref";
 import { api } from "@/lib/api";
 import type { NewsEvent } from "@/lib/api";
 import { Panel } from "@/components/terminal/ui";
@@ -163,7 +164,7 @@ export default async function LiquidityWatchPage({
                     </td>
                     <td style={{ whiteSpace: "normal", padding: "6px var(--pad)" }}>
                       {e.sources.slice(0, 4).map((s, i) => (
-                        <div key={i}><a href={s.url} target="_blank" rel="noreferrer"
+                        <div key={i}><a href={safeHref(s.url)} target="_blank" rel="noreferrer"
                           style={{ fontSize: 11, textDecoration: "none", color: "var(--info)" }}>{s.source}</a></div>
                       ))}
                     </td>
@@ -197,7 +198,7 @@ export default async function LiquidityWatchPage({
                       <td style={{ whiteSpace: "normal", maxWidth: 480, padding: "6px var(--pad)", lineHeight: 1.5, fontStyle: "italic" }}>“{b.evidence_quote}”</td>
                       <td style={{ whiteSpace: "normal", padding: "6px var(--pad)" }}>
                         {b.sources.slice(0, 2).map((s, i) => (
-                          <div key={i}><a href={s.url} target="_blank" rel="noreferrer"
+                          <div key={i}><a href={safeHref(s.url)} target="_blank" rel="noreferrer"
                             style={{ fontSize: 11, textDecoration: "none", color: "var(--info)" }}>{s.source}</a></div>
                         ))}
                       </td>
@@ -226,7 +227,7 @@ export default async function LiquidityWatchPage({
                       <td style={{ whiteSpace: "normal", maxWidth: 480, padding: "6px var(--pad)", lineHeight: 1.5, fontStyle: "italic" }}>“{e.evidence_quote}”</td>
                       <td style={{ whiteSpace: "normal", padding: "6px var(--pad)" }}>
                         {e.sources.slice(0, 2).map((s, i) => (
-                          <div key={i}><a href={s.url} target="_blank" rel="noreferrer"
+                          <div key={i}><a href={safeHref(s.url)} target="_blank" rel="noreferrer"
                             style={{ fontSize: 11, textDecoration: "none", color: "var(--info)" }}>{s.source}</a></div>
                         ))}
                       </td>

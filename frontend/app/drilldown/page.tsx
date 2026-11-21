@@ -1,4 +1,5 @@
 import { api } from "@/lib/api";
+import { safeHref } from "@/lib/safeHref";
 import type { CumulativeBlock } from "@/lib/api";
 import StatCard from "@/components/StatCard";
 import DownloadButton from "@/components/DownloadButton";
@@ -153,7 +154,7 @@ export default async function DrilldownPage({
               <b className="t-fg">{e.kind.replace(/_/g, " ").toLowerCase()}</b> · {e.direction.toLowerCase()} ·{" "}
               {e.amount_crore == null ? "amount not stated" : <b className="mono">{e.amount_crore.toLocaleString()} cr</b>}
               {e.status ? ` · ${e.status.toLowerCase()}` : ""} · {e.counterparty ?? "counterparty not stated"} — {e.summary}{" "}
-              {e.sources[0] && <a href={e.sources[0].url} target="_blank" rel="noreferrer" className="t-info">source</a>}
+              {e.sources[0] && <a href={safeHref(e.sources[0].url)} target="_blank" rel="noreferrer" className="t-info">source</a>}
             </div>
           ))}
           <Link href="/liquidity-watch" className="text-xs t-info hover:underline">All liquidity news →</Link>
@@ -222,7 +223,7 @@ export default async function DrilldownPage({
             accepted face value — understating the cash by the premium rather than
             inventing a price.
             {buybacks[0]?.source && (
-              <> <a href={buybacks[0].source} target="_blank" rel="noreferrer"
+              <> <a href={safeHref(buybacks[0].source)} target="_blank" rel="noreferrer"
                     className="underline">BB press release</a>.</>
             )}
           </p>

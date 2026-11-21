@@ -65,7 +65,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
       - name: Read the news
-        run: python -m engines.news_triage ${{ inputs.action || 'run' }} --since "${{ inputs.since || '2026-07-01' }}"
+        # Inputs reach the shell through env, never spliced into the script text (a crafted value cannot become a command).
+        env:
+          NEWS_ACTION: ${{ inputs.action || 'run' }}
+          NEWS_SINCE: ${{ inputs.since || '2026-07-01' }}
+        run: python -m engines.news_triage "$NEWS_ACTION" --since "$NEWS_SINCE"
       - name: Announce events that matter
         # Never after a backfill: its events are history and are already marked announced.
         if: ${{ !cancelled() && inputs.action != 'backfill' }}

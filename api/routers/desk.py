@@ -22,6 +22,7 @@ sees the secret: the page posts same-origin to the Next app, which holds it
 server-side and forwards. CORS stays GET-only and is not widened for this.
 """
 import datetime
+import logging
 import re
 import hmac
 import os
@@ -181,7 +182,8 @@ def put_mark(mark: MarkIn, x_desk_secret: Optional[str] = Header(default=None)):
         raise
     except Exception as exc:
         session.rollback()
-        raise HTTPException(status_code=500, detail=f"could not store the mark: {exc}")
+        logging.getLogger("desk").exception("desk mark failed")
+        raise HTTPException(status_code=500, detail="could not store the mark")
     finally:
         session.close()
 
@@ -228,7 +230,8 @@ def put_buyback(b: BuybackIn, x_desk_secret: Optional[str] = Header(default=None
         raise
     except Exception as exc:
         session.rollback()
-        raise HTTPException(status_code=500, detail=f"could not store the buyback: {exc}")
+        logging.getLogger("desk").exception("desk buyback failed")
+        raise HTTPException(status_code=500, detail="could not store the buyback")
     finally:
         session.close()
 

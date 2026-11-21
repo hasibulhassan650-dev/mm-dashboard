@@ -167,7 +167,8 @@ def current_streak(rows, now: Optional[datetime.datetime] = None) -> Optional[di
             "last_failed_utc": last.run_utc, "attempts": len(run), "truncated": truncated, "last_error": last.error}
 
 
-_SECRETS = re.compile(r"postgres(?:ql)?(?:\+\w+)?://\S+|sk-ant-[A-Za-z0-9_\-]+", re.I)
+_SECRETS = re.compile(r"postgres(?:ql)?(?:\+\w+)?://\S+|sk-ant-[A-Za-z0-9_\-]+|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|"
+                      r"AIza[0-9A-Za-z_\-]{20,}|sk-[A-Za-z0-9_\-]{20,}|eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}(?:\.[A-Za-z0-9_\-]*)?", re.I)
 
 
 def redact(text: Optional[str]) -> str:

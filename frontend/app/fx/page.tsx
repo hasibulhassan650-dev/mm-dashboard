@@ -1,4 +1,5 @@
 import { api } from "@/lib/api";
+import { safeHref } from "@/lib/safeHref";
 import { fmtDate } from "@/lib/format";
 import { Panel } from "@/components/terminal/ui";
 import FxChart from "@/components/FxChart";
@@ -46,7 +47,7 @@ export default async function FxPage({ searchParams }: { searchParams: Promise<{
               {c.bb_amount_usd_mn != null && <> (BB row {c.bb_date}: <span className="mono">${c.bb_amount_usd_mn.toLocaleString()}m</span>)</>}
               <div style={{ fontSize: 11, color: "var(--fg-mute)" }}>
                 {c.note}
-                {c.urls.slice(0, 3).map((u, j) => <a key={j} href={u} target="_blank" rel="noreferrer" style={{ marginLeft: 8 }}>press report {j + 1} ↗</a>)}
+                {c.urls.slice(0, 3).map((u, j) => <a key={j} href={safeHref(u)} target="_blank" rel="noreferrer" style={{ marginLeft: 8 }}>press report {j + 1} ↗</a>)}
               </div>
             </div>
           ))}

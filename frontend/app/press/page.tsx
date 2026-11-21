@@ -1,4 +1,5 @@
 import { api } from "@/lib/api";
+import { safeHref } from "@/lib/safeHref";
 import type { PressFeed, PressRelease } from "@/lib/api";
 import { Panel } from "@/components/terminal/ui";
 import RelatedLinks from "@/components/RelatedLinks";
@@ -130,7 +131,7 @@ export default async function PressPage() {
                     </td>
                     <td className="mono">{r.isin ?? ""}</td>
                     <td>
-                      <a href={r.url} target="_blank" rel="noreferrer"
+                      <a href={safeHref(r.url)} target="_blank" rel="noreferrer"
                          style={{ fontSize: 11, textDecoration: "none", color: "var(--info)" }}>
                         PDF
                       </a>

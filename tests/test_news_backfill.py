@@ -184,7 +184,8 @@ class TestTheWorkflowAndCli:
 
     def test_the_workflow_can_be_told_to_backfill(self):
         wf = self._wf()
-        assert "backfill" in wf and "since" in wf and '--since "${{ inputs.since' in wf
+        # the input reaches the command through env (never spliced into the script text: tests/test_security_layers.py)
+        assert "backfill" in wf and "since" in wf and '--since "$NEWS_SINCE"' in wf and "NEWS_SINCE: ${{ inputs.since" in wf
 
     def test_a_backfill_never_announces(self):
         assert "inputs.action != 'backfill'" in self._wf()

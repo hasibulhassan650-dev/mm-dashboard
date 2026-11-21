@@ -28,6 +28,7 @@ Three guards, each there because the opposite failure is bad:
 import datetime
 import json
 import logging
+import re
 import subprocess
 from typing import Callable, Dict, List, Optional, Sequence
 
@@ -274,9 +275,24 @@ def _as_dt(v) -> datetime.datetime:
     return datetime.datetime.fromisoformat(str(v)[:19])
 
 
+def plain(text) -> str:
+    """Scraped text (a headline, a quote) placed in a PUBLIC GitHub issue. An '@name' in it would ping that user from the bot,
+    and markdown/HTML would let a headline add links or images: neutralise the mention, strip tags and link syntax."""
+    t = re.sub(r"<[^>]*>", "", str(text or ""))
+    t = t.replace("@", "@​")                       # a zero-width space after @ stops the mention
+    t = re.sub(r"[\[\]]", "", t)                        # no [text](url) link syntax
+    return t.replace("\r", " ").strip()
+
+
+def _safe_url(u) -> str:
+    """Only a plain http(s) URL goes into an issue, shown as text (GitHub links it itself)."""
+    u = str(u or "").strip()
+    return u if re.match(r"^https?://[^\s<>\[\]()]+$", u) else "(link withheld)"
+
+
 def issue_title(rel: Dict) -> str:
     # The serial is what a rerun searches for; it must be in the title verbatim.
-    return f"{rel.get('prefix') or 'BB announced'}: {rel['title'][:100]} [{rel['serial']}]"
+    return f"{rel.get('prefix') or 'BB announced'}: {plain(rel['title'])[:100]} [{rel['serial']}]"
 
 
 def news_issue_body(session, rel: Dict) -> str:
@@ -292,15 +308,15 @@ def news_issue_body(session, rel: Dict) -> str:
         return f"Liquidity news event {rel['serial']}"
     kind, direction, amt, status, channel, cp, summ, quote, srcs, ev_date, conf = r
     try:
-        links = "\n".join(f"- [{s.get('source')}]({s.get('url')}) - {s.get('title')}"
-                           for s in json.loads(srcs or "[]"))
+        links = "\n".join(f"- {plain(s.get('source'))}: {_safe_url(s.get('url'))} - {plain(s.get('title'))}"
+                          for s in json.loads(srcs or "[]"))
     except ValueError:
         links = ""
     amount = "amount not stated" if amt is None else f"**{float(amt):,.0f} crore**"
     return (f"**{kind.replace('_', ' ').title()}** - {direction.lower()} - {amount}"
             f"{' - ' + status.lower() if status else ''}{' - ' + channel.lower() if channel else ''}\n\n"
-            f"{summ}\n\n> {quote}\n\n"
-            f"Counterparty: {cp or 'not stated'} - event date: {ev_date or 'not stated'} - "
+            f"{plain(summ)}\n\n> {plain(quote)}\n\n"
+            f"Counterparty: {plain(cp) or 'not stated'} - event date: {ev_date or 'not stated'} - "
             f"model confidence {float(conf or 0):.0%}\n\n**Sources**\n{links}\n\n"
             f"_Read from the news, not from Bangladesh Bank's data, and **not included in any ladder "
             f"total**. The quote above is verbatim from the first source and the amount was re-read "

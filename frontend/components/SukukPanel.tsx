@@ -1,4 +1,5 @@
 import { Panel } from "@/components/terminal/ui";
+import { safeHref } from "@/lib/safeHref";
 import type { SukukBlock } from "@/lib/api";
 
 /**
@@ -50,7 +51,7 @@ export default function SukukPanel({ data }: { data: SukukBlock | undefined }) {
                     <td className="mono">{a.maturity_date}</td>
                     <td style={{ color: a.status === "ANNOUNCED" ? "var(--warn)" : "var(--fg-dim)" }}>
                       {a.status === "ANNOUNCED" ? "auction ahead" : a.status === "HELD" ? "held · awaiting BB's listing" : "listed by BB"}</td>
-                    <td>{a.source_url && <a href={a.source_url} target="_blank" rel="noreferrer"
+                    <td>{a.source_url && <a href={safeHref(a.source_url)} target="_blank" rel="noreferrer"
                          style={{ fontSize: 11, textDecoration: "none", color: "var(--info)" }}>press release ↗</a>}</td>
                   </tr>
                 ))}
@@ -129,7 +130,7 @@ export default function SukukPanel({ data }: { data: SukukBlock | undefined }) {
                   <td className="mono">{d.doc_date}</td>
                   <td>{d.kind === "NOTICE" ? "notice" : "prospectus"}</td>
                   <td style={{ whiteSpace: "normal", maxWidth: 300, padding: "6px var(--pad)" }}>{d.title}</td>
-                  <td><a href={d.url} target="_blank" rel="noreferrer"
+                  <td><a href={safeHref(d.url)} target="_blank" rel="noreferrer"
                          style={{ fontSize: 11, textDecoration: "none", color: "var(--info)" }}>PDF</a></td>
                 </tr>
               ))}
