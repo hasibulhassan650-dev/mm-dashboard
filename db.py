@@ -922,6 +922,30 @@ class SukukDocument(Base):
     notified_utc   = Column(DateTime)
 
 
+class SukukAuction(Base):
+    """A BGIS sukuk auction as ANNOUNCED in BB's own press release (face, tenor, rent, auction day, maturity).
+
+    BB's sukuk page lists an issue only after it settles; the press release is days to weeks earlier. One row per
+    release (`source_serial`), written only by fetchers/sukuk_notice.py, which refuses a release whose figures do not
+    agree with each other. `issue_date` is DERIVED (maturity less tenor days), never printed. Not outstanding stock:
+    it is shown as an announcement and never enters the cash ladder until BB lists the issue in sukuk_outstanding.
+    """
+    __tablename__ = "sukuk_auctions"
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    source_serial = Column(String(20), nullable=False, unique=True)     # pr14384
+    source_url    = Column(Text)
+    name          = Column(String(60))                                  # Short Term BGIS (182 Days)
+    series_no     = Column(Integer)                                     # '2nd' short-term auction
+    auction_date  = Column(Date, nullable=False)
+    issue_date    = Column(Date, nullable=False)                        # derived
+    maturity_date = Column(Date, nullable=False)
+    tenor_days    = Column(Integer, nullable=False)
+    face_crore    = Column(Float, nullable=False)
+    rent_crore    = Column(Float, nullable=False)                       # total rent over the tenor, BB's figure
+    rate_pct      = Column(Float, nullable=False)                       # annual
+    first_seen_utc = Column(DateTime)
+
+
 class DeskMark(Base):
     """What the desk saw at the auction, on the day — never what BB published.
 

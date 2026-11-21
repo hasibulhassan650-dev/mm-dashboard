@@ -25,8 +25,40 @@ export default function SukukPanel({ data }: { data: SukukBlock | undefined }) {
   const issues = data.outstanding;
   const up = (data.upcoming ?? []).slice(0, 14);
   const docs = data.documents ?? [];
+  const announced = data.announced ?? [];
   return (
     <>
+      {announced.length > 0 && (
+        <Panel title="Sukuk auctions announced by Bangladesh Bank"
+               sub="from BB's press releases · BB's table lists an issue only after it settles · not in the cash ladder until it does"
+               span={12} pad={false}>
+          <div className="table-wrap">
+            <table className="dt">
+              <thead><tr>
+                <th>Auction</th><th>Security</th><th className="r">Face (cr)</th><th className="r">Annual rent %</th>
+                <th className="r">Total rent (cr)</th><th>Settles (derived)</th><th>Matures</th><th>Status</th><th />
+              </tr></thead>
+              <tbody>
+                {announced.map((a) => (
+                  <tr key={a.source_serial}>
+                    <td className="mono">{a.auction_date}</td>
+                    <td>{a.series_no ? `${a.series_no}${[, "st", "nd", "rd"][a.series_no] ?? "th"} ` : ""}{a.name}</td>
+                    <td className="r mono">{fmt(a.face_crore, 2)}</td>
+                    <td className="r mono">{a.rate_pct.toFixed(2)}</td>
+                    <td className="r mono">{fmt(a.rent_crore, 2)}</td>
+                    <td className="mono">{a.issue_date}</td>
+                    <td className="mono">{a.maturity_date}</td>
+                    <td style={{ color: a.status === "ANNOUNCED" ? "var(--warn)" : "var(--fg-dim)" }}>
+                      {a.status === "ANNOUNCED" ? "auction ahead" : a.status === "HELD" ? "held · awaiting BB's listing" : "listed by BB"}</td>
+                    <td>{a.source_url && <a href={a.source_url} target="_blank" rel="noreferrer"
+                         style={{ fontSize: 11, textDecoration: "none", color: "var(--info)" }}>press release ↗</a>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+      )}
       <Panel
         title="BGIS Sukuk — outstanding"
         sub={`${issues.length} issues · ${fmt(data.total_outstanding_crore)} cr · BB's own table · BDT crore`}

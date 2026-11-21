@@ -249,6 +249,8 @@ NOT_WATCHED: Dict[str, str] = {
                           "hand; not a BB feed, so it cannot go stale",
     "sukuk_documents": "BB's sukuk notices and prospectuses; an event feed (a "
                        "quiet month is normal), announced when a new one appears",
+    "sukuk_auctions": "sukuk auctions announced in BB press releases; an event feed (auctions are "
+                      "irregular), and a release that will not parse is its own sukuk_notice error",
     "calendar_notices": "BB circulars that close the banks, with what was done about each; an "
                         "event feed (closures are rare), and a notice left PENDING is its own defect",
     "data_absences": "days BB itself does not publish, each one evidence from a "

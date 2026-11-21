@@ -25,7 +25,7 @@ from config import GSOM_TBOND_URL, GSOM_FRTB_URL, GSOM_TBILL_URL
 from db import (
     init_db, get_session,
     Security, CouponEvent, MaturityEvent, BuybackEvent, PressRelease,
-    BgiibAuction, SukukOutstanding, SukukDocument,
+    BgiibAuction, SukukOutstanding, SukukDocument, SukukAuction,
     AuctionEvent, HolidayCalendar, DailyNetFlow, MtmSnapshot,
     PrimaryYieldSnapshot, OMOTransaction,
     QuarantinedRow, CONSTRAINT_FIELDS, DataChange,
@@ -1593,7 +1593,9 @@ def run_sukuk_fetch() -> dict:
         errs = list(out["errors"])
         if out["refused"]:
             errs.append(f"sukuk: refused {out['refused']}")
-        return {"rows": len(out["outstanding"]), "added": added, "updated": updated,
+        notices = read_sukuk_notices(session, now)
+        errs += notices["errors"]
+        return {"rows": len(out["outstanding"]), "added": added, "updated": updated, "notices_added": notices["added"],
                 "changed": changed, "documents_added": docs_added, "refused": out["refused"],
                 "errors": errs, **watch}
     except Exception as exc:
@@ -1602,6 +1604,52 @@ def run_sukuk_fetch() -> dict:
         return {"rows": 0, "errors": [f"sukuk: {exc}"]}
     finally:
         session.close()
+
+
+def read_sukuk_notices(session, now, limit: int = 10) -> dict:
+    """Read each sukuk press release we hold but have not yet read (BB's page lists an issue only after it settles).
+
+    A release that will not parse, or whose figures disagree, is REPORTED (an error line naming the serial and why),
+    never stored half-read. `press_releases` already holds the listing, so this only downloads the PDF."""
+    from sqlalchemy import text as _t
+    out = {"added": 0, "errors": []}
+    pending = session.execute(_t(
+        "SELECT p.serial, p.title, p.url FROM press_releases p WHERE p.category = 'SUKUK' AND NOT EXISTS "
+        "(SELECT 1 FROM sukuk_auctions a WHERE a.source_serial = p.serial) ORDER BY p.published_date DESC LIMIT :n"),
+        {"n": limit}).fetchall()
+    if not pending:
+        return out
+    try:
+        from config import BB_PRESS_URL
+        from fetchers.bb_session import bb_get_bytes, get_f5_cookies
+        from fetchers.sukuk_notice import parse_sukuk_notice
+        import io
+        import pdfplumber
+        ck, ua = get_f5_cookies(BB_PRESS_URL)
+    except Exception as exc:
+        out["errors"].append(f"sukuk_notice: could not reach BB's press releases ({type(exc).__name__}: {exc})")
+        return out
+    for serial, title, url in pending:
+        try:
+            data = bb_get_bytes(url, ck, ua)
+            if not data[:5].startswith(b"%PDF"):
+                out["errors"].append(f"sukuk_notice {serial}: not a PDF")
+                continue
+            with pdfplumber.open(io.BytesIO(data)) as pdf:
+                text = "\n".join((p.extract_text() or "") for p in pdf.pages)
+        except Exception as exc:
+            out["errors"].append(f"sukuk_notice {serial}: download failed ({type(exc).__name__})")
+            continue
+        rep = parse_sukuk_notice(text, serial, title or "", url)
+        if rep["row"] is None:
+            out["errors"].append(f"sukuk_notice {serial}: refused - {rep['refused']}")
+            continue
+        session.add(SukukAuction(first_seen_utc=now, **rep["row"]))
+        session.commit()
+        out["added"] += 1
+        log.info("Sukuk notice %s: %s, %.0f cr, auction %s", serial, rep["row"]["name"], rep["row"]["face_crore"],
+                 rep["row"]["auction_date"])
+    return out
 
 
 COMPARABLE_OMO_DAYS = 30      # every run looks back at least 35 days, so this much is common to all of them

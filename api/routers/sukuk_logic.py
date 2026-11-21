@@ -65,6 +65,33 @@ def scheduled_payments(issue: Dict, date_from: datetime.date, date_to: datetime.
     return out
 
 
+def announced_auctions(session, issues: list, today: datetime.date) -> list:
+    """Sukuk auctions BB has ANNOUNCED in a press release, newest first, with where each stands:
+    ANNOUNCED (auction not yet held), HELD (auction day passed, BB's sukuk page has not listed the issue yet),
+    LISTED (BB's outstanding table now holds that maturity). [] when the table does not exist yet or is unreadable -
+    the page then simply shows no announcement, never a guessed one."""
+    try:
+        rows = session.execute(text(
+            "SELECT source_serial, source_url, name, series_no, auction_date, issue_date, maturity_date, tenor_days, "
+            "face_crore, rent_crore, rate_pct FROM sukuk_auctions ORDER BY auction_date DESC LIMIT 12")).fetchall()
+    except Exception:
+        session.rollback()
+        return []
+    listed = {_d(i["maturity_date"]) if not isinstance(i["maturity_date"], str) else datetime.date.fromisoformat(i["maturity_date"][:10])
+              for i in issues}
+    out = []
+    for r in rows:
+        a = dict(r._mapping)
+        for k in ("auction_date", "issue_date", "maturity_date"):
+            a[k] = _d(a[k])
+        a["status"] = ("LISTED" if a["maturity_date"] in listed
+                       else "ANNOUNCED" if a["auction_date"] >= today else "HELD")
+        for k in ("auction_date", "issue_date", "maturity_date"):
+            a[k] = str(a[k])
+        out.append(a)
+    return out
+
+
 def sukuk_block(session, today: datetime.date = None, doc_limit: int = 15,
                 horizon_days: int = 365) -> Dict:
     today = today or datetime.date.today()
@@ -98,6 +125,7 @@ def sukuk_block(session, today: datetime.date = None, doc_limit: int = 15,
         i["profit_derivable"] = is_half_yearly(i.get("profit_frequency")) and i.get("profit_rate_pct") is not None
 
     return {
+        "announced": announced_auctions(session, issues, today),
         "as_of": str(today),
         "count": len(issues),
         "total_outstanding_crore": round(sum(float(i["outstanding_crore"] or 0) for i in issues), 2),

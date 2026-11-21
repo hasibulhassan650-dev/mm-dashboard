@@ -417,6 +417,10 @@ export interface SukukIssue {
 export interface SukukBlock {
   as_of?: string; count?: number; total_outstanding_crore?: number; note?: string;
   outstanding?: SukukIssue[];
+  /** Auctions announced in BB's own press releases (BB's sukuk table lists an issue only after it settles). */
+  announced?: { source_serial: string; source_url: string | null; name: string; series_no: number | null;
+    auction_date: string; issue_date: string; maturity_date: string; tenor_days: number;
+    face_crore: number; rent_crore: number; rate_pct: number; status: "ANNOUNCED" | "HELD" | "LISTED" }[];
   upcoming?: { isin: string; project: string; date: string; kind: "PRINCIPAL" | "PROFIT"; amount_crore: number }[];
   documents?: { doc_key: string; kind: "NOTICE" | "PROSPECTUS"; doc_date: string; ref: string | null; title: string; url: string }[];
   /** Present instead of the above when the sukuk query failed; the BGIIB half still renders. */
