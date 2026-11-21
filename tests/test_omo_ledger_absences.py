@@ -121,6 +121,11 @@ class TestTheKnownLedgerExceptions:
         ok, _, _ = judge("AR", D(2026, 11, 1), {91: 734.71}, {}, exceptions=[EXC_180])
         assert not ok
 
+    def test_an_inferred_deal_is_reported_as_inferred_never_as_proven(self):
+        exc = {**EXC_UNEXPLAINED, "status": "inferred_deal"}
+        ok, notes, _ = judge("AR", D(2026, 10, 27), {1: 1000.26, 7: 36.73}, {1: 1000.26}, exceptions=[exc])
+        assert ok and notes and notes[0][0] == "known" and "INFERRED" in notes[0][1] and "proved" not in notes[0][1]
+
     def test_the_unexplained_item_is_reported_loudly_as_unexplained(self):
         ok, notes, _ = judge("AR", D(2026, 10, 27), {1: 1000.26, 7: 36.73}, {1: 1000.26}, exceptions=[EXC_UNEXPLAINED])
         assert ok and notes and notes[0][0] == "unexplained" and "UNEXPLAINED" in notes[0][1]
@@ -129,7 +134,12 @@ class TestTheKnownLedgerExceptions:
         got = {(e["date"], e["tenor_days"]): e for e in A.known_ledger_exceptions()}
         lost, unexplained = got[(D(2026, 11, 1), 180)], got[(D(2026, 10, 27), 7)]
         assert lost["status"] == "lost_deal" and "700.00" in lost["reason"] and "2,903.34" in lost["reason"]
-        assert unexplained["status"] == "unexplained" and "no deal in our record explains" in unexplained["reason"]
+        assert unexplained["status"] == "inferred_deal" and "30-Apr-2026" in unexplained["reason"]
+        # an inference is only as good as its arithmetic: a round 35.00 at the 10.00% AR rate for the 180 days 30-Apr -> 27-Oct,
+        # and the 30-Apr date is exactly 180 days before 27-Oct
+        assert 35.0 * (1 + 0.10 * 180 / 365) == pytest.approx(unexplained["gap_crore"], abs=0.005)
+        assert D(2026, 10, 27) - D(2026, 4, 30) == datetime.timedelta(days=180)
+        assert D(2026, 4, 28) - D(2025, 10, 30) == datetime.timedelta(days=180)      # the previous leg of the same roll
         # the arithmetic in the proof must actually hold, or the entry is an assertion
         assert 700.0 * (1 + 0.10 * 181 / 365) == pytest.approx(lost["gap_crore"], abs=0.005)
         assert 2065.63 * (1 + 0.10 * 182 / 365) + lost["gap_crore"] == pytest.approx(2903.34, abs=0.005)

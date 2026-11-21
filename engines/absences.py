@@ -383,7 +383,9 @@ def known_ledger_exceptions(path: str = None) -> list:
     {dataset, instrument, date, tenor_days, gap_crore, tolerance_crore, status, reason}.
 
     status `lost_deal` = a deal of OURS that BB's own figures prove existed and that we lost (arithmetic in the
-    reason); status `unexplained` = a BB maturity no deal in our record explains. Neither is a mute button: an
+    reason); status `inferred_deal` = a deal whose existence is INFERRED, not proven (a round principal at the rate then in
+    force reproduces BB's printed amount to the paisa, on a tenor and date that fit, but no second BB statement confirms
+    it, and the release that would is not re-readable here); status `unexplained` = a BB maturity no deal in our record explains. Neither is a mute button: an
     entry excuses ONLY the tenor row whose gap still equals gap_crore (within tolerance_crore) - another amount on
     that day, or a BB correction, is judged normally. An entry lacking a reason, date, tenor or amount is dropped."""
     import os
@@ -402,7 +404,7 @@ def known_ledger_exceptions(path: str = None) -> list:
             tol = float(e.get("tolerance_crore", 1.0))
         except (TypeError, ValueError):
             continue
-        if (day and e.get("instrument") and gap > 0 and tenor > 0 and e.get("status") in ("lost_deal", "unexplained")
+        if (day and e.get("instrument") and gap > 0 and tenor > 0 and e.get("status") in ("lost_deal", "inferred_deal", "unexplained")
                 and (e.get("reason") or "").strip()):
             out.append({"dataset": e.get("dataset") or "omo", "instrument": e["instrument"], "date": day,
                         "tenor_days": tenor, "gap_crore": gap, "tolerance_crore": tol,
@@ -441,7 +443,9 @@ def judge_ledger_day(inst: str, day: datetime.date, printed: dict, ours: dict, a
         if abs(short[t] - e["gap_crore"]) <= e["tolerance_crore"]:
             excused += short[t]
             handled.add(t)
-            tag = "UNEXPLAINED" if e["status"] == "unexplained" else "KNOWN (lost deal, proved from BB's own figures)"
+            tag = ("UNEXPLAINED" if e["status"] == "unexplained" else
+                   "INFERRED (a deal we hold no record of; the arithmetic fits to the paisa, not independently confirmed)"
+                   if e["status"] == "inferred_deal" else "KNOWN (lost deal, proved from BB's own figures)")
             notes.append(("unexplained" if e["status"] == "unexplained" else "known",
                           f"{day} {inst} {t}D: BB printed {short[t]:,.2f} cr more than our tranches - {tag}: {e['reason']}"))
     credit = sum(v for t, v in ours.items() if t not in printed)
