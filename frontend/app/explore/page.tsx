@@ -1,6 +1,7 @@
 import { tenorTitle } from "@/lib/tenor";
 import { api } from "@/lib/api";
 import ExploreTool, { type SeriesDef } from "@/components/ExploreTool";
+import Link from "next/link";
 import RelatedLinks from "@/components/RelatedLinks";
 import Freshness from "@/components/Freshness";
 import type { MacroRow } from "@/lib/api";
@@ -160,6 +161,10 @@ export default async function ExplorePage() {
   return (
     <>
       <div style={{ marginBottom: "var(--gap)" }}><Freshness updated={fresh.callmoney} /></div>
+      <p style={{ margin: "0 0 var(--gap)", fontSize: 12.5, color: "var(--fg-mute)" }}>
+        Explore shows correlations, not forecasts. For how next-auction yields are actually forecast, see{" "}
+        <Link href="/research#method" style={{ color: "var(--accent)" }}>How the Yield Curve Is Forecast</Link>.
+      </p>
       <ExploreTool variables={variables} min={min} max={max} />
       <RelatedLinks items={[
         { href: "/omo", label: "OMO Operations", why: "the liquidity side" },

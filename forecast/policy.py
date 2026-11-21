@@ -5,11 +5,11 @@ WHY THIS FILE IS MOSTLY A GUARD
 The error-correction model in the project guide rests on one idea: auction
 cutoffs are tied to BB's policy rate and get pulled back toward it. Testing that
 needs the corridor as a STEP FUNCTION THROUGH TIME. `policy_rate_snapshots` only
-ever holds today's corridor, and the effective-dated seed currently contains
-three entries, two of which say in their own note that they were drafted from
-memory.
+ever holds today's corridor. The effective-dated seed was once three entries,
+two drafted from memory; it now holds the verified MPD-circular history
+(api/seeds/policy_rates.yaml), and the gate below is what keeps it that way.
 
-Fitting an ECM on that would not fail loudly — it would produce a confident
+Fitting an ECM on unverified history would not fail loudly — it would produce a confident
 alpha and a plausible-looking pull-to-anchor built on invented numbers, which is
 strictly worse than having no model. So everything here is built and wired, and
 `usable()` refuses to let any of it run until real verified history exists.

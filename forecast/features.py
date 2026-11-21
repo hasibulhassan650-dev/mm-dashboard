@@ -8,11 +8,12 @@ reason this file exists as a separate, testable layer — lookahead is the #1
 source of fake results in rate forecasting.
 
 WHY THESE FACTORS AND NOT THE GUIDE'S FULL LIST
-The guide's Tier-1 factors (call money spread, policy-rate change, excess
-liquidity) cannot be built today: call_money_rates and omo_transactions only
-start 2026-03, and policy_rate_snapshots holds a single row — there is no
-policy time series to difference or cointegrate against. Fitting on them would
-mean ~22 usable auctions and a fabricated anchor. So the factor set here is
+The guide's Tier-1 factors (call money spread, excess liquidity) cannot be
+built today: call_money_rates and omo_transactions only start 2026-03. (The
+policy corridor, once a single snapshot row, now has verified effective-dated
+history in policy_rate_history and feeds the ECM through forecast/policy.py.)
+Fitting the call/OMO factors would mean ~22 usable auctions and a fabricated
+anchor. So the factor set here is
 restricted to what primary_yield_snapshots genuinely supports over 3 years:
 auction-demand dynamics (Tier 2) plus own-history mean reversion.
 

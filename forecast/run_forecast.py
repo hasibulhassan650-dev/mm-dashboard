@@ -11,12 +11,16 @@ Phase 1 — pure pandas/numpy, no heavy dependencies:
   Model 1  momentum  next cutoff = last + beta x last_change,
                      beta from a no-intercept OLS of each change on the one
                      before it (numpy dot products, nothing more)
+  ...then ols, curve, ecm and blend (see MODELS and predict() below).
 
 Skill comes from an expanding-window, one-step-ahead out-of-sample backtest:
 refit on everything up to t, predict t, score, roll forward. Errors are in
 basis points so a 91D bill and a 20Y bond can be compared on one axis.
-The 95% band is +/-1.96 x the model's own OOS RMSE — it is measured forecast
-error, not a distributional assumption about yields.
+The published band is +/-z x an EWMA estimate of the model's own out-of-sample
+error volatility (robustness.band_half_width; z = 1.96, EWMA lambda 0.94). It is
+built from measured forecast error, not a distributional assumption about
+yields, and it is NOT guaranteed to be a 95% interval: the share of prints that
+really land inside it is measured per tenor and stored as `coverage`.
 
 Usage:  python forecast/run_forecast.py            (writes to DATABASE_URL)
         python forecast/run_forecast.py --dry-run  (prints, writes nothing)
@@ -56,7 +60,12 @@ MODELS      = ("naive", "momentum", "ols", "curve", "ecm", "blend")
 ECM_COLS    = ["spread_policy_lag1", "d_policy"]
 PRIMARY_MODEL = "curve"   # pre-specified primary hypothesis; see the FDR block in run()
 ANCHOR_TENOR = "364D"   # freshest deep weekly series; see features.build_anchor
-Z95         = 1.96
+Z95         = 1.96   # fallback band multiplier; the normal path uses robustness.band_half_width's own z
+# Verdict thresholds, named so forecast/method_spec.py (and so the /research
+# page) can read them instead of retyping them.
+DM_ALPHA    = 0.05   # a challenger is 'established' only if its HLN-corrected DM p-value is below this
+HIT_BPS     = 5.0    # 'within +/- HIT_BPS' headline accuracy
+GAP_WINDOW  = 12     # recent inter-auction gaps whose median dates the next auction
 
 # Model 2 (OLS on the Phase-2 factors) carries 6 parameters, so it needs a
 # deeper training window than the 2-parameter momentum model before its
@@ -221,6 +230,10 @@ def backtest(f: pd.DataFrame) -> dict:
 def diebold_mariano(err_model: np.ndarray, err_naive: np.ndarray) -> float | None:
     """Two-sided DM p-value on squared-error loss, model vs naive.
 
+    NOT CALLED by run(): the published p-values come from robustness.dm_test,
+    which adds the Harvey-Leybourne-Newbold small-sample correction. This older
+    normal-reference version is kept only for reference.
+
     Answers the question the guide insists on: is the improvement real, or
     luck? Uses a Newey-West (Bartlett) long-run variance of the loss
     differential so serial correlation in the errors does not inflate
@@ -263,9 +276,9 @@ def score(e: dict) -> dict | None:
     dir_acc = (float(np.mean(np.sign(pred_chg[called]) == np.sign(act_chg[called])))
                if called.any() else None)
 
-    # RMSE over the most recent slice only — this is what the published band is
-    # built from, so the interval reflects today's volatility rather than an
-    # average that includes calmer years.
+    # RMSE over the most recent slice only. This is the FALLBACK band basis: the
+    # published band is normally the EWMA of the whole error series (see run()),
+    # and uses this only when there are too few errors for an EWMA.
     k = max(8, int(round(len(err) * BAND_RECENT_FRAC)))
     err_recent = err[-k:] if len(err) > k else err
     rmse_recent = float(np.sqrt(np.mean(err_recent ** 2))) * 100
@@ -275,7 +288,7 @@ def score(e: dict) -> dict | None:
         "rmse_bps": round(float(np.sqrt(np.mean(err ** 2))) * 100, 2),
         "rmse_recent_bps": round(rmse_recent, 2),
         "dir_acc":  round(dir_acc, 4) if dir_acc is not None else None,
-        "hit_5bps": round(float(np.mean(err_bps <= 5.0)), 4),
+        "hit_5bps": round(float(np.mean(err_bps <= HIT_BPS)), 4),
         "n_obs":    int(err.size),
     }
 
@@ -317,7 +330,7 @@ def next_auction_date(dates: pd.Series) -> datetime.date | None:
     """
     if len(dates) < 2:
         return None
-    gaps = dates.diff().dt.days.dropna().tail(12)
+    gaps = dates.diff().dt.days.dropna().tail(GAP_WINDOW)
     if gaps.empty:
         return None
     gap = int(round(float(gaps.median())))
@@ -334,14 +347,17 @@ def _verdict(gap: tuple[float, float] | None, dm_p: float | None) -> str:
     models and eight tenors some will win by luck, and the winner's MAE then
     flatters itself. So a model is only 'established' when the bootstrap
     interval for its improvement over naive EXCLUDES ZERO and the small-sample
-    DM test agrees. Anything else is 'unproven', no matter how good it looks.
+    DM test agrees. An interval wholly below zero is 'worse'; anything else is
+    'unproven', no matter how good it looks. run() then demotes or relabels the
+    result: a primary-model 'established' that fails Benjamini-Hochberg becomes
+    'unproven', and every non-primary 'established' becomes 'exploratory'.
     """
     if gap is None:
         return "unproven"
     lo, hi = gap
     if hi < 0:
         return "worse"
-    if lo > 0 and dm_p is not None and dm_p < 0.05:
+    if lo > 0 and dm_p is not None and dm_p < DM_ALPHA:
         return "established"
     return "unproven"
 
@@ -620,7 +636,8 @@ def run(dry_run: bool = False) -> dict:
         # ── Multiple-testing correction ───────────────────────────────────
         # Screening many comparisons at p<0.05 manufactures winners: measured by
         # simulation, 31 tests under the null yield ~1.5 false "established"
-        # verdicts per run. Benjamini-Hochberg fixes that — but ONLY if the
+        # verdicts per run. Benjamini-Hochberg is applied to the PRIMARY family
+        # only (not "every comparison") — and ONLY if the
         # family is defined honestly, and that is the subtle part.
         #
         # The family is NOT every model x tenor cell. Those 31 cells are not 31

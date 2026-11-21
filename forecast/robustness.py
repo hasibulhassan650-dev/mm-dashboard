@@ -18,9 +18,10 @@ four ways, all in pure numpy so the weekly forecast keeps no stats dependency.
    normal. This is the difference between an edge that is real and one that is
    an artefact of a short sample.
 
-3. BAND COVERAGE. The published interval is +/-1.96 x RMSE, which is only a 95%
-   interval if the errors are normal. Rate-change errors are famously fat-tailed.
-   So measure it: what share of actual prints really landed inside the band?
+3. BAND COVERAGE. The published interval is +/-1.96 x an EWMA estimate of the
+   model's error volatility (band_half_width), which is only a 95% interval if
+   the errors are normal and the volatility estimate is right. Rate-change
+   errors are famously fat-tailed. So measure it: what share of actual prints really landed inside the band?
    If coverage is 85% the band is being advertised as something it is not.
 
 4. SUB-PERIOD STABILITY. Split the backtest in half and score each. A model that
@@ -162,8 +163,10 @@ def dm_test(err_model: np.ndarray, err_naive: np.ndarray, hln: bool = True) -> f
 
 
 def coverage(errors: np.ndarray, rmse_pct: float, z: float = 1.96) -> float | None:
-    """Share of actual prints that fell inside the published +/-z*RMSE band.
+    """Share of actual prints that fell inside a +/-z*rmse_pct band.
 
+    NOTE: run_forecast.py does NOT call this for the stored coverage; it counts
+    errors inside the EWMA band it actually publishes. Kept as a helper.
     Should be ~0.95. Materially below means the band is too narrow for the
     real error distribution and is under-selling the risk.
     """

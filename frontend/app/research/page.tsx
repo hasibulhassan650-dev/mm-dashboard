@@ -6,6 +6,8 @@ import ForecastIntervalChart from "@/components/ForecastIntervalChart";
 import BacktestTrackChart from "@/components/BacktestTrackChart";
 import DownloadButton from "@/components/DownloadButton";
 import ResearchIntro from "@/components/ResearchIntro";
+import ForecastMethod from "@/components/ForecastMethod";
+import spec from "@/lib/forecastMethod.json";
 import { Term } from "@/components/Explain";
 import { fmtDate, fmtPct, bps } from "@/lib/format";
 
@@ -19,6 +21,13 @@ const MODEL_LABEL: Record<ForecastModel, string> = {
 };
 const MODEL_ORDER: ForecastModel[] = ["naive", "momentum", "curve", "ecm", "ols", "blend"];
 const TRACK_TENOR = "91D";   // deepest series — the one worth eyeballing
+// Thresholds the page quotes come from forecastMethod.json (generated from the forecasting code), never retyped.
+const CI_PCT = Math.round(spec.bootstrap.ci_level * 100);
+const DM_ALPHA = spec.verdict.dm_alpha;
+const DIAG_ALPHA = spec.diagnostics.alpha;
+const isBillTenor = (t: string) => spec.bill_tenors.includes(t);
+const spanOf = (xs: number[], f: (v: number) => string) =>
+  xs.length === 0 ? DASH : Math.min(...xs) === Math.max(...xs) ? f(xs[0]) : `${f(Math.min(...xs))} to ${f(Math.max(...xs))}`;
 
 /** Section heading inside a prose panel. */
 function H({ children }: { children: React.ReactNode }) {
@@ -101,6 +110,17 @@ export default async function ResearchPage() {
     : null;
   const gate = diags.find(d => d.test === "policy_gate");
   const gateBlocked = gate?.conclusion?.startsWith("BLOCKED") ?? false;
+
+  // Figures the prose below quotes, read from the stored run instead of typed.
+  const naive91 = byTenor.get(TRACK_TENOR)?.naive ?? null;
+  const nBonds = fc.metrics.filter(m => m.model === "naive" && !isBillTenor(m.tenor)).map(m => m.n_obs);
+  const grangerTests = diags.filter(d => d.test === "granger" && d.pvalue != null);
+  const grangerHits = grangerTests.filter(d => (d.pvalue as number) < DIAG_ALPHA);
+  const diagP = (test: string, subject: string) =>
+    diags.filter(d => d.test === test && d.subject === subject && d.pvalue != null).map(d => d.pvalue as number);
+  const spreadAdfP = diagP("adf", "spread_policy");
+  const cointP = diagP("coint", "cutoff~repo");
+  const ecmRows = fc.metrics.filter(m => m.model === "ecm");
 
   return (
     // Fragment: the page needs no client state at the top level — each Term
@@ -185,8 +205,8 @@ export default async function ResearchPage() {
                 <th><Term t="Tenor" /></th><th>Model</th><th>Target Auction</th>
                 <th className="r"><Term t="Cutoff Yield">Last Print</Term></th><th className="r">Forecast</th>
                 <th className="r">Change</th>
-                <th className="r"><Term t="Coverage">95% Low</Term></th>
-                <th className="r"><Term t="Coverage">95% High</Term></th>
+                <th className="r"><Term t="Coverage">Band low</Term></th>
+                <th className="r"><Term t="Coverage">Band high</Term></th>
                 <th className="r">Typical miss<br /><span style={{ fontWeight: 400, color: "var(--fg-mute)" }}>recent, bps</span></th>
                 <th className="r">Right direction</th>
                 <th>Verdict</th>
@@ -194,7 +214,7 @@ export default async function ResearchPage() {
               <tbody>
                 {headline.map(({ row: f, model, metric }, i) => {
                   const chg = f.last_actual_yield != null ? f.point_yield - f.last_actual_yield : null;
-                  const strong = metric.dm_pvalue != null && metric.dm_pvalue < 0.05;
+                  const strong = metric.dm_pvalue != null && metric.dm_pvalue < DM_ALPHA;
                   return (
                     <tr key={i}>
                       <td style={{ fontWeight: 600 }}>{f.tenor}</td>
@@ -202,7 +222,7 @@ export default async function ResearchPage() {
                         <span style={{ color: model === "naive" ? "var(--fg-mute)" : "var(--accent)", fontWeight: 500 }}>
                           {MODEL_LABEL[model]}
                         </span>
-                        {strong && <span title="Beats naive at p<0.05 (Diebold-Mariano)"
+                        {strong && <span title={`Beats naive at p<${DM_ALPHA} (Diebold-Mariano)`}
                           style={{ marginLeft: 6, fontSize: 10, color: "var(--pos)" }}>✓ sig</span>}
                       </td>
                       <td>{fmtDate(f.target_auction_date)}</td>
@@ -301,7 +321,7 @@ export default async function ResearchPage() {
 
         <Panel title="Backtest — Model vs Naive" span={12} pad={false}
           sub={'every model tested against "same as last time" on auctions it never saw · '
-            + '"better than naive by" is a 95% range from 2,000 bootstrap resamples — if it straddles 0, the edge is not proven'}
+            + `"better than naive by" is a ${CI_PCT}% range from ${spec.bootstrap.draws.toLocaleString("en-US")} bootstrap resamples — if it straddles 0, the edge is not proven`}
           right={<DownloadButton data={fc.metrics} filename="backtest_metrics" />}>
           <div style={{
             padding: "10px 14px", fontSize: 12, color: "var(--fg-mute)",
@@ -319,7 +339,7 @@ export default async function ResearchPage() {
                 <th className="r"><Term t="MAE">Typical miss</Term><br />
                   <span style={{ fontWeight: 400 }}><Term t="Basis Point">bps</Term> (early → recent)</span></th>
                 <th className="r"><Term t="Confidence Interval">Better than naive by</Term><br />
-                  <span style={{ fontWeight: 400 }}>bps, 95% range</span></th>
+                  <span style={{ fontWeight: 400 }}>bps, {CI_PCT}% range</span></th>
                 <th className="r"><Term t="Diebold-Mariano">Could it be luck?</Term><br />
                   <span style={{ fontWeight: 400 }}><Term t="p-value" /></span></th>
                 <th><Term t="Selection Bias">Verdict</Term></th>
@@ -360,7 +380,7 @@ export default async function ResearchPage() {
                               : (r.mae_bps?.toFixed(1) ?? DASH)}
                           </td>
                           <td className="r mono" style={{ color: gapProven ? "var(--pos)" : "var(--fg-mute)" }}>{gap}</td>
-                          <td className="r mono" style={{ color: r.dm_pvalue != null && r.dm_pvalue < 0.05 ? "var(--fg)" : "var(--fg-mute)" }}>
+                          <td className="r mono" style={{ color: r.dm_pvalue != null && r.dm_pvalue < DM_ALPHA ? "var(--fg)" : "var(--fg-mute)" }}>
                             {r.dm_pvalue == null ? DASH : r.dm_pvalue.toFixed(3)}
                           </td>
                           <td style={{ color: vColor, fontSize: 11.5, fontWeight: v === "established" ? 600 : 400 }}>{vText}</td>
@@ -409,7 +429,7 @@ export default async function ResearchPage() {
                         <td className="mono" style={{ color: "var(--fg-mute)" }}>{d.test}</td>
                         <td className="mono">{d.subject}</td>
                         <td className="r mono">{d.statistic == null ? DASH : d.statistic.toFixed(3)}</td>
-                        <td className="r mono" style={{ fontWeight: d.pvalue != null && d.pvalue < 0.05 ? 600 : 400 }}>
+                        <td className="r mono" style={{ fontWeight: d.pvalue != null && d.pvalue < DIAG_ALPHA ? 600 : 400 }}>
                           {d.pvalue == null ? DASH : d.pvalue.toFixed(4)}
                         </td>
                         <td className="r mono" style={{ color: "var(--fg-mute)" }}>{d.lag ?? DASH}</td>
@@ -454,23 +474,26 @@ export default async function ResearchPage() {
               states the rate it is replacing, so the chain validates link by link, and the final
               corridor it produces equals what BB publishes live today.</p>
 
-              <p><b style={{ color: "var(--fg)" }}>With real data, the hypothesis fails — three
-              independent ways.</b></p>
+              <p><b style={{ color: "var(--fg)" }}>With real data, the hypothesis fails — on the tests
+              below.</b></p>
               <ul style={{ paddingLeft: 20, margin: "0 0 10px" }}>
                 <li style={{ marginBottom: 5 }}>The spread (cutoff − repo) is{" "}
                 <b style={{ color: "var(--fg)" }}>not stationary</b> on any tenor
-                (<Term t="Stationarity">ADF</Term> p = 0.73 to 0.86). It wanders; it does not revert.</li>
+                (<Term t="Stationarity">ADF</Term> p = {spanOf(spreadAdfP, v => v.toFixed(2))}). It wanders; it does not revert.</li>
                 <li style={{ marginBottom: 5 }}>Engle-Granger finds{" "}
                 <b style={{ color: "var(--fg)" }}>no <Term t="Cointegration" /></b> between cutoff and
-                policy rate on any tenor (p = 0.09 to 0.66). There is no tether.</li>
-                <li>Fitted anyway, the ECM is{" "}
-                <b style={{ color: "var(--neg)" }}>significantly worse than naive</b> where it has
-                enough history to run — 91D 14.7 vs 9.8 bps, 182D 16.6 vs 10.9, both with an
-                improvement interval entirely below zero.</li>
+                policy rate on any tenor (p = {spanOf(cointP, v => v.toFixed(2))}). There is no tether.</li>
+                <li>Fitted anyway, the ECM has{" "}
+                {ecmRows.length === 0
+                  ? "produced no forecast on any tenor"
+                  : <>scored forecasts on only {ecmRows.map((m, i) => (
+                      <span key={m.tenor}>{i ? "; " : ""}{m.tenor} (n = {m.n_obs}, {m.verdict ?? DASH})</span>
+                    ))}</>}
+                {" "}— see its rows in the backtest table for its error against naive.</li>
               </ul>
 
-              <p>All three say the same thing, which is what makes it credible rather than a single
-              unlucky test: over this sample BB&apos;s cutoffs are <i>not</i> anchored to the policy
+              <p>The two stationarity and cointegration tests say the same thing, which is what makes it
+              credible rather than a single unlucky test: over this sample BB&apos;s cutoffs are <i>not</i> anchored to the policy
               corridor in a way an error-correction model can exploit. Imposing a pull that is not
               there just adds noise, so the model is switched off — now for a measured reason rather
               than a missing-data one.</p>
@@ -484,6 +507,8 @@ export default async function ResearchPage() {
           </Panel>
         )}
 
+        <ForecastMethod fc={fc} label={MODEL_LABEL} />
+
         <Panel title="What Is Actually Happening" span={12}
           sub="the mechanism behind each model — read this once and the tables above stop being a black box">
           <div style={{ fontSize: 12.5, lineHeight: 1.75, color: "var(--fg-mute)", maxWidth: 980 }}>
@@ -495,9 +520,10 @@ export default async function ResearchPage() {
             &quot;next cutoff = last cutoff&quot; — is such a punishing benchmark. It is not a strawman;
             it is the theoretically correct forecast if the rate is a pure random walk. Any model that
             beats it is claiming to have found information the market did not price. Most do not.</p>
-            <p>Concretely: on 91D, naive is wrong by about <b style={{ color: "var(--fg)" }}>10 bps on
-            average</b> and lands within ±5 bps half the time. To be useful, a model has to do better
-            than that <i>consistently</i>, not once.</p>
+            <p>Concretely: on {TRACK_TENOR}, naive is wrong by{" "}
+            <b style={{ color: "var(--fg)" }}>{naive91?.mae_bps != null ? `${naive91.mae_bps.toFixed(1)} bps` : DASH} on
+            average</b> and lands within ±{spec.hit_bps} bps {naive91?.hit_5bps != null ? pct1(naive91.hit_5bps) : DASH} of
+            the time. To be useful, a model has to do better than that <i>consistently</i>, not once.</p>
 
             <H>The insight that actually worked: stale information</H>
             <p>Bills auction weekly; bonds auction roughly monthly. When a 10Y bond comes to auction,
@@ -510,67 +536,37 @@ export default async function ResearchPage() {
             the 364D bill has moved since this tenor last auctioned, multiplies by a fitted
             pass-through λ, and shifts the last cutoff by that much. Nothing clever — it just refuses
             to ignore the last month of market history.</p>
-            <p>The fitted λ tells you how the curve behaves: roughly
-            <b style={{ color: "var(--fg)" }}> 0.97–1.13 for 2Y–15Y</b> (the BD curve shifts nearly in
-            parallel — a 50 bps move in bills is a ~50 bps move in bonds),
-            <b style={{ color: "var(--fg)" }}> 0.78 at 20Y</b> (the long end is anchored by duration
-            demand and moves less), and <b style={{ color: "var(--fg)" }}>~0.40 for 91D/182D</b> (they
-            print the same day as the anchor, so much of the move is already shared). Those numbers were
-            not assumed — they were estimated, and they match how a curve is supposed to behave. That
-            agreement is the main reason to trust this model rather than the OLS one.</p>
+            <p>The fitted λ is how the curve behaves in numbers: a λ near one means a move in the bill
+            anchor passes almost one-for-one into that tenor, a smaller λ means that part of the curve
+            moves less than the bills. λ is estimated from the data, not assumed, and it is re-estimated at
+            every step of the backtest. It is written to the weekly job log but not stored with the
+            metrics, so no value is quoted here.</p>
 
-            <H>How we decide an edge is real, not luck</H>
-            <p>A lower average error in a backtest is a <i>claim</i>, not a fact. With six models and eight
-            tenors, something always looks good by chance. Three defences are applied, and they changed the
-            conclusions materially:</p>
-            <p><b style={{ color: "var(--fg)" }}>1. A range instead of a number.</b> Each model&apos;s
-            improvement over naive is re-computed on 2,000 resampled versions of history (in blocks, so
-            neighbouring auctions stay together — errors are correlated week to week, and pretending
-            otherwise would make the range look far tighter than it is). If that 95% range includes zero,
-            the model might genuinely be worse, and we call it unproven. This is what demoted the bill
-            models: 91D momentum&apos;s &quot;win&quot; has a range of −0.2 to +1.1 bps.</p>
-            <p><b style={{ color: "var(--fg)" }}>2. A small-sample correction.</b> The Diebold-Mariano test
-            over-rejects badly on ~20 bond auctions — it declares victories that are not there. The
-            Harvey-Leybourne-Newbold correction rescales it and reads a t-distribution instead of a normal.
-            Every p-value shown is the corrected one.</p>
-            <p><b style={{ color: "var(--fg)" }}>3. A correction for testing many things at once.</b>{" "}
-            Screening ~30 comparisons at p&lt;0.05 manufactures winners: simulated under the null,
-            that produces about 1.5 false &quot;established&quot; verdicts per run.{" "}
-            <Term t="Multiple Testing">Benjamini-Hochberg</Term> cuts that to 0.05. The subtlety is
-            defining the family honestly — the correction is applied to the pre-specified primary
-            hypothesis (curve carry beats naive, across tenors), not to every model-by-tenor cell,
-            because those cells are not independent tests and padding the family with models already
-            known to fail would reject even the strongest result. Every other model is marked{" "}
-            <b style={{ color: "var(--info)" }}>exploratory</b>: shown with its real numbers, never
-            promoted. All five bond tenors survive this correction; the bills do not.</p>
-
-            <p><b style={{ color: "var(--fg)" }}>4. A rule fixed in advance.</b> The model shown at the top
-            is not simply the one with the lowest error — choosing after seeing results is how backtests
-            lie. A challenger is used only when its range excludes zero <i>and</i> the corrected test agrees.
-            Otherwise the page falls back to naive, even when another model&apos;s headline number looks better.</p>
-            <p><b style={{ color: "var(--fg)" }}>The band now tracks the regime.</b> It used to be a
-            fixed multiple of recent error, which assumes the error scale is constant. It is not: the
-            10Y cutoff moved 16 bps per auction in 2024 and 104 bps in 2025. That band was too wide in
-            calm years and — far worse — too narrow in violent ones, covering only 83% of 10Y prints in
-            2025 when risk was highest. It is now scaled by an{" "}
-            <Term t="EWMA Volatility">exponentially-weighted volatility</Term> estimate, which lifted
-            measured coverage from 88.8% to 94.3% and the worst year from 77% to 87%, for about 2 bps
-            of extra average width. Each tenor&apos;s realised coverage is published in the scoreboard
-            rather than a nominal 95% being asserted.</p>
+            <H>How an edge is judged, and the band</H>
+            <p>A lower average error in a backtest is a <i>claim</i>, not a fact, and the page does not
+            pick the lowest-error model by eye. The bootstrap range, the small-sample significance test,
+            the multiple-testing correction, the fixed verdict rule and the construction of the band (and
+            the coverage actually measured for it) are set out in full, with every constant read from the
+            code, in <a href="#method" style={{ color: "var(--accent)" }}>How the Yield Curve Is
+            Forecast</a> below.</p>
 
             <H>Why the average error understates today</H>
-            <p>Splitting the backtest in half is uncomfortable reading. On 91D the typical miss was about
-            <b style={{ color: "var(--fg)" }}> 5 bps early on and about 14 bps recently</b>; the same pattern
-            holds across the bills. The models did not break — the market got more volatile. But it means a
+            <p>Splitting the backtest in half is uncomfortable reading. On {TRACK_TENOR} the typical miss of naive was{" "}
+            <b style={{ color: "var(--fg)" }}>{naive91?.mae_first != null && naive91?.mae_recent != null
+              ? `${naive91.mae_first.toFixed(1)} bps early on and ${naive91.mae_recent.toFixed(1)} bps recently`
+              : "shown early → recent in the table"}</b>; compare the other tenors in the same column. The models did not break — the market got more volatile. But it means a
             single lifetime-average error is the wrong number to size against, which is why the tables show
             <b style={{ color: "var(--fg)" }}> early → recent</b> and the headline uses the recent figure.</p>
 
             <H>The insight that failed, and why that is useful too</H>
             <p><b style={{ color: "var(--fg)" }}>OLS</b> regresses the cutoff change on auction-demand
-            factors — cover ratio, its change, relative size, distance from the trailing mean. It loses
-            to naive on every tenor. The Granger tests explain it: none of those factors
-            <b style={{ color: "var(--fg)" }}> lead</b> the cutoff (all p &gt; 0.18 on 148+ auctions).
-            They describe an auction that has already happened, and describing is not predicting. Each
+            factors — cover ratio, its change, relative size, distance from the trailing mean. Its verdicts are in
+            the backtest table: &quot;could be luck&quot; or &quot;worse than naive&quot; means the factors add noise. The
+            Granger tests point the same way: only {grangerHits.length} of {grangerTests.length} factor-by-tenor
+            tests show a factor that <b style={{ color: "var(--fg)" }}>leads</b> the cutoff at p &lt; {DIAG_ALPHA}, and
+            each is the best of several lags with no correction for running that many tests, so a few
+            are expected by chance alone. Mostly these factors describe an auction that has already
+            happened, and describing is not predicting. Each
             extra coefficient then has to be estimated from finite data, and that estimation error goes
             straight into the forecast — so adding useless factors makes you actively worse, not merely
             no better. That is the bias-variance tradeoff in its most concrete form.</p>
@@ -599,10 +595,12 @@ export default async function ResearchPage() {
             <p><b style={{ color: "var(--fg)" }}>Within ±5 bps</b> is the practical one — how often the
             forecast was close enough to bid off directly.</p>
             <p><b style={{ color: "var(--fg)" }}>DM p-value</b> (Diebold-Mariano) is the discipline.
-            A lower MAE could be luck across 20 auctions. DM tests whether the difference in squared
-            error is statistically real. <b style={{ color: "var(--fg)" }}>p &lt; 0.05 = trust the
-            edge; p &gt; 0.1 = interesting, not established.</b> This is why momentum, despite winning
-            on all three bills, is only labelled a lean: its p-values sit at 0.07–0.26.</p>
+            A lower MAE could be luck across a few dozen auctions. DM tests whether the difference in squared
+            error is statistically real. <b style={{ color: "var(--fg)" }}>p &lt; {DM_ALPHA} is necessary for the
+            edge to count; it is not sufficient (the bootstrap range must also sit above zero).</b> Momentum is the example: where its
+            p-value does not clear the bar the verdict column reads &quot;could be luck&quot;, and if it did
+            clear it the label would be &quot;exploratory only&quot;, because only the primary model can be
+            promoted.</p>
             <p><b style={{ color: "var(--fg)" }}>ADF / KPSS</b> test whether a series has a stable level
             to revert to. They disagree by design (ADF&apos;s null is a unit root, KPSS&apos;s null is
             stationarity), so agreement between them is strong evidence and disagreement means
@@ -617,12 +615,12 @@ export default async function ResearchPage() {
         <Panel title="Using This at the Desk" span={6}>
           <div style={{ fontSize: 12.5, lineHeight: 1.75, color: "var(--fg-mute)" }}>
             <p><b style={{ color: "var(--fg)" }}>The band is the position-sizing input, not decoration.</b>{" "}
-            It is 1.96 × an EWMA estimate of the model&apos;s own recent out-of-sample error, so it is a measured
-            distribution, not an assumption. A ±30 bps band on a bill means your rate view is worth
-            acting on; a ±150 bps band on a bond means the model is explicitly telling you it cannot
-            call that auction, and size accordingly.</p>
+            It is {spec.band.z} × an EWMA estimate of the model&apos;s own out-of-sample error, so its width is
+            measured from past misses, not assumed; how often prints really landed inside it is the Band holds
+            column. A narrow band on a bill means your rate view is worth acting on; a very wide band on a
+            bond means the model is explicitly telling you it cannot call that auction, and size accordingly.</p>
             <p><b style={{ color: "var(--fg)" }}>Direction first, level second.</b> On bonds the curve
-            model&apos;s edge is overwhelmingly directional (80–95%). Use it to decide which side of the
+            model&apos;s edge is largely directional (see the Right direction column). Use it to decide which side of the
             last print to bid, not to pin a basis point.</p>
             <p><b style={{ color: "var(--fg)" }}>Where the model is blind.</b> It sees only auction
             history. It cannot see an MPC decision, a BB circular, a quarter-end funding squeeze, a
@@ -631,7 +629,7 @@ export default async function ResearchPage() {
             both calls — the model forecast and your adjusted one — so you can tell later which added
             value.</p>
             <p><b style={{ color: "var(--fg)" }}>Watch λ for regime change.</b> If a tenor&apos;s
-            pass-through drifts materially from the levels above, the relationship between that tenor
+            pass-through drifts materially from its usual level (it is logged by each weekly run), the relationship between that tenor
             and the bill curve is changing — a signal in its own right, and a reason to stop trusting
             the curve forecast until it settles.</p>
             <p><b style={{ color: "var(--fg)" }}>Reflexivity.</b> If the desk bids differently because
@@ -642,26 +640,26 @@ export default async function ResearchPage() {
 
         <Panel title="Honest Limitations" span={12}>
           <div style={{ fontSize: 12.5, lineHeight: 1.7, color: "var(--fg-mute)", maxWidth: 980 }}>
-            <p><b style={{ color: "var(--fg)" }}>Bond samples are small — about 20 scored auctions each.</b> The curve
-            model&apos;s improvement is large and mechanically sensible, but twenty observations is twenty observations.
-            2Y, 5Y and 10Y clear the Diebold-Mariano bar (p = 0.0003 / 0.003 / 0.030) so those edges are established;
-            15Y (p = 0.079) and especially <b style={{ color: "var(--fg)" }}>20Y (p = 0.849)</b> are not — at 20Y the
-            lower MAE is well within luck. Treat the long end as directional guidance only.</p>
+            <p><b style={{ color: "var(--fg)" }}>Bond samples are small.</b> Non-bill tenors have{" "}
+            {spanOf(nBonds, String)} scored auctions each, against far more for bills. The curve model&apos;s
+            improvement is large and mechanically sensible, but it rests on a short record. Which tenors are established, and which are not, is in the verdict column and the
+            table in the method section; read the p-value, not the pattern.</p>
 
-            <p><b style={{ color: "var(--fg)" }}>The curve model is currently making an aggressive call.</b> The 364D
-            anchor has fallen sharply since the long bonds last auctioned, so with λ near 1 the model projects a large
-            drop at 15Y and 20Y. That is the mechanism working as designed, not a glitch — but it is an extrapolation
-            from an unusually big anchor move, and the band around it is wide for exactly that reason. Size to the band.</p>
+            <p><b style={{ color: "var(--fg)" }}>The curve model can make an aggressive call.</b> When the
+            anchor has moved sharply since a long bond last auctioned, a λ near one projects a large move
+            at that tenor. That is the mechanism working as designed, not a glitch, but it is an
+            extrapolation from an unusually big anchor move, and the band around it is wide for exactly that
+            reason. Size to the band.</p>
 
             <p><b style={{ color: "var(--fg)" }}>Why the guide&apos;s full factor set isn&apos;t here.</b> Call money, OMO
-            and reference rates only start March 2026 in this database, and the policy corridor has a single stored
-            observation — so <span className="mono">call_spread</span>, <span className="mono">d_policy</span> and the
-            error-correction model against the policy anchor cannot be built without inventing history. They are
-            deliberately absent rather than fitted on placeholders. Backfilling the policy corridor is the single
-            highest-value unlock for this page.</p>
+            and reference rates only start March 2026 in this database, so the call-money
+            spread and an excess-liquidity factor cannot be built without inventing history. They are
+            deliberately absent rather than fitted on placeholders. The policy corridor, by contrast, is stored
+            as verified effective-dated history from BB&apos;s own circulars and feeds the error-correction
+            model (<span className="mono">d_policy</span>) through the policy gate above.</p>
 
-            <p><b style={{ color: "var(--fg)" }}>The band is measured, not assumed.</b> It is 1.96 × an EWMA estimate of the model&apos;s own
-            out-of-sample RMSE from an expanding-window backtest — refit on everything up to week t, predict week t,
+            <p><b style={{ color: "var(--fg)" }}>The band is measured, not assumed.</b> It is {spec.band.z} × an EWMA estimate of the model&apos;s own
+            out-of-sample error from an expanding-window backtest — refit on everything up to week t, predict week t,
             score, roll forward. No future data ever touches a fit, so the width is what this model actually delivered,
             not what a distributional assumption would flatter it into claiming.</p>
 
@@ -669,8 +667,7 @@ export default async function ResearchPage() {
             call an auction, its band says so in basis points. Read the band before the point estimate.</p>
 
             <p><b style={{ color: "var(--fg)" }}>Target auction dates are inferred</b> from the median recent gap between
-            prints (7d for bills, ~28d for bonds), because BB&apos;s published auction calendar is not ingested yet.
-            Expect them to shift around holidays.</p>
+            prints, not from BB&apos;s published auction calendar. Expect them to shift around holidays.</p>
 
             <p style={{ color: "var(--fg-dim)" }}><b style={{ color: "var(--fg)" }}>Method.</b> Everything here is
             fitted weekly in GitHub Actions and written to the database; this page and its API only read pre-computed

@@ -156,7 +156,7 @@ export default function ForecastIntervalChart({ rows }: { rows: ForecastRow[] })
             {hover.tenor} · {MODELS.find(m => m.key === hover.model)!.label}
           </div>
           <TipRow k="Forecast change" v={`${hover.mid >= 0 ? "+" : ""}${hover.mid.toFixed(1)} bps`} />
-          <TipRow k="95% band" v={`${hover.lo.toFixed(0)} to ${hover.hi > 0 ? "+" : ""}${hover.hi.toFixed(0)} bps`} />
+          <TipRow k="Model band" v={`${hover.lo.toFixed(0)} to ${hover.hi > 0 ? "+" : ""}${hover.hi.toFixed(0)} bps`} />
           {(() => {
             const r = rows.find(x => x.tenor === hover.tenor && x.model === hover.model)!;
             return <>

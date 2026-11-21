@@ -32,23 +32,23 @@ export default function ResearchIntro() {
           {b("On BONDS, something genuinely works.")} Bonds auction ~monthly, bills weekly — so by
           the time a bond is bid, the bill market has already moved and the previous bond print is
           stale. <Term t="Curve Carry" /> follows that move, with a fitted{" "}
-          <Term t="Pass-through">pass-through (λ)</Term>, and roughly halves the{" "}
-          <Term t="MAE">average error</Term> on 2Y through 20Y. Statistically{" "}
-          <span style={{ color: "var(--pos)" }}>established</span>, not a hunch.
+          <Term t="Pass-through">pass-through (λ)</Term>, and cuts the{" "}
+          <Term t="MAE">average error</Term> on the bond tenors where its verdict reads{" "}
+          <span style={{ color: "var(--pos)" }}>real edge</span> — a statistical result, not a hunch.
         </li>
 
         <li style={li}>
-          {b("On BILLS, nothing beats it.")} Some models look better by 1–2{" "}
+          {b("On BILLS, nothing beats it.")} Some models look slightly better in{" "}
           <Term t="Basis Point">bps</Term>, but the <Term t="Confidence Interval" /> for that
-          improvement includes zero — it could be luck. So for 91D / 182D / 364D: bid off the last
-          cutoff and treat any model tilt as a mild lean.
+          improvement includes zero — it could be luck. So on the bills: bid off the last
+          cutoff and treat any model tilt as unproven.
         </li>
 
         <li style={li}>
-          {b("Bonds are judged on more history than bills.")} Bills auction weekly, so 3 years gives
-          150+ examples. Bonds auction monthly — 3 years is only ~20, too few to separate a real edge
-          from luck — so they use a 5-year <Term t="Lookback Window" />. The band still uses recent
-          data either way.
+          {b("Bonds are judged on more history than bills.")} Bills auction weekly, so a few years gives
+          well over a hundred examples. Bonds auction monthly — the same span is far fewer, too few to
+          separate a real edge from luck — so they use a longer <Term t="Lookback Window" />. The exact
+          windows and counts are in the method section below.
         </li>
 
         <li style={li}>
@@ -62,14 +62,16 @@ export default function ResearchIntro() {
           {b("Read the range, not just the number.")} The band is scaled by{" "}
           <Term t="EWMA Volatility">recent error volatility</Term>, so it widens in turbulent periods
           and tightens in calm ones instead of sitting at one fixed width.{" "}
-          <Term t="Coverage" /> is measured, not asserted: 94.3% of prints land inside it, and each
-          tenor's own figure is in the scoreboard. A wide band is the model saying it does not know.
+          <Term t="Coverage" /> is measured, not asserted: the share of prints that land inside it is
+          published for every tenor and model in the scoreboard (the Band holds column). A wide band is the model saying it does not know.
         </li>
       </ol>
 
       <p style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid var(--border-soft)" }}>
         {b("One-line summary:")} trust the bond forecasts, bid the bills off the last print, and
-        size off the recent error and the band — not the headline average.
+        size off the recent error and the band — not the headline average. The full method, with
+        every constant read from the code, is in <a href="#method" style={{ color: "var(--accent)" }}>How the
+        Yield Curve Is Forecast</a>.
       </p>
 
       <p style={{ marginTop: 10, fontSize: 12, color: "var(--fg-mute)" }}>

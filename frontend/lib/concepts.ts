@@ -65,8 +65,8 @@ export const CONCEPTS: Concept[] = [
     mechanics: [
       "A p-value below 0.05 means 'noise would produce this about one time in twenty'. Run one test and that is reassuring. Run thirty and you should EXPECT one or two to clear the bar even if every model is worthless. Simulated on this scoreboard's 31 comparisons under the null, raw testing yields about 1.5 false 'established' verdicts every single run.",
       "Benjamini-Hochberg controls the false discovery rate: the expected share of your declared winners that are junk. Sort the p-values, and keep the largest set where the k-th smallest is below q x k / m. On the same simulation this drops false discoveries from 1.57 to 0.05 per run.",
-      "The subtle part is what counts as the 'family'. Applied to all 31 model-by-tenor cells it rejected EVERYTHING, including 2Y curve carry at p=0.0038 — a false negative, because those cells are not independent (the blend model contains curve, so they are near-duplicate tests) and padding the family with models already known to fail inflates m and destroys power.",
-      "So the correction is applied to the pre-specified primary hypothesis: curve carry beats naive, tested across tenors. Curve is primary because it was hypothesised from a mechanism before it was tested. Every other model is exploratory — reported in full, never promoted. On that family all five bond tenors survive and both bills fail, which matches every other line of evidence.",
+      "The subtle part is what counts as the 'family'. Applied to all 31 model-by-tenor cells it rejected EVERYTHING, including the strongest curve-carry result — a false negative, because those cells are not independent (the blend model contains curve, so they are near-duplicate tests) and padding the family with models already known to fail inflates m and destroys power.",
+      "So the correction is applied to the pre-specified primary hypothesis: curve carry beats naive, tested across tenors. Curve is primary because it was hypothesised from a mechanism before it was tested. Every other model is exploratory — reported in full, never promoted. On that family the bond tenors where curve carry is established survive and the bill tenors do not; the per-tenor table in the method section shows which, from the stored run.",
     ],
     onThisPage:
       "It is the reason a model can show a low p-value and still not be marked 'established', and the reason non-primary models are labelled exploratory however good their headline number looks.",
@@ -81,11 +81,11 @@ export const CONCEPTS: Concept[] = [
     mechanics: [
       "Take the squared forecast errors and weight them by lambda^age with lambda = 0.94 (the RiskMetrics convention, roughly a 30-observation memory), then take the square root. Recent errors dominate; old ones fade smoothly rather than dropping off a cliff the way a fixed window does.",
       "Why it matters here is not theoretical. Measured on this data, per-auction volatility of the 10Y cutoff was 16 bps in 2024 and 104 bps in 2025 — a six-fold change. A band built on one fixed number is necessarily wrong in both regimes: too wide in 2024, and too narrow in 2025 precisely when the desk carried most risk.",
-      "Measured result across all eight tenors: coverage rose from 88.8% to 94.3% against a 95% target, and coverage in the worst single year rose from 77% to 87% — for about 2 bps of extra average width.",
+      "Measured when the method was chosen (the comparison is recorded in forecast/robustness.py), across eight tenors: coverage rose from 88.8% to 92.9%, and coverage in the worst single year from 77.1% to 87.0%, for about 2.3 bps of extra average width. That is short of 95%, which is why the live coverage is published per tenor in the Band holds column rather than assumed.",
       "Two more elaborate alternatives were tested and rejected on value: adaptive conformal reached 93.9% coverage and conformalised EWMA 94.4%, but cost roughly 40% more width in every period including calm ones, which just means carrying less position for no gain.",
     ],
     onThisPage:
-      "It sets the 95% Low / 95% High columns and the bars on the interval chart. Each tenor's realised coverage is published in the scoreboard, so you can check the band against what actually happened rather than trusting a nominal number.",
+      "It sets the Band low / Band high columns and the bars on the interval chart. Each tenor's realised coverage is published in the scoreboard, so you can check the band against what actually happened rather than trusting a nominal number.",
     pitfall:
       "Reading the band as a promise. It is an estimate from past errors, and it can only widen AFTER volatility shows up — it will still be caught out by the first auction of a new regime.",
   },
@@ -97,7 +97,7 @@ export const CONCEPTS: Concept[] = [
     mechanics: [
       "There is a deep reason this is hard to beat. An auction rate is set by banks bidding against each other, all reading the same news. If everybody could see that next week's rate would be higher, they would bid differently today — and the rate would move today. So by the time an auction happens, everything predictable is already priced in. What is left to move the rate is genuinely new information, and new information is, by definition, unpredictable.",
       "A series that only moves on unpredictable news is called a random walk. For a pure random walk, 'the last value' is mathematically the best possible forecast. Nothing can beat it. So when a model does beat it, that model is making a real claim: it has found information the market had not yet absorbed.",
-      "Worked example. On the 91-day bill, naive is wrong by about 9.7 basis points on average across the whole history, and lands within 5 bps of the true rate about half the time. That is the score to beat. A model that gets 9.5 has not really achieved anything; a model that gets 5.0 has found something.",
+      "Worked example. On the 91-day bill, naive is wrong by roughly ten basis points on average across the whole history (the Backtest table has the current figure), and lands within 5 bps of the true rate about half the time. That is the score to beat. A model that gets 9.5 has not really achieved anything; a model that gets 5.0 has found something.",
     ],
     onThisPage:
       "Every model in the scoreboard is measured against naive, and the 'Better than naive by' column is literally naive's error minus that model's error. Where nothing beats it, the tab says so and recommends bidding off the last print — which is the case for all three bill tenors.",
@@ -113,8 +113,8 @@ export const CONCEPTS: Concept[] = [
       "Treasury bills auction every week. Treasury bonds auction roughly once a month. So on the day a 10-year bond comes to auction, its own previous print is a month old — but the 91-day, 182-day and 364-day bills have printed four more times since then, and the whole rate environment may have shifted.",
       "The naive forecast ignores all of that. It is not failing because bond rates are unpredictable; it is failing because it is deliberately using out-of-date information when fresher, public, free information exists.",
       "So the model measures how far the 364-day bill has moved between this tenor's last auction and now, multiplies that by a factor called the pass-through (λ), and shifts the last bond cutoff by that amount. Forecast = last cutoff + λ × (move in the bill anchor).",
-      "Worked example. The 5-year bond last cleared at 9.68%. Since that auction, the 364-day bill fell 24 bps. The fitted pass-through for the 5-year is about 1.13, so the model predicts 9.68% − (1.13 × 0.24) ≈ 9.41%. Naive would still be sitting at 9.68%, ignoring the move entirely.",
-      "The result: on 2Y, 5Y and 10Y this roughly halves the average error versus naive — 5Y goes from about 55 bps to about 22 — and it calls the direction correctly around 95% of the time.",
+      "Illustration with round, made-up numbers (not a live forecast). A bond last cleared at 9.00%. Since that auction, the 364-day bill fell 20 bps. With a pass-through of 1.0 the model predicts 9.00% − (1.0 × 0.20) = 8.80%. Naive would still be sitting at 9.00%, ignoring the move entirely.",
+      "The result: on the bond tenors where its verdict reads real edge, curve carry cuts the average error versus naive substantially and calls the direction correctly far more often than a coin flip. The Backtest table gives the exact figures for the latest run.",
     ],
     onThisPage:
       "Curve carry is the recommended model for every bond tenor where its edge is statistically established. It is switched off for the 364-day bill itself, because there the anchor would just be the tenor's own history — it cannot carry itself.",
@@ -128,11 +128,11 @@ export const CONCEPTS: Concept[] = [
       "When the tide comes in, boats in the harbour all rise — but not by exactly the same amount. Some are in shallow water and follow the tide almost exactly; some are moored where the water moves less. The pass-through is 'how much does this particular boat rise when the tide rises by one metre'.",
     mechanics: [
       "The model fits λ by looking at history: across all past auctions of this tenor, when the bill anchor moved by some amount, how much did this tenor's cutoff move? The line through those points, forced through the origin, gives λ. Forced through the origin matters — it means that if the anchor has not moved, the model predicts no move, which is the correct behaviour when nothing has happened.",
-      "The fitted values came out at roughly 0.97 to 1.13 for the 2Y through 15Y — very close to one-for-one, meaning the Bangladeshi curve tends to shift almost in parallel. About 0.78 at 20Y, where the long end is anchored by duration demand and moves less. And about 0.40 for the 91-day and 182-day bills, because those print on the same day as the anchor, so much of the move is already shared rather than carried.",
-      "This pattern is the single strongest reason to trust the model. Nobody told it that long bonds should be less sensitive than medium ones, or that same-day bills should show partial pass-through. It discovered numbers that match how a yield curve is supposed to behave.",
+      "How to read the fitted values: a λ near one means a bill-curve move passes almost one-for-one into that tenor (the curve shifts nearly in parallel); a smaller λ means that part of the curve moves less, as at the long end where duration demand anchors rates, or for the shorter bills that print alongside the anchor so that much of the move is already shared rather than carried. The value for each tenor is written to the weekly job log; it is not stored with the metrics, so no figure is quoted here.",
+      "What makes the estimate credible is that nobody tells the model what λ should be: it is fitted from the data, and the sensible check is whether the fitted values behave the way a yield curve should (long bonds no more sensitive than medium ones, for example).",
     ],
     onThisPage:
-      "λ is logged on every weekly run. A tenor whose λ drifts a long way from these levels is telling you the relationship between that tenor and the bill curve is changing — which is itself worth knowing, and a reason to distrust that tenor's forecast until it settles.",
+      "λ is logged on every weekly run. A tenor whose λ drifts a long way from its usual level is telling you the relationship between that tenor and the bill curve is changing — which is itself worth knowing, and a reason to distrust that tenor's forecast until it settles.",
     pitfall:
       "Reading λ as a law of nature. It is an estimate from a finite sample and it can move. That is why it is monitored rather than hard-coded.",
   },
@@ -203,7 +203,7 @@ export const CONCEPTS: Concept[] = [
     intuition:
       "You want to know how reliable your exam average is, but you only ever sat one set of exams. So you repeatedly draw random handfuls of your past papers, recompute the average each time, and watch the spread. If the answer swings between 55% and 85% depending on which papers you drew, your 'average' was not a solid number.",
     mechanics: [
-      "The formal version: resample the observed errors, with replacement, 2,000 times. Each resample is a plausible alternative history. Recompute the statistic on each, then read the 2.5th and 97.5th percentiles of those 2,000 answers — that is the 95% interval.",
+      "The formal version: resample the observed errors (in blocks of consecutive auctions, as explained below), with replacement, 2,000 times. Each resample is a plausible alternative history. Recompute the statistic on each, then read the 2.5th and 97.5th percentiles of those 2,000 answers — that is the 95% interval.",
       "One crucial refinement is used here. Auction errors are correlated week to week: a volatile stretch produces several big misses in a row. If you resampled individual errors independently, you would break that clustering and pretend the sample contains far more independent information than it really does — producing intervals that are much too narrow, and false confidence.",
       "So the resampling is done in blocks: contiguous runs of consecutive auctions are drawn, keeping neighbouring errors together. This is called a moving-block bootstrap, and it gives honestly wider intervals.",
       "The seed is fixed, so a published interval is reproducible rather than shifting slightly every time the page rebuilds.",
@@ -221,7 +221,7 @@ export const CONCEPTS: Concept[] = [
     mechanics: [
       "Start by assuming the unflattering thing: the model has no edge whatsoever, and any apparent improvement is noise. Then ask how often noise alone would produce a result at least as good as the one observed. That frequency is the p-value.",
       "A small p-value means luck rarely produces this, so something real is probably happening. A large one means luck produces this routinely, so the result proves nothing. The conventional threshold is 0.05 — roughly a one-in-twenty chance of being fooled.",
-      "Worked example. Curve carry on the 2-year bond has p = 0.0022, meaning results this good would arise by chance about twice in a thousand tries. Momentum on the 91-day bill has p = 0.26, meaning about one time in four — which is nowhere near good enough to claim an edge.",
+      "Worked example (hypothetical values). A p of 0.002 would mean results this good arise by chance about twice in a thousand tries. A p of 0.26 would mean about one time in four, which is nowhere near good enough to claim an edge. The live p-values are in the 'Could it be luck?' column.",
     ],
     onThisPage:
       "The 'Could it be luck?' column. Bold means below 0.05. It is used together with the confidence interval, not instead of it — a verdict of 'established' requires both.",
@@ -237,7 +237,7 @@ export const CONCEPTS: Concept[] = [
       "The test looks at the difference in squared error between two models, auction by auction, and asks whether the average of that difference is reliably above zero. Because the two models forecast the same auctions, the comparison is paired, which removes the effect of some weeks simply being harder than others.",
       "It also corrects for the fact that consecutive errors are correlated. Without that correction, a run of easy weeks would masquerade as skill.",
       "One further correction matters a lot here. The standard version of this test is badly behaved on small samples — with around 20 bond auctions it declares victories that are not there, rejecting far more often than it should. The Harvey-Leybourne-Newbold correction rescales the statistic and compares it against a t-distribution instead of a normal one. Every p-value shown on this page is the corrected version.",
-      "Worked example of why that matters: on the 10-year bond the uncorrected test gives p = 0.0298 and the corrected one gives 0.0467. Both clear 0.05, but only just — and on a weaker result the correction is the difference between claiming an edge and not.",
+      "Why that matters: the correction makes p-values larger, so a marginal raw result that just clears 0.05 can stop clearing it once corrected. On a weak result the correction is the difference between claiming an edge and not.",
     ],
     onThisPage:
       "It is the second of the two conditions for an 'established' verdict, alongside a bootstrap interval that excludes zero.",
@@ -250,7 +250,7 @@ export const CONCEPTS: Concept[] = [
     intuition:
       "Enter 100 people into a coin-flipping contest. Someone will flip 8 heads in a row and look supernatural. If you then present that person as a gifted flipper, you have proved nothing — with 100 tries, someone was always going to do it. Picking the winner after the fact is not evidence.",
     mechanics: [
-      "This tab runs six models across eight tenors — around forty comparisons. Even if every model were worthless, several would beat naive by chance alone. Reporting whichever one won, with its flattering error number, would be exactly the coin-flipping contest.",
+      "This tab runs six models across every tenor — dozens of comparisons. Even if every model were worthless, several would beat naive by chance alone. Reporting whichever one won, with its flattering error number, would be exactly the coin-flipping contest.",
       "This is one of the main reasons backtested strategies disappoint in live use, and it is very easy to do accidentally: you try things, keep what works, and publish that. The trying-and-discarding is invisible in the final result.",
       "The defence is to fix the decision rule before looking. Here the rule is: a challenger is used only when its bootstrap interval excludes zero and the corrected significance test agrees. If nothing clears that bar, the page falls back to naive — even when another model's headline number looks better.",
       "This was a real correction, not a hypothetical one. An earlier version of this page picked the lowest-error model per tenor, which advertised edges on the bills that did not survive testing.",
@@ -262,16 +262,16 @@ export const CONCEPTS: Concept[] = [
   },
   {
     term: "Coverage",
-    oneLine: "Checking whether the '95% range' really did contain the answer 95% of the time.",
+    oneLine: "Checking how often the published band really did contain the answer, against the level it nominally claims.",
     intuition:
       "A delivery service promises a 2-hour window and says it is right 95% of the time. You can check that claim: note the window, note when they actually arrive, count. If they only make it two-thirds of the time, the window is marketing, not information.",
     mechanics: [
       "The published band is 1.96 x an EWMA estimate of recent error volatility. The multiplier 1.96 comes from the normal distribution, so it is only a genuine 95% range if errors follow a bell curve. Financial errors often do not: they have fat tails, so extremes arrive more often than a bell curve predicts and the band can be too narrow.",
-      "Rather than assume, count. Across every backtested forecast, how often did the actual print land inside the band? The answer here is roughly 90–95%, depending on tenor — close to what is advertised, slightly conservative in places.",
+      "Rather than assume, count. Across every backtested forecast, how often did the actual print land inside the band? The answer differs by tenor and model and is published in the Band holds column; it is not guaranteed to match the nominal level in either direction.",
       "That is a genuine finding and it could easily have gone the other way. If coverage had come out at 80%, the band would have needed widening, and every position sized off it would have been under-hedged.",
     ],
     onThisPage:
-      "The 'Band holds' column. Treat anything materially below 90% as a warning that the range is being oversold.",
+      "The 'Band holds' column. Treat a figure materially below the nominal level as a warning that the range is being oversold.",
     pitfall:
       "Ignoring the band because the point forecast is more interesting. The band is the part that tells you how much money to put behind the view.",
   },
@@ -283,13 +283,13 @@ export const CONCEPTS: Concept[] = [
     mechanics: [
       "For each auction, compare the sign of the predicted change with the sign of the actual change. The share that match is the directional accuracy. Fifty percent is a coin flip.",
       "For a bidder this is frequently more valuable than average error, because it tells you which side of the last print to lean, which is often the whole decision.",
-      "Worked example. Curve carry calls direction correctly about 95% of the time on the 5-year and 10-year bonds. That is a strong signal even though its average miss of roughly 22 bps sounds large — the point is that when the bill curve has fallen, the bond nearly always follows.",
+      "Worked example. Where curve carry calls direction correctly far more often than half the time, that is a strong signal even if its average miss in bps sounds large — the point is that when the bill curve has fallen, the bond usually follows. The 'Right direction' column has the live figures.",
       "Naive shows a dash in this column rather than a number. It predicts no change at all, so it never makes a directional call and there is nothing to score. That is honest rather than a missing value.",
     ],
     onThisPage:
       "The 'Right direction' column. Read it alongside the typical miss: high directional accuracy with a wide band means 'confident about which way, vague about how far'.",
     pitfall:
-      "Reading a high figure as a licence to size aggressively. Being right about direction 95% of the time says nothing about the size of the move, and the 5% can be brutal.",
+      "Reading a high figure as a licence to size aggressively. Being right about direction most of the time says nothing about the size of the move, and the misses can be brutal.",
   },
   {
     term: "Lookback Window",
@@ -363,10 +363,10 @@ export const CONCEPTS: Concept[] = [
       "Formally: two non-stationary series are cointegrated if some combination of them is stationary. Usually that combination is simply the gap between them.",
       "The economic idea for this project is that auction cutoff rates should be tethered to Bangladesh Bank's policy rate. Cutoffs wander and the policy rate steps around, but the spread between them should not drift forever — if cutoffs got far above the corridor, forces should pull them back.",
       "If that holds, the correct model is an error-correction model: how far the rate currently sits from its anchor tells you which way it should move next.",
-      "This is the one test on the roadmap that cannot yet be run. It needs the policy corridor as a step function through history, and the database currently holds a single verified corridor observation. Fitting it on unverified numbers would produce a confident, wrong model — so it is built and deliberately switched off.",
+      "It needs the policy corridor as a step function through history. That history is now stored as verified, effective-dated entries from BB's own circulars. The gate in forecast/policy.py refuses to run the test on anything unverified, because a confident model built on invented numbers is worse than none, so it runs whenever the gate is open.",
     ],
     onThisPage:
-      "See the 'Error-Correction Model — Status' panel, which reports exactly what is missing and how to unlock it.",
+      "See the 'Error-Correction Model' panel, which reports the gate's state and the test results.",
     pitfall:
       "Confusing it with correlation. Two series can be highly correlated over a stretch and still drift apart forever; cointegration is specifically about the long-run tether.",
   },

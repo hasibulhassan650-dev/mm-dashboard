@@ -410,10 +410,10 @@ class AuctionForecast(Base):
     target_auction_date = Column(Date)                   # estimated next auction date
     tenor               = Column(String(15), nullable=False)   # 91D, 182D, 2Y, ...
     instrument          = Column(String(10))             # T_BILL, T_BOND, FRTB
-    model               = Column(String(20), nullable=False)   # naive, momentum
+    model               = Column(String(20), nullable=False)   # naive, momentum, ols, curve, ecm, blend
     point_yield         = Column(Float)
-    lo_yield            = Column(Float)                  # point − 1.96×RMSE
-    hi_yield            = Column(Float)                  # point + 1.96×RMSE
+    lo_yield            = Column(Float)                  # point − z×EWMA error volatility (z = 1.96)
+    hi_yield            = Column(Float)                  # point + z×EWMA error volatility (z = 1.96)
     actual_yield        = Column(Float)                  # backfilled after the print
     created_utc         = Column(DateTime)
 
@@ -433,8 +433,8 @@ class BacktestMetric(Base):
     tenor         = Column(String(15), nullable=False)
     mae_bps       = Column(Float)
     rmse_bps      = Column(Float)
-    # RMSE over the recent slice only — this is what the published band uses,
-    # so the interval tracks today's volatility not a calmer average.
+    # RMSE over the recent slice only. Only the FALLBACK band basis: the published
+    # band is normally z × the EWMA of the whole out-of-sample error series.
     rmse_recent_bps = Column(Float)
     dir_acc       = Column(Float)    # share of correct direction calls, 0–1
     hit_5bps      = Column(Float)    # share of forecasts within ±5 bps, 0–1

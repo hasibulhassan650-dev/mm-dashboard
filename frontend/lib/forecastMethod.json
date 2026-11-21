@@ -1,0 +1,71 @@
+{
+  "models": [
+    "naive",
+    "momentum",
+    "ols",
+    "curve",
+    "ecm",
+    "blend"
+  ],
+  "primary_model": "curve",
+  "anchor_tenor": "364D",
+  "bill_tenors": [
+    "14D",
+    "182D",
+    "28D",
+    "364D",
+    "91D"
+  ],
+  "factors": [
+    "d_cutoff_lag1",
+    "cover_lag1",
+    "d_cover_lag1",
+    "size_lag1",
+    "level_gap_lag1"
+  ],
+  "ecm_factors": [
+    "spread_policy_lag1",
+    "d_policy"
+  ],
+  "trailing_window": 8,
+  "lookback_years": {
+    "bills": 3.0,
+    "bonds": 5.0
+  },
+  "min_history": 16,
+  "min_train": 12,
+  "min_train_regression": 40,
+  "min_scored": 10,
+  "next_date_gap_window": 12,
+  "hit_bps": 5.0,
+  "band": {
+    "z": 1.96,
+    "fallback_z": 1.96,
+    "ewma_lambda": 0.94,
+    "fallback_recent_fraction": 0.5
+  },
+  "bootstrap": {
+    "draws": 2000,
+    "block_fraction": 0.15,
+    "seed": 7,
+    "ci_level": 0.95
+  },
+  "verdict": {
+    "dm_alpha": 0.05,
+    "dm_hln_correction": true,
+    "fdr_q": 0.05
+  },
+  "ecm_gate": {
+    "min_verified_points": 4,
+    "min_distinct_repo": 3,
+    "min_covered_years": 2.0
+  },
+  "diagnostics": {
+    "alpha": 0.05,
+    "granger_lags": 4,
+    "hac_lags": 4
+  },
+  "economic_value": {
+    "target_fill": 0.9
+  }
+}

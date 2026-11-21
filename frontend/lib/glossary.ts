@@ -206,8 +206,8 @@ export const GLOSSARY: GlossaryEntry[] = [
   },
   {
     term: "Pass-through", full: "λ (lambda)", category: "Forecasting",
-    def: "How much of a move in the bill curve carries into a given tenor. Fitted, not assumed: ~0.97–1.13 for 2Y–15Y (near-parallel shifts), 0.78 at 20Y, ~0.40 for 91D/182D.",
-    eli10: "If short-term rates move 10 steps, how many steps does this one move? About 10 for medium loans, fewer for the very longest ones. We measured it rather than guessing.",
+    def: "How much of a move in the bill curve carries into a given tenor. Fitted from the data, not assumed: near one means a near-parallel shift, smaller means that tenor moves less than the bills.",
+    eli10: "If short-term rates move 10 steps, how many steps does this one move? About 10 for some loans, fewer for others. We measured it rather than guessing.",
   },
   {
     term: "MAE", full: "Mean Absolute Error", category: "Forecasting",
@@ -261,7 +261,7 @@ export const GLOSSARY: GlossaryEntry[] = [
   },
   {
     term: "Coverage", category: "Forecasting",
-    def: "The share of actual outcomes that landed inside the published 95% band. Should be about 95%; measured here at 90–95%, so the band is roughly honest.",
+    def: "The share of actual outcomes that landed inside the published band. The band uses the 95% multiplier but is not guaranteed to deliver 95%; the measured share is published per tenor and model as Band holds.",
     eli10: "We say \"we're 95% sure it lands in this range.\" Coverage checks whether that was true. If it only lands there half the time, the range was a lie.",
   },
   {
