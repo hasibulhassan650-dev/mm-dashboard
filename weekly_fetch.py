@@ -111,6 +111,28 @@ def prefixed(step: str, errs) -> list:
     return out
 
 
+def _pid_alive(pid: int) -> bool:
+    """Is a process with this id running? (os.kill(pid, 0) would TERMINATE it on Windows, so ask the OS instead.)"""
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        k = ctypes.windll.kernel32
+        h = k.OpenProcess(0x1000, False, pid)          # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            return bool(k.GetExitCodeProcess(h, ctypes.byref(code))) and code.value == 259    # STILL_ACTIVE
+        finally:
+            k.CloseHandle(h)
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
 def acquire_lock(path: str = None, now: float = None) -> str:
     """Take the one-refresh-at-a-time lock on this machine, or return None if another refresh holds it.
 
@@ -121,7 +143,14 @@ def acquire_lock(path: str = None, now: float = None) -> str:
     path = path or os.path.join(tempfile.gettempdir(), "mm_dashboard_refresh.lock")
     now = time.time() if now is None else now
     try:
-        if now - os.path.getmtime(path) > LOCK_STALE_SECONDS:
+        # A lock is stale when it is old, OR when the run that took it is gone. A refresh that was killed (task re-registered,
+        # PC slept, Chrome took the console down with it) left its lock behind, and every hourly run for the next three hours
+        # then 'stepped aside' for a run that no longer existed.
+        try:
+            holder = int(open(path).read().strip() or 0)
+        except (OSError, ValueError):
+            holder = None
+        if now - os.path.getmtime(path) > LOCK_STALE_SECONDS or (holder is not None and not _pid_alive(holder)):
             os.remove(path)
     except OSError:
         pass
