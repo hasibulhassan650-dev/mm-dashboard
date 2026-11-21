@@ -176,6 +176,13 @@ def get_status():
             except Exception:
                 pass
 
+        # Errors shown as 'what the last run hit' come from the step ledger, PC-first: GitHub's runs are blocked by BB's
+        # firewall and their errors described the backup, not the desk's data.
+        from .status_logic import current_problems
+        _problems = current_problems(session)
+        if _problems is not None:
+            last_errors = _problems
+
         today = datetime.date.today()
         lwd = _last_working_day(today)
         checked_recently = _hours_since(last_run_dt) < 14   # ≥1 of the 3 daily runs landed

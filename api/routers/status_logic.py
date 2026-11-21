@@ -49,3 +49,37 @@ def for_dataset(key: str, runs: dict) -> dict:
     r = runs.get(STEP_OF.get(key, ""), {})
     return {"last_run": r.get("run"), "last_run_status": r.get("status"), "last_run_machine": r.get("machine"),
             "last_ok_run": r.get("last_ok")}
+
+
+PC_RECENT_HOURS = 14.0     # mirrors engines/step_ledger.PC_RECENT_HOURS (api/ cannot import engines/): the PC reads BB, GitHub is the backup
+
+
+def current_problems(session, now=None) -> list:
+    """What is wrong NOW, per step, judged from the PC when the PC has reported lately.
+
+    BB's firewall CAPTCHAs GitHub's runners, so the newest run is often GitHub's and its 'errors' were the panel's headline
+    ('policy fetch returned nothing; monetary: NoneType...') while the PC had read the same pages fine an hour earlier. A step
+    is judged by the PC's newest row when it has one inside PC_RECENT_HOURS, else by the newest row of any machine. None
+    when the ledger is unreadable (the caller then falls back to the pipeline run's own error list)."""
+    import datetime
+    now = now or datetime.datetime.utcnow()
+    try:
+        rows = session.execute(text(
+            "SELECT run_utc, machine, step, status, error FROM step_runs WHERE run_utc > :s ORDER BY run_utc DESC"),
+            {"s": now - datetime.timedelta(hours=36)}).fetchall()
+    except Exception:
+        session.rollback()
+        return None
+    pc_cut = now - datetime.timedelta(hours=PC_RECENT_HOURS)
+    newest_any, newest_pc = {}, {}
+    for run, machine, step, status, error in rows:
+        run = run if isinstance(run, datetime.datetime) else datetime.datetime.fromisoformat(str(run)[:19])
+        newest_any.setdefault(step, (run, machine, status, error))
+        if machine == "pc" and run >= pc_cut:
+            newest_pc.setdefault(step, (run, machine, status, error))
+    out = []
+    for step in sorted(newest_any):
+        run, machine, status, error = newest_pc.get(step) or newest_any[step]
+        if status != "ok":
+            out.append(f"{step}: {status} ({machine}){' - ' + str(error).strip()[:80] if error else ''}")
+    return out

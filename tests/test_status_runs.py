@@ -19,3 +19,34 @@ def test_a_quiet_day_moves_the_run_not_the_data(monkeypatch):
     f = S.for_dataset("callmoney", runs)
     assert f["last_run"].startswith("2026-11-20T20") and f["last_run_status"] == "ok"
     assert S.for_dataset("refrate", runs)["last_run"] is None           # never reported -> None, shown as 'not recorded'
+
+
+def _ledger(rows):
+    import datetime
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    import db as dbmod
+    eng = create_engine("sqlite:///:memory:")
+    dbmod.Base.metadata.create_all(eng)
+    s = sessionmaker(bind=eng)()
+    for hours_ago, machine, step, status, err in rows:
+        s.add(dbmod.StepRun(run_utc=datetime.datetime(2026, 11, 21, 12) - datetime.timedelta(hours=hours_ago), machine=machine,
+                            step=step, status=status, error=err))
+    s.commit()
+    return s
+
+
+def test_githubs_blocked_run_is_not_the_headline_when_the_pc_read_the_page_fine():
+    """The panel said 'Last run had 8 errors: policy fetch returned nothing' while the PC had read policy fine an hour earlier:
+    GitHub is CAPTCHAd by BB's firewall, so its newest row described the backup, not the desk's data."""
+    import datetime
+    s = _ledger([(2, "pc", "policy", "ok", None), (0.2, "github", "policy", "failed", "returned nothing"),
+                 (2, "pc", "refrate", "failed", "page not served")])
+    got = S.current_problems(s, datetime.datetime(2026, 11, 21, 12))
+    assert got == ["refrate: failed (pc) - page not served"]
+
+
+def test_without_a_recent_pc_row_the_newest_row_of_any_machine_speaks():
+    import datetime
+    s = _ledger([(30, "pc", "policy", "ok", None), (1, "github", "policy", "failed", "returned nothing")])
+    assert S.current_problems(s, datetime.datetime(2026, 11, 21, 12)) == ["policy: failed (github) - returned nothing"]
