@@ -13,6 +13,13 @@ import type { SukukBlock } from "@/lib/api";
 const fmt = (v: number | null | undefined, d = 0) =>
   v == null ? "—" : v.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
 
+/** 1st 2nd 3rd 4th ... 11th 12th 13th ... 21st 22nd 23rd (the old [, "st", "nd", "rd"][n] lookup gave 21th/22th/23th). */
+export function ordinal(n: number): string {
+  const r100 = n % 100;
+  if (r100 >= 11 && r100 <= 13) return "th";
+  return ({ 1: "st", 2: "nd", 3: "rd" } as Record<number, string>)[n % 10] ?? "th";
+}
+
 export default function SukukPanel({ data }: { data: SukukBlock | undefined }) {
   if (!data || data.error || !data.outstanding) {
     return (
@@ -24,7 +31,7 @@ export default function SukukPanel({ data }: { data: SukukBlock | undefined }) {
     );
   }
   const issues = data.outstanding;
-  const up = (data.upcoming ?? []).slice(0, 14);
+  const up = data.upcoming ?? [];   // every scheduled row for the next 12 months: the panel scrolls, nothing is cut
   const docs = data.documents ?? [];
   const announced = data.announced ?? [];
   return (
@@ -43,7 +50,7 @@ export default function SukukPanel({ data }: { data: SukukBlock | undefined }) {
                 {announced.map((a) => (
                   <tr key={a.source_serial}>
                     <td className="mono">{a.auction_date}</td>
-                    <td>{a.series_no ? `${a.series_no}${[, "st", "nd", "rd"][a.series_no] ?? "th"} ` : ""}{a.name}</td>
+                    <td>{a.series_no ? `${a.series_no}${ordinal(a.series_no)} ` : ""}{a.name}</td>
                     <td className="r mono">{fmt(a.face_crore, 2)}</td>
                     <td className="r mono">{a.rate_pct.toFixed(2)}</td>
                     <td className="r mono">{fmt(a.rent_crore, 2)}</td>

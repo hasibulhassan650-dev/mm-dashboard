@@ -5,6 +5,8 @@ import { OMO_INSTRUMENTS, pivotOmo, omoNetSeries, omoCatsFromData, buildCurve, d
 import OverviewView, { type OverviewData, type OmoAuctionRow, type SecAuctionRow } from "@/components/terminal/views/OverviewView";
 import type { Kpi } from "@/components/terminal/ui";
 import Freshness from "@/components/Freshness";
+import Unavailable from "@/components/Unavailable";
+import { tracker } from "@/lib/safe";
 
 export const revalidate = 0;   // draws the desk's own marks, which must show the moment they are saved, from any device
 
@@ -15,21 +17,21 @@ function delta(series: number[]): number | null {
 }
 
 export default async function Home() {
-  const [summary, curve, history, outstanding, txns, cm, fx, policy, macro, fresh, ibfx, nextAuction, provisional] = await Promise.all([
-
-    api.omoSummary().catch(() => []),
-    api.yieldCurve().catch(() => []),
-    api.yields(6).catch(() => []),
-    api.omoOutstanding(60).catch(() => []),
-    api.omoTransactions(20).catch(() => []),
-    api.callmoney(45).catch(() => ({ daily_summary: [], latest_breakdown: [], latest_date: null })),
-    api.fx(365).catch(() => []),
-    api.policy(),
-    api.macro(),
+  // A source that did not answer is named in the <Unavailable> panel and its KPIs read "—": never 0, never a default.
+  const t = tracker();
+  const [curve, history, outstanding, txns, cm, fx, policy, macro, fresh, ibfx, nextAuction, provisional] = await Promise.all([
+    t.soft("yield curve", api.yieldCurve(), []),
+    t.soft("yield history", api.yields(6), []),
+    t.soft("OMO outstanding", api.omoOutstanding(60), []),
+    t.soft("OMO operations", api.omoTransactions(20), []),
+    t.soft("call money", api.callmoney(45), { daily_summary: [], latest_breakdown: [], latest_date: null }),
+    t.soft("FX auctions", api.fx(365), []),
+    t.soft("policy corridor", api.policy(), { current: null, history: [] }),
+    t.soft("reserves", api.macro(), { series: [], latest: null }),
     api.freshness(),
-    api.interbankFx(365),
-    api.nextAuction(),
-    api.yieldProvisional().catch(() => []),
+    t.soft("interbank FX", api.interbankFx(365), []),
+    t.soft("next auction", api.nextAuction(), null),
+    t.soft("desk provisional marks", api.yieldProvisional(), []),
   ]);
 
   const omoSeries = pivotOmo(outstanding);
@@ -39,7 +41,9 @@ export default async function Home() {
   const desk = deskOverlay(cb.tenors, cb.today, provisional);
 
   // ---- KPIs ----
-  const totalInjection = summary.filter((r) => r.direction === "INJECTION").reduce((s, r) => s + r.outstanding_bdt_crore, 0);
+  // NET of SDF absorption (the same basis as the sparkline here and the /omo page), in thousand crore. "—" when the
+  // OMO outstanding call failed or returned nothing: an empty fetch must not read as "net injection 0.0k".
+  const netNow = netSeries.length ? netSeries[netSeries.length - 1] : null;
   const warSeries = [...cm.daily_summary].sort((a, b) => a.trade_date.localeCompare(b.trade_date)).map((d) => d.overnight_wavg_rate).filter((v): v is number => v != null);
   const tb91 = curve.find((r) => r.tenor_label === "91D");
   const tb10y = curve.find((r) => r.tenor_label === "10Y");
@@ -55,24 +59,24 @@ export default async function Home() {
   const lastRes = macro.latest?.gross_reserves_usd_bn ?? null;
 
   const kpis: Kpi[] = [
-    { id: "omo", label: "OMO Net Injection", value: `৳${(totalInjection / 1000).toFixed(1)}k`, unit: "cr", sub: "outstanding today", dir: "up", series: netSeries.slice(-30), tone: "accent", href: "/omo" },
-    { id: "war", label: "Call Money WAR", value: warSeries.length ? warSeries[warSeries.length - 1].toFixed(2) : "—", unit: "%", sub: "weighted avg rate", delta: delta(warSeries), dir: "up", series: warSeries.slice(-30), href: "/callmoney" },
-    { id: "tb91", label: "91D T-Bill", value: tb91 ? tb91.cutoff_yield_pct.toFixed(2) : "—", unit: "%", sub: tb91 ? `cut-off · ${fmtDate(tb91.auction_date)}` : "", delta: delta(s91), dir: "up", series: s91, href: "/yields" },
-    { id: "tb10y", label: "10Y T-Bond", value: tb10y ? tb10y.cutoff_yield_pct.toFixed(2) : "—", unit: "%", sub: tb10y ? `cut-off · ${fmtDate(tb10y.auction_date)}` : "", delta: delta(s10y), dir: "up", series: s10y, href: "/yields" },
+    { id: "omo", label: "OMO Net Injection", value: netNow != null ? `৳${netNow.toFixed(1)}k` : "—", unit: netNow != null ? "cr" : undefined, sub: "net of SDF · latest day", dir: "up", series: netSeries.slice(-30), tone: "accent", href: "/omo" },
+    { id: "war", label: "Call Money WAR", value: warSeries.length ? warSeries[warSeries.length - 1].toFixed(2) : "—", unit: "%", sub: "weighted avg rate", rate: true, delta: delta(warSeries), dir: "up", series: warSeries.slice(-30), href: "/callmoney" },
+    { id: "tb91", label: "91D T-Bill", value: tb91 ? tb91.cutoff_yield_pct.toFixed(2) : "—", unit: "%", sub: tb91 ? `cut-off · ${fmtDate(tb91.auction_date)}` : "", rate: true, delta: delta(s91), dir: "up", series: s91, href: "/yields" },
+    { id: "tb10y", label: "10Y T-Bond", value: tb10y ? tb10y.cutoff_yield_pct.toFixed(2) : "—", unit: "%", sub: tb10y ? `cut-off · ${fmtDate(tb10y.auction_date)}` : "", rate: true, delta: delta(s10y), dir: "up", series: s10y, href: "/yields" },
     // Prefer the INTERBANK spot rate: it prints every trading day and is where
     // the taka is actually priced. BB's FX auction rate is an occasional
     // intervention price (62 prints in two years) — a fair fallback, but it
     // should not be labelled as the market rate while a market rate exists.
     ...(spotS.length
-      ? [{ id: "fx", label: "USD / BDT", value: lastSpot != null ? lastSpot.toFixed(2) : "—", sub: "interbank spot WAR", delta: delta(spotS), dir: "down" as const, series: spotS, href: "/fxmarket" }]
-      : [{ id: "fx", label: "USD / BDT", value: lastFx != null ? lastFx.toFixed(2) : "—", sub: "auction wtd-avg", delta: delta(fxS), dir: "down" as const, series: fxS, href: "/fx" }]),
+      ? [{ id: "fx", label: "USD / BDT", value: lastSpot != null ? lastSpot.toFixed(2) : "—", sub: "interbank spot WAR", rate: true, delta: delta(spotS), dir: "down" as const, series: spotS, href: "/fxmarket" }]
+      : [{ id: "fx", label: "USD / BDT", value: lastFx != null ? lastFx.toFixed(2) : "—", sub: "auction wtd-avg", rate: true, delta: delta(fxS), dir: "down" as const, series: fxS, href: "/fx" }]),
     { id: "res", label: "FX Reserve", value: lastRes != null ? lastRes.toFixed(2) : "—", unit: "B$", sub: "gross · BB", delta: delta(resSeries), dir: "up", series: resSeries, href: "/macro" },
   ];
 
   // ---- corridor ----
   const pc = policy.current;
   const corridor = pc && pc.sdf != null && pc.repo != null && pc.slf != null
-    ? { sdf: pc.sdf, repo: pc.repo, slf: pc.slf, war: warSeries.length ? warSeries[warSeries.length - 1] : pc.repo }
+    ? { sdf: pc.sdf, repo: pc.repo, slf: pc.slf, war: warSeries.length ? warSeries[warSeries.length - 1] : null }
     : null;
 
   // ---- tables ----
@@ -98,7 +102,8 @@ export default async function Home() {
   return (
     <>
       <div style={{ marginBottom: "var(--gap)" }}><Freshness updated={fresh.omo} /></div>
-      <NextAuction data={nextAuction} />
+      <Unavailable what={t.failed} />
+      {nextAuction && <NextAuction data={nextAuction} />}
       <OverviewView d={data} />
     </>
   );

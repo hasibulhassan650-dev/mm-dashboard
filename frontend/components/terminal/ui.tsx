@@ -43,9 +43,14 @@ export interface Kpi {
   id: string; label: string; value: string; unit?: string; sub?: string;
   delta?: number | null; dir?: "up" | "down" | "flat"; series?: number[]; tone?: "accent" | "neutral";
   href?: string;   // when set, the whole card links to the detail page
+  /** a RATE (rising = costlier funding): a rise is red, a fall green - the rule /callmoney, /repo and /fx already use. */
+  rate?: boolean;
 }
 export function KpiCard({ k }: { k: Kpi }) {
-  const sparkColor = k.dir === "up" ? "var(--pos)" : k.dir === "down" ? "var(--neg)" : "var(--accent)";
+  // Colour from the actual change when there is one (rates: up = red), else from the nominal direction.
+  const sparkColor = k.delta != null && k.delta !== 0
+    ? ((k.delta > 0) !== !!k.rate ? "var(--pos)" : "var(--neg)")
+    : k.dir === "up" ? "var(--pos)" : k.dir === "down" ? "var(--neg)" : "var(--accent)";
   const cur = k.value.startsWith("৳");
   const inner = (
     <>
@@ -58,7 +63,7 @@ export function KpiCard({ k }: { k: Kpi }) {
           ? <><span className="kpi-cur">৳</span><span className="kpi-num">{k.value.slice(1)}</span></>
           : <span className="kpi-num">{k.value}</span>}
         {k.unit && <span className="kpi-unit">{k.unit}</span>}
-        {k.delta != null && <span className="kpi-delta"><Delta value={k.delta} /></span>}
+        {k.delta != null && <span className="kpi-delta"><Delta value={k.delta} invert={!!k.rate} /></span>}
       </div>
       {k.series && k.series.length > 1 && <div className="kpi-spark"><Sparkline data={k.series} color={sparkColor} h={30} /></div>}
       {k.sub && <div className="kpi-sub">{k.sub}</div>}
@@ -138,7 +143,8 @@ export function MetricList({ items }: { items: { k: React.ReactNode; v: React.Re
 }
 
 // ---------------- Policy rate corridor ----------------
-export interface CorridorData { sdf: number; repo: number; slf: number; war: number }
+/** `war` is null when call money is missing: the marker is then skipped, never plotted at some default. */
+export interface CorridorData { sdf: number; repo: number; slf: number; war: number | null }
 export function CorridorViz({ c }: { c: CorridorData }) {
   const lo = 8.0, hi = 12.0;
   const pct = (v: number) => Math.max(0, Math.min(100, ((hi - v) / (hi - lo)) * 100));
@@ -157,9 +163,11 @@ export function CorridorViz({ c }: { c: CorridorData }) {
             <span className="corr-tick">{r.v.toFixed(2)}%</span>
           </div>
         ))}
-        <div className="corr-war" style={{ top: pct(c.war) + "%" }}>
-          <span className="corr-war-lab">WAR {c.war.toFixed(2)}%</span>
-        </div>
+        {c.war != null && (
+          <div className="corr-war" style={{ top: pct(c.war) + "%" }}>
+            <span className="corr-war-lab">WAR {c.war.toFixed(2)}%</span>
+          </div>
+        )}
       </div>
       <div className="corr-legend">
         {rows.map((r) => (

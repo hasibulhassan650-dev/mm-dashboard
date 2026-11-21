@@ -1,22 +1,34 @@
 import { api } from "@/lib/api";
 import RelatedLinks from "@/components/RelatedLinks";
 import SourceLink from "@/components/SourceLink";
-import { fmtDate } from "@/lib/format";
+import { fmtDate, todayDhaka } from "@/lib/format";
 import { Panel } from "@/components/terminal/ui";
 import DownloadButton from "@/components/DownloadButton";
 import Freshness from "@/components/Freshness";
+import Unavailable from "@/components/Unavailable";
+import { tracker } from "@/lib/safe";
 
 export const revalidate = 300;
 
 export default async function SecuritiesPage() {
-  const [securities, fresh] = await Promise.all([api.securities().catch(() => []), api.freshness()]);
+  const t = tracker();
+  const [securities, fresh] = await Promise.all([t.soft("securities list", api.securities(), []), api.freshness()]);
+  // A failed fetch must not render as "0 outstanding, 0 T-Bonds, 0 T-Bills, 0 maturing".
+  if (t.failed.length) {
+    return (
+      <Unavailable what="securities list">
+        The data service did not answer, so the outstanding total and the counts of bonds, bills and maturities are
+        <b> unknown</b>, not zero. Reload in a moment.
+      </Unavailable>
+    );
+  }
+  const missingOut = securities.filter((s) => s.outstanding_bdt_mill == null).length;
   const tbonds = securities.filter((s) => s.security_type === "T_BOND");
   const tbills = securities.filter((s) => s.security_type === "T_BILL");
   const frtb = securities.filter((s) => s.security_type === "FRTB");
   const totalOut = securities.reduce((s, r) => s + (r.outstanding_bdt_mill ?? 0), 0);
-  const now = new Date();
-  const today = now.toISOString().slice(0, 10);
-  const cutoff90 = new Date(now.getTime() + 90 * 86400000).toISOString().slice(0, 10);
+  const today = todayDhaka();
+  const cutoff90 = new Date(new Date(today + "T00:00:00Z").getTime() + 90 * 86400000).toISOString().slice(0, 10);
   const maturing90 = securities.filter((s) => s.maturity_date >= today && s.maturity_date <= cutoff90);
 
   const groups = [
@@ -30,7 +42,7 @@ export default async function SecuritiesPage() {
       <div style={{ marginBottom: "var(--gap)" }}><Freshness updated={fresh.securities} /></div>
 
       <div className="kpi-strip" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
-        <div className="kpi"><div className="kpi-top"><span className="kpi-label">Total Outstanding</span></div><div className="kpi-val"><span className="kpi-cur">৳</span><span className="kpi-num">{(totalOut / 1000).toFixed(0)}k</span><span className="kpi-unit">cr</span></div><div className="kpi-sub">face value</div></div>
+        <div className="kpi"><div className="kpi-top"><span className="kpi-label">Total Outstanding</span></div><div className="kpi-val"><span className="kpi-cur">৳</span><span className="kpi-num">{(totalOut / 10000).toFixed(0)}k</span><span className="kpi-unit">cr</span></div><div className="kpi-sub">face value{missingOut > 0 ? ` · ${missingOut} with no amount stated` : ""}</div></div>
         <div className="kpi"><div className="kpi-top"><span className="kpi-label">T-Bonds</span></div><div className="kpi-val"><span className="kpi-num" style={{ color: "var(--info)" }}>{tbonds.length}</span></div><div className="kpi-sub">active</div></div>
         <div className="kpi"><div className="kpi-top"><span className="kpi-label">T-Bills</span></div><div className="kpi-val"><span className="kpi-num" style={{ color: "var(--accent)" }}>{tbills.length}</span></div><div className="kpi-sub">active</div></div>
         <div className="kpi"><div className="kpi-top"><span className="kpi-label">Maturing (90d)</span></div><div className="kpi-val"><span className="kpi-num neg">{maturing90.length}</span></div><div className="kpi-sub">soon</div></div>

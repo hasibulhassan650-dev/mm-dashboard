@@ -1,7 +1,7 @@
 "use client";
 import * as React from "react";
 import { api, type YieldRow } from "@/lib/api";
-import { fmtDate } from "@/lib/format";
+import { fmtDate, todayDhaka } from "@/lib/format";
 import { bidToCover } from "@/lib/analytics";
 import { Panel } from "@/components/terminal/ui";
 import YieldTrendChart from "@/components/YieldTrendChart";
@@ -14,7 +14,7 @@ function isoAddYears(base: string, years: number): string {
 }
 
 export default function AuctionExplorer({ bounds }: { bounds: { min: string | null; max: string | null; count: number } }) {
-  const max = bounds.max ?? new Date().toISOString().slice(0, 10);
+  const max = bounds.max ?? todayDhaka();
   const min = bounds.min ?? "2007-01-01";
   // Default to the FULL available history so 2007→present shows on load.
   const [from, setFrom] = React.useState(min);

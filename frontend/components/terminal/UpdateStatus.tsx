@@ -1,7 +1,7 @@
 "use client";
 import * as React from "react";
 import { api, type MetaStatus } from "@/lib/api";
-import { timeAgo, fmtDate, parseTs } from "@/lib/format";
+import { timeAgo, fmtDate, fmtDateTime, parseTs } from "@/lib/format";
 
 // Order datasets by importance for the panel.
 const ORDER = ["yields", "omo", "callmoney", "repo", "fx", "fxmarket", "fxrates",
@@ -15,6 +15,7 @@ function hoursSince(iso: string | null): number {
 export default function UpdateStatus() {
   const [open, setOpen] = React.useState(false);
   const [s, setS] = React.useState<MetaStatus | null>(null);
+  const btnRef = React.useRef<HTMLButtonElement>(null);
 
   const load = React.useCallback(() => { api.status().then(setS).catch(() => {}); }, []);
   React.useEffect(() => {
@@ -23,30 +24,33 @@ export default function UpdateStatus() {
     return () => clearInterval(id);
   }, [load]);
   React.useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { setOpen(false); btnRef.current?.focus(); }   // close AND hand focus back to the trigger
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   // staleness of the most recent refresh run (3×/day ⇒ healthy if < ~10h)
   const runAge = hoursSince(s?.last_run ?? null);
-  const healthy = runAge < 10;
+  const unreachable = !!s?.unreachable;   // the status call failed: the numbers below are placeholders, not a reading
+  const healthy = !unreachable && runAge < 10;
   const keys = s ? ORDER.filter((k) => s.datasets[k]).concat(Object.keys(s.datasets).filter((k) => !ORDER.includes(k))) : [];
 
   return (
     <div style={{ position: "relative" }}>
-      <button className="status" onClick={() => { setOpen((o) => !o); load(); }}
-        title="Data update status" aria-label="Data update status"
+      <button ref={btnRef} className="status" onClick={() => { setOpen((o) => !o); load(); }}
+        title="Data update status" aria-label="Data update status" aria-expanded={open} aria-haspopup="dialog"
         style={{ background: "none", border: "none", cursor: "pointer", padding: "4px 6px", borderRadius: 7 }}>
         <span className="status-dot" style={{ background: healthy ? "var(--pos)" : "var(--warn)", boxShadow: `0 0 0 3px color-mix(in oklab, ${healthy ? "var(--pos)" : "var(--warn)"} 22%, transparent)` }} />
         <span className="status-txt">Auto</span>
-        <span className="status-time" suppressHydrationWarning>{s?.last_run ? timeAgo(s.last_run) : "—"}</span>
+        <span className="status-time" suppressHydrationWarning>{unreachable ? "unreachable" : s?.last_run ? timeAgo(s.last_run) : "—"}</span>
       </button>
 
       {open && (
         <>
           <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 79 }} />
-          <div style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 80, width: 360, background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 12, boxShadow: "0 16px 50px rgba(0,0,0,.45)", padding: 14, animation: "drillIn .14s ease" }}>
+          <div role="dialog" aria-label="Data updates" style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 80, width: "min(360px, calc(100vw - 24px))", background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 12, boxShadow: "0 16px 50px rgba(0,0,0,.45)", padding: 14, animation: "drillIn .14s ease" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
               <h3 className="panel-title">Data Updates</h3>
               <span style={{ fontSize: 11, color: "var(--fg-mute)" }}>{s?.cadence || "Auto-refreshed"}</span>
@@ -62,9 +66,14 @@ export default function UpdateStatus() {
                 </b>
               </span>
               <span className="mono" suppressHydrationWarning style={{ fontSize: 10.5, color: "var(--fg-mute)", textAlign: "right" }}>
-                {s?.last_run ? parseTs(s.last_run).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : ""}
+                {s?.last_run ? fmtDateTime(s.last_run) : ""}
               </span>
             </div>
+            {unreachable && (
+              <div role="alert" style={{ fontSize: 11.5, color: "var(--neg)", fontWeight: 600, marginBottom: 10 }}>
+                ⚠ Data service unreachable — the figures on the site may be missing or zero. Nothing below is a reading.
+              </div>
+            )}
             <p style={{ fontSize: 11, color: "var(--fg-dim)", margin: "0 0 12px" }}>
               Not live — fetched from Bangladesh Bank on a schedule ({s?.cadence?.toLowerCase() || "auto-refreshed"}).
               Weekends &amp; non-auction days simply have no new data to publish.
@@ -131,6 +140,7 @@ export default function UpdateStatus() {
                 );
               })}
               {!s && <div style={{ color: "var(--fg-mute)", fontSize: 12, padding: "8px 0" }}>Loading…</div>}
+              {unreachable && <div style={{ color: "var(--neg)", fontSize: 12, padding: "8px 0" }}>Status unavailable.</div>}
             </div>
             <p style={{ fontSize: 10, color: "var(--fg-mute)", margin: "10px 0 0", lineHeight: 1.5 }}>
               <span style={{ color: "var(--pos)" }}>● Current</span> = holds the latest data Bangladesh Bank has published

@@ -17,22 +17,35 @@ import DateRangeControl from "@/components/DateRangeControl";
 import { resolveRange, inRange } from "@/lib/daterange";
 import InfoTip from "@/components/InfoTip";
 import { DataWarning } from "@/components/DataWarning";
+import Unavailable from "@/components/Unavailable";
+import { tracker } from "@/lib/safe";
 
 export const revalidate = 0;   // draws the desk's own marks, which must show the moment they are saved, from any device
 
 export default async function YieldsPage({ searchParams }: { searchParams: Promise<{ from?: string; to?: string }> }) {
   const sp = await searchParams;
+  // A source that did not answer is named in the <Unavailable> panel; its panels are empty because UNKNOWN, not because
+  // BB published nothing. Without the curve itself there is nothing honest to draw, so the page stops there.
+  const t = tracker();
   const [primary, secondary, history, slopeAll, fresh, range, provisional, dormant, histAll] = await Promise.all([
-    api.yieldCurve().catch(() => []),
-    api.yieldSecondary().catch(() => []),
-    api.yields(12).catch(() => []),
-    api.yieldSlope(120).catch(() => []),
+    t.soft("yield curve", api.yieldCurve(), []),
+    t.soft("secondary-market yields", api.yieldSecondary(), []),
+    t.soft("12-month yield history", api.yields(12), []),
+    t.soft("curve slope", api.yieldSlope(120), []),
     api.freshness(),
-    api.yieldDateRange(),
-    api.yieldProvisional().catch(() => []),
-    api.yieldDormant().catch(() => []),
-    api.yields(120).catch(() => []),
+    t.soft("auction date range", api.yieldDateRange(), { min: null, max: null, count: 0 }),
+    t.soft("desk provisional marks", api.yieldProvisional(), []),
+    t.soft("dormant tenors", api.yieldDormant(), []),
+    t.soft("yield history", api.yields(120), []),
   ]);
+  if (t.failed.includes("yield curve")) {
+    return (
+      <Unavailable what={t.failed}>
+        The data service did not answer for the yield curve, so no yield figure is shown rather than a blank curve
+        that could be read as &quot;no auctions&quot;. Reload in a moment.
+      </Unavailable>
+    );
+  }
 
   // The window the user chose for the history charts (slope, bid-to-cover, trend). The curve itself is a
   // snapshot of today and the week/month comparison needs the last year, so those keep their own data.
@@ -66,6 +79,7 @@ export default async function YieldsPage({ searchParams }: { searchParams: Promi
   return (
     <>
       <DataWarning dataset={["yields", "auctions"]} />
+      <Unavailable what={t.failed} />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: "var(--gap)", flexWrap: "wrap" }}>
         <Freshness updated={fresh.yields} />
         <DateRangeControl min={win.min} max={win.max} from={win.from} to={win.to} />

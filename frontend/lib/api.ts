@@ -67,42 +67,25 @@ export const api = {
   // Explicit date window (YYYY-MM-DD) — supports the full 2007→present range.
   yieldsRange:     (from: string, to: string, tenor?: string) =>
                      get<YieldRow[]>("/api/yields", tenor ? { date_from: from, date_to: to, tenor } : { date_from: from, date_to: to }),
-  yieldDateRange:  async (): Promise<{ min: string | null; max: string | null; count: number }> => {
-                     try { return await get("/api/yields/range"); }
-                     catch { return { min: null, max: null, count: 0 }; }
-                   },
-  // New endpoint — degrade to empty until the backend is deployed with /api/yields/slope.
-  yieldSlope:      async (months = 24): Promise<CurveSlopeRow[]> => {
-    try { return await get<CurveSlopeRow[]>("/api/yields/slope", { months }); }
-    catch { return []; }
-  },
+  // Getters below THROW on failure (see lib/safe.ts): a swallowed error became a legitimate-looking empty/zero.
+  yieldDateRange:  (): Promise<{ min: string | null; max: string | null; count: number }> => get("/api/yields/range"),
+  yieldSlope:      (months = 24) => get<CurveSlopeRow[]>("/api/yields/slope", { months }),
   securities:      () => get<Security[]>("/api/securities"),
   flows:           (months = 6) => get<FlowRow[]>("/api/flows", { months }),
   callmoney:       (days = 90)  => get<CallMoneyResult>("/api/callmoney", { days }),
   fx:              (days = 365) => get<FxAuctionRow[]>("/api/fx", { days }),
-  fxNewsCheck:     async (): Promise<FxNewsCheck> => {
-    try { return await get<FxNewsCheck>("/api/fx/news-check"); }
-    catch { return { checks: [], matched: 0 }; }
-  },
+  fxNewsCheck:     () => get<FxNewsCheck>("/api/fx/news-check"),
   refrate:         (days = 90)  => get<RefRateRow[]>("/api/refrate", { days }),
-  // New endpoints — degrade to empty until the backend redeploys with them.
-  interbankFx:     async (days = 365): Promise<InterbankFxRow[]> => {
-    try { return await get<InterbankFxRow[]>("/api/fxmarket", { days }); } catch { return []; }
-  },
-  fxRates:         async (days = 365): Promise<FxRateRow[]> => {
-    try { return await get<FxRateRow[]>("/api/fxmarket/rates", { days }); } catch { return []; }
-  },
-  interbankRepo:   async (days = 365): Promise<InterbankRepoRow[]> => {
-    try { return await get<InterbankRepoRow[]>("/api/repo", { days }); } catch { return []; }
-  },
-  guardian:        async (): Promise<GuardianLedger> => {
+  interbankFx:     (days = 365) => get<InterbankFxRow[]>("/api/fxmarket", { days }),
+  fxRates:         (days = 365) => get<FxRateRow[]>("/api/fxmarket/rates", { days }),
+  interbankRepo:   (days = 365) => get<InterbankRepoRow[]>("/api/repo", { days }),
+  // null on failure: an empty ledger would read as "0 open defects, every check passes".
+  guardian:        async (): Promise<GuardianLedger | null> => {
     try { return await get<GuardianLedger>("/api/meta/guardian"); }
-    catch { return { as_of: "", open: [], open_defects: 0, open_waiting: 0, resolved: [], repairs: [] }; }
+    catch { return null; }
   },
-  nextAuction:     async (): Promise<NextAuctionResult> => {
-    try { return await get<NextAuctionResult>("/api/securities/next-auction"); }
-    catch { return { as_of: "", calendar_through: null, published: false, next: null, following: [] }; }
-  },
+  // Throws on failure: the empty shape said "BB has not published a calendar", which is a claim about BB, not about us.
+  nextAuction:     () => get<NextAuctionResult>("/api/securities/next-auction"),
   drilldown:       (date: string, cumFrom?: string) =>
     get<DrilldownResult>(`/api/flows/drilldown`, cumFrom ? { date, cum_from: cumFrom } : { date }, true),   // carries the desk's provisional buybacks
   // Forward schedule split by product. New endpoints — degrade to an empty
@@ -117,11 +100,7 @@ export const api = {
     try { return await get<ScheduleDetail>("/api/flows/by-product/detail", { years }); }
     catch { return { from: "", to: "", years, unit: "crore", count: 0, rows: [] }; }
   },
-  // New endpoint — degrade to empty until the backend is deployed with /api/flows/forecast.
-  flowsForecast:   async (days = 28): Promise<LiquidityForecast> => {
-    try { return await get<LiquidityForecast>("/api/flows/forecast", { days }); }
-    catch { return { as_of: "", days: [], unit: "BDT crore" }; }
-  },
+  flowsForecast:   (days = 28) => get<LiquidityForecast>("/api/flows/forecast", { days }),
   /** Every auction in the desk's T-Bill / T-Bond spreadsheet layout. */
   auctionSheet:    async (p: { from?: string; to?: string; limit?: number; offset?: number } = {}): Promise<AuctionSheet> => {
     const q: Record<string, string | number> = {};
@@ -154,10 +133,7 @@ export const api = {
     }
   },
   /** The ladder over an explicit window, which MAY be in the past. */
-  flowsLadder:     async (from: string, to: string): Promise<LiquidityForecast> => {
-    try { return await get<LiquidityForecast>("/api/flows/forecast", { date_from: from, date_to: to }); }
-    catch { return { as_of: "", days: [], unit: "BDT crore" }; }
-  },
+  flowsLadder:     (from: string, to: string) => get<LiquidityForecast>("/api/flows/forecast", { date_from: from, date_to: to }),
   omoMaturityLadder: async (p: { days?: number; from?: string; to?: string } = {}):
     Promise<OmoMaturityLadder> => {
     const q: Record<string, string | number> = p.from || p.to
@@ -177,19 +153,14 @@ export const api = {
     try { return await get<Freshness>("/api/meta/freshness"); }
     catch { return EMPTY_FRESHNESS; }
   },
+  // On failure returns `unreachable: true` (never an all-clear shape): the banner in AppShell reads it.
   status:          async (): Promise<MetaStatus> => {
     try { return await get<MetaStatus>("/api/meta/status"); }
-    catch { return { datasets: {}, last_run: null, last_run_errors: [], cadence: "" }; }
+    catch { return { datasets: {}, last_run: null, last_run_errors: [], cadence: "", unreachable: true }; }
   },
   // New endpoint — degrade to empty corridor until the backend is deployed.
-  policy:          async (): Promise<PolicyCorridor> => {
-    try { return await get<PolicyCorridor>("/api/policy"); }
-    catch { return { current: null, history: [] }; }
-  },
-  macro:           async (): Promise<MacroSeries> => {
-    try { return await get<MacroSeries>("/api/macro/reserves"); }
-    catch { return { series: [], latest: null }; }
-  },
+  policy:          () => get<PolicyCorridor>("/api/policy"),
+  macro:           () => get<MacroSeries>("/api/macro/reserves"),
   // Pre-computed in GitHub Actions, never in the API. Degrades to an empty run
   // until the weekly workflow has populated the tables.
   forecast:        async (): Promise<ForecastPayload> => {
@@ -204,35 +175,11 @@ export const api = {
     try { return await get<DiagnosticRow[]>("/api/forecast/diagnostics"); }
     catch { return []; }
   },
-  exports:         async (): Promise<ExportCatalog> => {
-    try { return await get<ExportCatalog>("/api/exports"); }
-    catch { return { as_of: "", count: 0, exports: [] }; }
-  },
-  islamic:         async (weeks = 26): Promise<IslamicWindow> => {
-    try { return await get<IslamicWindow>(`/api/islamic?weeks=${weeks}`); }
-    catch {
-      return { as_of: "", weeks, count: 0, latest_auction: null,
-               by_tenor: [], auctions: [] };
-    }
-  },
-  deskMarks:       async (days = 60): Promise<DeskMarks> => {
-    try { return await get<DeskMarks>(`/api/desk/marks?days=${days}`, undefined, true); }
-    catch {
-      return { as_of: "", window_days: days, count: 0, unconfirmed: 0,
-               worst_diff_bps: null, configured: false, tenors: [], marks: [] };
-    }
-  },
-  press:           async (days = 90): Promise<PressFeed> => {
-    try { return await get<PressFeed>(`/api/press?days=${days}`); }
-    catch {
-      return { as_of: "", window_days: days, count: 0, by_category: [],
-               latest_by_category: {}, follow_ups: [], releases: [] };
-    }
-  },
-  monetary:        async (): Promise<MonetaryData> => {
-    try { return await get<MonetaryData>("/api/macro/monetary"); }
-    catch { return { monthly: [], latest: null, reserve_requirements: { current: null, history: [] } }; }
-  },
+  exports:         () => get<ExportCatalog>("/api/exports"),
+  islamic:         (weeks = 26) => get<IslamicWindow>(`/api/islamic?weeks=${weeks}`),
+  deskMarks:       (days = 60) => get<DeskMarks>(`/api/desk/marks?days=${days}`, undefined, true),
+  press:           (days = 90) => get<PressFeed>(`/api/press?days=${days}`),
+  monetary:        () => get<MonetaryData>("/api/macro/monetary"),
 };
 
 export type ForecastModel = "naive" | "momentum" | "ols" | "curve" | "ecm" | "blend";
@@ -585,6 +532,8 @@ export interface MetaStatus {
   last_run_errors: string[];
   data_health?: DataHealth | null;
   cadence: string;
+  /** set only by api.status() when the call FAILED: the datasets/last_run above are then placeholders, not facts. */
+  unreachable?: boolean;
   checked_recently?: boolean;
   /** false = the refresh itself has stopped; every figure is at least run_age_hours old. */
   pipeline_alive?: boolean;

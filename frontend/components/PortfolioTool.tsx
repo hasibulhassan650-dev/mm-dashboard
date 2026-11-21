@@ -5,7 +5,7 @@ import { fmtNum, fmtPct } from "@/lib/format";
 import { Panel } from "@/components/terminal/ui";
 import DownloadButton from "@/components/DownloadButton";
 
-interface Props { secondary: SecondaryYieldRow[]; securities: Security[]; repoDefault: number }
+interface Props { secondary: SecondaryYieldRow[]; securities: Security[]; repoDefault: number | null }
 interface Holding { isin: string; faceMn: number; costPx: number | null }
 
 const DAY = 86400000;
@@ -142,7 +142,8 @@ const SHIFTS = [-100, -50, -25, 25, 50, 100];
 
 export default function PortfolioTool({ secondary, securities, repoDefault }: Props) {
   const [rows, setRows] = useState<Holding[]>([{ isin: "", faceMn: 0, costPx: null }]);
-  const [funding, setFunding] = useState(repoDefault);
+  // null = no funding rate known: carry is then NOT computed (never silently run at some default rate).
+  const [funding, setFunding] = useState<number | null>(repoDefault);
   const [horizon, setHorizon] = useState(0.25);
   const [bulk, setBulk] = useState(false);
   const [today] = useState(() => new Date());
@@ -207,7 +208,7 @@ export default function PortfolioTool({ secondary, securities, repoDefault }: Pr
     const settleEnd = new Date(today.getTime() + horizon * 365.25 * DAY);
     const yearsEnd = yearsBetween(settleEnd, maturity);
     let carryRollMn: number | null = null, carryRollAnnPct: number | null = null, breakevenBp: number | null = null;
-    if (yearsEnd > 0) {
+    if (yearsEnd > 0 && funding != null) {
       const yEnd = interpYield(curve, yearsEnd) ?? yieldPct;
       const end = px(yEnd, settleEnd);
       const cpn = (couponPct && couponPct > 0) ? couponPct / freq : 0;
@@ -277,8 +278,12 @@ export default function PortfolioTool({ secondary, securities, repoDefault }: Pr
         <div style={{ display: "flex", gap: 18, alignItems: "center", flexWrap: "wrap", marginTop: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ fontSize: 12, color: "var(--fg-dim)" }}>Funding rate</span>
-            <input type="number" value={funding} step="any" onChange={(e) => setFunding(parseFloat(e.target.value) || 0)} style={{ ...inputStyle, width: 80 }} />
-            <span style={{ fontSize: 11.5, color: "var(--fg-mute)" }}>% · cost of carry (default BB repo)</span>
+            <input type="number" value={funding ?? ""} step="any" placeholder="required"
+              onChange={(e) => { const v = parseFloat(e.target.value); setFunding(Number.isFinite(v) ? v : null); }} style={{ ...inputStyle, width: 80 }} />
+            <span style={{ fontSize: 11.5, color: funding == null ? "var(--warn)" : "var(--fg-mute)" }}>
+              {funding == null ? "% · enter your funding rate: BB's policy repo rate is unavailable, so carry is not computed"
+                               : "% · cost of carry (pre-filled from BB's policy repo rate when available; edit to your own)"}
+            </span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <span style={{ fontSize: 12, color: "var(--fg-dim)" }}>Horizon</span>
@@ -305,7 +310,7 @@ export default function PortfolioTool({ secondary, securities, repoDefault }: Pr
             <div className="kpi"><div className="kpi-top"><span className="kpi-label">Portfolio DV01</span></div><div className="kpi-val"><span className="kpi-num">{fmtNum(dv01, 3)}</span><span className="kpi-unit">mn/bp</span></div></div>
             <div className="kpi"><div className="kpi-top"><span className="kpi-label">Convexity</span></div><div className="kpi-val"><span className="kpi-num">{wConv.toFixed(1)}</span></div></div>
             <div className="kpi"><div className="kpi-top"><span className="kpi-label">WAM</span></div><div className="kpi-val"><span className="kpi-num">{wam.toFixed(2)}</span><span className="kpi-unit">yr</span></div></div>
-            <div className="kpi"><div className="kpi-top"><span className="kpi-label">Carry + Roll</span></div><div className="kpi-val"><span className="kpi-num" style={{ color: carryRoll >= 0 ? "var(--pos)" : "var(--neg)" }}>{kfmt(carryRoll)}</span><span className="kpi-unit">mn</span></div><div className="kpi-sub">{kfmt(carryRollAnn, 2)}%/yr · breakeven {kfmt(breakeven, 0)}bp</div></div>
+            <div className="kpi"><div className="kpi-top"><span className="kpi-label">Carry + Roll</span></div><div className="kpi-val"><span className="kpi-num" style={{ color: funding == null ? "var(--fg-mute)" : carryRoll >= 0 ? "var(--pos)" : "var(--neg)" }}>{funding == null ? "—" : kfmt(carryRoll)}</span><span className="kpi-unit">mn</span></div><div className="kpi-sub">{funding == null ? "enter a funding rate" : <>{kfmt(carryRollAnn, 2)}%/yr · breakeven {kfmt(breakeven, 0)}bp</>}</div></div>
           </div>
 
           {/* Scenario strip — parallel bp shifts */}

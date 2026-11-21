@@ -4,6 +4,7 @@ import type { PressFeed, PressRelease } from "@/lib/api";
 import { Panel } from "@/components/terminal/ui";
 import RelatedLinks from "@/components/RelatedLinks";
 import SourceLink from "@/components/SourceLink";
+import Unavailable from "@/components/Unavailable";
 
 export const revalidate = 300;
 
@@ -42,7 +43,16 @@ export default async function PressPage() {
   let feed: PressFeed | null = null;
   try { feed = await api.press(90); } catch { feed = null; }
 
-  if (!feed || !feed.count) {
+  // A failed read is not "nothing published": the follow-ups (what must be acted on) would silently vanish with it.
+  if (!feed) {
+    return (
+      <Unavailable what="press releases and follow-ups">
+        The data service did not answer, so the press listing and the follow-up actions derived from it are
+        <b> unknown</b>, not empty. Reload in a moment.
+      </Unavailable>
+    );
+  }
+  if (!feed.count) {
     return (
       <Panel title="Bangladesh Bank Press Releases" span={12}>
         <p style={{ margin: 0, fontSize: 13, color: "var(--warn)" }}>

@@ -5,6 +5,7 @@ import StatCard from "@/components/StatCard";
 import DownloadButton from "@/components/DownloadButton";
 import Link from "next/link";
 import SourceLink from "@/components/SourceLink";
+import { todayDhaka } from "@/lib/format";
 
 export const revalidate = 0;   // lists the desk's provisional buybacks the moment they are saved
 
@@ -25,7 +26,11 @@ export default async function DrilldownPage({
   searchParams: Promise<{ date?: string; cum_from?: string }>;
 }) {
   const params = await searchParams;
-  const date = params.date ?? new Date().toISOString().slice(0, 10);
+  // ?date= is user input: an unparseable value used to crash prevWorkday (RangeError in toISOString).
+  const asked = params.date;
+  const validAsked = !!asked && /^\d{4}-\d{2}-\d{2}$/.test(asked) && !Number.isNaN(new Date(asked + "T00:00:00Z").getTime())
+    && new Date(asked + "T00:00:00Z").toISOString().slice(0, 10) === asked;
+  const date = validAsked ? asked! : todayDhaka();
   const cumFrom = params.cum_from && /^\d{4}-\d{2}-\d{2}$/.test(params.cum_from)
     && params.cum_from <= date ? params.cum_from : undefined;
   const data = await api.drilldown(date, cumFrom);
@@ -55,6 +60,12 @@ export default async function DrilldownPage({
           className="px-3 py-1.5 rounded b-panel2 hover-b-panel2 text-sm t-dim">Next ▶</Link>
         <Link href="/cashflows" className="ml-auto text-xs t-info hover:underline">← Back to Cash Flows</Link>
       </div>
+
+      {asked && !validAsked && (
+        <div role="alert" style={{ color: "var(--warn)", fontSize: 12.5, marginBottom: "var(--gap)" }}>
+          &ldquo;{asked.slice(0, 40)}&rdquo; is not a valid date (use YYYY-MM-DD), so today ({date}) is shown instead.
+        </div>
+      )}
 
       <SourceLink k={["flows", "omo", "buybacks", "news"]} />
 

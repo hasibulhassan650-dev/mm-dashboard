@@ -12,12 +12,19 @@ import InfoTip from "@/components/InfoTip";
 import RelatedLinks from "@/components/RelatedLinks";
 import SourceLink from "@/components/SourceLink";
 import { DataWarning } from "@/components/DataWarning";
+import Unavailable from "@/components/Unavailable";
+import { tracker } from "@/lib/safe";
 
 export const revalidate = 300;
 
 export default async function CallMoneyPage({ searchParams }: { searchParams: Promise<{ from?: string; to?: string }> }) {
   const sp = await searchParams;
-  const [data, fresh, corridor] = await Promise.all([api.callmoney(3650), api.freshness(), api.policy()]);
+  const t = tracker();
+  const [data, fresh, corridor] = await Promise.all([
+    api.callmoney(3650),   // throws on failure -> the route's error boundary, never an empty table
+    api.freshness(),
+    t.soft("policy corridor", api.policy(), { current: null, history: [] }),
+  ]);
   const summaryAll = [...data.daily_summary].sort((a, b) => a.trade_date.localeCompare(b.trade_date));
   const range = resolveRange(sp, summaryAll.map((r) => r.trade_date), 90);
   const summary = summaryAll.filter((r) => inRange(r.trade_date, range.from, range.to));
@@ -33,6 +40,7 @@ export default async function CallMoneyPage({ searchParams }: { searchParams: Pr
   return (
     <>
       <DataWarning dataset={["callmoney", "cross-source"]} />
+      <Unavailable what={t.failed} />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: "var(--gap)", flexWrap: "wrap" }}>
         <Freshness updated={fresh.callmoney} />
         <DateRangeControl min={range.min} max={range.max} from={range.from} to={range.to} />
@@ -64,7 +72,7 @@ export default async function CallMoneyPage({ searchParams }: { searchParams: Pr
       {cur && (
         corridor.verified
           ? <div style={{ fontSize: 11.5, color: "var(--pos)", margin: "0 2px 8px" }}>
-              ✓ Policy corridor — live from Bangladesh Bank (bb.org.bd){cur.last_checked ? ` · last checked ${fmtDate(cur.last_checked)}` : ""} · eff. {fmtDate(cur.effective_date)}
+              ✓ Policy corridor — auto-fetched from Bangladesh Bank (bb.org.bd){cur.last_checked ? ` · last checked ${fmtDate(cur.last_checked)}` : ""} · eff. {fmtDate(cur.effective_date)}
             </div>
           : <div style={{ fontSize: 11.5, color: "var(--warn)", margin: "0 2px 8px" }}>
               ⚠ Policy corridor — illustrative / pending verification against BB MPC circulars (assumed eff. {fmtDate(cur.effective_date)}).

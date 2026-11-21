@@ -34,7 +34,8 @@ export default async function ExportPage({
     return (
       <Panel title="Export" span={12}>
         <p style={{ margin: 0, fontSize: 13, color: "var(--warn)" }}>
-          <code>/api/exports</code> is not deployed yet. Each page still has its own
+          The export catalogue could not be loaded: either the data service did not answer, or
+          <code> /api/exports</code> is not deployed yet. Each page still has its own
           Download button in the meantime.
         </p>
       </Panel>

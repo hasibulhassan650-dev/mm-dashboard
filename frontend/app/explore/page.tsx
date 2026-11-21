@@ -5,26 +5,30 @@ import Link from "next/link";
 import RelatedLinks from "@/components/RelatedLinks";
 import Freshness from "@/components/Freshness";
 import type { MacroRow } from "@/lib/api";
+import { todayDhaka } from "@/lib/format";
+import Unavailable from "@/components/Unavailable";
+import { tracker } from "@/lib/safe";
 
 export const revalidate = 300;
 
 export default async function ExplorePage() {
+  const t = tracker();
   const [omoOut, cm, yh, fx, macro, rr, flows, fresh, ibfx, fxrates, repo] = await Promise.all([
-    api.omoOutstanding(365).catch(() => []),
+    t.soft("OMO outstanding", api.omoOutstanding(365), []),
     // 5 years: the call-money series was backfilled from 2021, so the
     // correlation grid is no longer limited to the ~5 months it once held.
-    api.callmoney(1825).catch(() => ({ daily_summary: [], latest_breakdown: [], latest_date: null })),
-    api.yields(36).catch(() => []),
-    api.fx(1095).catch(() => []),
-    api.macro(),
-    api.refrate(730).catch(() => []),
-    api.flows(24).catch(() => []),
+    t.soft("call money", api.callmoney(1825), { daily_summary: [], latest_breakdown: [], latest_date: null }),
+    t.soft("auction yields", api.yields(36), []),
+    t.soft("FX auctions", api.fx(1095), []),
+    t.soft("reserves & remittance", api.macro(), { series: [], latest: null }),
+    t.soft("reference rates", api.refrate(730), []),
+    t.soft("cash flows", api.flows(24), []),
     api.freshness(),
-    api.interbankFx(1095),
-    api.fxRates(1095),
-    api.interbankRepo(1095),
+    t.soft("interbank FX", api.interbankFx(1095), []),
+    t.soft("FX rates", api.fxRates(1095), []),
+    t.soft("interbank repo", api.interbankRepo(1095), []),
   ]);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayDhaka();
 
   // build a date->value map, dropping nulls/NaN
   const mk = (entries: [string | null | undefined, number | null | undefined][]): Record<string, number> => {
@@ -165,6 +169,11 @@ export default async function ExplorePage() {
         Explore shows correlations, not forecasts. For how next-auction yields are actually forecast, see{" "}
         <Link href="/research#method" style={{ color: "var(--accent)" }}>How the Yield Curve Is Forecast</Link>.
       </p>
+      {/* a source that did not answer has NO series in the picker: unknown, not "no data" */}
+      <Unavailable what={t.failed}>
+        These sources did not answer, so their series are <b>missing from the picker</b> and from every correlation below.
+        Reload in a moment.
+      </Unavailable>
       <ExploreTool variables={variables} min={min} max={max} />
       <RelatedLinks items={[
         { href: "/omo", label: "OMO Operations", why: "the liquidity side" },

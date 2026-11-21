@@ -7,6 +7,7 @@ import OmoNetLiquidityChart from "@/components/OmoNetLiquidityChart";
 import DownloadButton from "@/components/DownloadButton";
 import { OMO_INSTRUMENTS, OMO_ABSORPTION_KEYS } from "@/lib/terminal";
 import type { OmoOutstandingRow, OmoTxnRow } from "@/lib/api";
+import { todayDhaka } from "@/lib/format";
 
 const OMO_META = new Map(OMO_INSTRUMENTS.map((i) => [i.key, i]));
 const isAbsorb = (inst: string) => OMO_ABSORPTION_KEYS.has(inst);
@@ -23,7 +24,7 @@ export interface OmoData {
   latestNet: number | null;
 }
 
-const TODAY = new Date().toISOString().slice(0, 10);
+const TODAY = todayDhaka();
 
 export default function OmoView({ d }: { d: OmoData }) {
   const [active, setActive] = React.useState(Object.fromEntries(d.omoCats.map((c) => [c.key, true])));

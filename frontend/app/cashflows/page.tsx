@@ -1,6 +1,6 @@
 import { api } from "@/lib/api";
 import Link from "next/link";
-import { fmtDate } from "@/lib/format";
+import { fmtDate, todayDhaka } from "@/lib/format";
 import { Panel } from "@/components/terminal/ui";
 import CashFlowChart from "@/components/CashFlowChart";
 import DateRangeControl from "@/components/DateRangeControl";
@@ -10,19 +10,31 @@ import Freshness from "@/components/Freshness";
 import RelatedLinks from "@/components/RelatedLinks";
 import SourceLink from "@/components/SourceLink";
 import { DataWarning } from "@/components/DataWarning";
+import Unavailable from "@/components/Unavailable";
+import { tracker } from "@/lib/safe";
 
 export const revalidate = 300;
 
 export default async function CashFlowsPage({ searchParams }: { searchParams: Promise<{ from?: string; to?: string }> }) {
   const sp = await searchParams;
-  const [flows, fresh] = await Promise.all([api.flows(24).catch(() => []), api.freshness()]);
+  const t = tracker();
+  const [flows, fresh] = await Promise.all([t.soft("cash flows", api.flows(24), []), api.freshness()]);
+  // A failed fetch must not render as an empty ladder (no events = no cash moving).
+  if (t.failed.length) {
+    return (
+      <Unavailable what="cash-flow ladder">
+        The data service did not answer, so today&apos;s inflow, outflow and the upcoming settlements are <b>unknown</b>
+        — not zero. Reload in a moment.
+      </Unavailable>
+    );
+  }
   const range = resolveRange(sp, flows.map((r) => r.flow_date), 180);
   const rangeFlows = flows.filter((r) => inRange(r.flow_date, range.from, range.to));
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayDhaka();
   const todayRow = [...flows].reverse().find((r) => r.flow_date <= today) ?? flows[flows.length - 1];
   const upcoming = flows.filter((r) => r.flow_date >= today).slice(0, 30);
   const totalInflow = flows.reduce((s, r) => s + (r.total_inflow_bdt_mill ?? 0), 0);
-  const totalOutflow = flows.reduce((s, r) => s + (r.auction_outflow_confirmed_mill ?? r.auction_outflow_planned_mill ?? 0), 0);
+  const totalOutflow = flows.reduce((s, r) => s + (r.auction_outflow_confirmed_mill || r.auction_outflow_planned_mill || 0), 0);
   // Running cumulative net borrowing. Anchored at the FIRST ROW SHOWN, never
   // carried in from rows off-screen: a running total whose starting point you
   // cannot see tells you nothing. One heavy day is survivable; six in a row is
@@ -60,11 +72,12 @@ export default async function CashFlowsPage({ searchParams }: { searchParams: Pr
             coupons while this page showed BDT 72mn.
           </p>
           <p style={{ marginBottom: 0 }}>
-            The full history has been rebuilt and reconciled against the underlying coupon and maturity
-            events: <b style={{ color: "var(--pos)" }}>zero mismatched days</b> across Jul 2025 – Jul
-            2027, totals tie exactly, and no cash is dated to a non-working day. The contractual due
-            date is still recorded on every event and shown in the day drill-down. A regression test
-            now fails if the basis is ever changed back.
+            The full history was rebuilt and reconciled against the underlying coupon and maturity
+            events at that correction: <b>zero mismatched days</b> across Jul 2025 – Jul 2027, totals
+            tied exactly, and no cash was dated to a non-working day. <i>That is a result recorded as of
+            21 Aug 2026, not recomputed when this page loads</i>; the live integrity checks are on the
+            Guardian page. The contractual due date is still recorded on every event and shown in the
+            day drill-down. A regression test fails if the basis is ever changed back.
           </p>
         </div>
       </Panel>

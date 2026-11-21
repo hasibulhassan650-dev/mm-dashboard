@@ -9,7 +9,9 @@ import Freshness from "@/components/Freshness";
 import NextAuction from "@/components/NextAuction";
 import RelatedLinks from "@/components/RelatedLinks";
 import SourceLink from "@/components/SourceLink";
-import { fmtDate } from "@/lib/format";
+import { fmtDate, todayDhaka } from "@/lib/format";
+import Unavailable from "@/components/Unavailable";
+import { tracker } from "@/lib/safe";
 
 export const revalidate = 300;
 
@@ -28,14 +30,15 @@ export default async function AuctionsPage({
   searchParams,
 }: { searchParams: Promise<{ from?: string; to?: string }> }) {
   const sp = await searchParams;
-  const today = iso(new Date());
+  const today = todayDhaka();
   // Default window: six months back, and forward to wherever BB's calendar
   // reaches — the planned auctions are the point of the page.
   const from = sp.from ?? shift(today, -183);
   const to = sp.to ?? shift(today, 120);
 
+  const tr = tracker();
   const [book, next, fresh] = await Promise.all([
-    api.auctionBook({ from, to }), api.nextAuction(), api.freshness(),
+    api.auctionBook({ from, to }), tr.soft("next auction", api.nextAuction(), null), api.freshness(),
   ]);
 
   if (!book.count && !book.calendar_published_to) {
@@ -44,9 +47,9 @@ export default async function AuctionsPage({
         <DataWarning dataset={["auctions", "calendar"]} />
         <Panel title="Treasury Auctions" span={12}>
           <p style={{ margin: 0, fontSize: 13, color: "var(--warn)" }}>
-            The auction endpoint returned nothing. This is the API being behind the site, not an
-            empty auction book — <code>/api/securities/auctions</code> needs the API project
-            redeployed. No figures are shown rather than zeros.
+            The auction endpoint returned nothing. Either the data service could not be reached, or the API
+            is behind this site and <code>/api/securities/auctions</code> needs the API project redeployed.
+            It is not an empty auction book. No figures are shown rather than zeros.
           </p>
         </Panel>
       </>
@@ -69,7 +72,9 @@ export default async function AuctionsPage({
         <DateRangeControl min={minDate} max={maxDate} from={from} to={to} />
       </div>
 
-      <NextAuction data={next} />
+      {next ? <NextAuction data={next} /> : <Unavailable what="next-auction notice">
+        The data service did not answer, so whether an auction is due is <b>unknown</b> — not &quot;none due&quot;.
+      </Unavailable>}
 
       <div className="kpi-strip" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
         <div className="kpi">

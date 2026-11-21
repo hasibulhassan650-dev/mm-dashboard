@@ -1,8 +1,9 @@
 import { api } from "@/lib/api";
-import { parseTs } from "@/lib/format";
+import { parseTs, fmtDateTime } from "@/lib/format";
 import { Panel } from "@/components/terminal/ui";
 import RelatedLinks from "@/components/RelatedLinks";
 import DownloadButton from "@/components/DownloadButton";
+import Unavailable from "@/components/Unavailable";
 
 export const revalidate = 300;
 
@@ -16,12 +17,20 @@ function ago(iso: string | null | undefined): string {
 
 function when(iso: string | null | undefined): string {
   if (!iso) return "—";
-  return parseTs(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  return fmtDateTime(iso);
 }
 
 export default async function GuardianPage() {
   const g = await api.guardian();
-
+  // A failed call must not render as "0 open defects, every integrity check passes".
+  if (!g) {
+    return (
+      <Unavailable what="integrity ledger">
+        The data service did not answer, so the number of open defects is <b>unknown</b>. This is not an all-clear:
+        do not read the absence of a list as every check passing. Reload in a moment.
+      </Unavailable>
+    );
+  }
   const defects = g.open.filter((o) => o.severity === "defect");
   const waiting = g.open.filter((o) => o.severity === "waiting");
 

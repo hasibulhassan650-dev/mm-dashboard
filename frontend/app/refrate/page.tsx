@@ -11,6 +11,8 @@ import RelatedLinks from "@/components/RelatedLinks";
 import SourceLink from "@/components/SourceLink";
 import type { RefRateRow } from "@/lib/api";
 import { DataWarning } from "@/components/DataWarning";
+import Unavailable from "@/components/Unavailable";
+import { tracker } from "@/lib/safe";
 
 export const revalidate = 300;
 
@@ -18,7 +20,20 @@ const PRODUCTS = ["Overnight", "1W", "1M", "3M"];
 
 export default async function RefRatePage({ searchParams }: { searchParams: Promise<{ from?: string; to?: string }> }) {
   const sp = await searchParams;
-  const [allRows, fresh, corridor] = await Promise.all([api.refrate(3650).catch(() => [] as RefRateRow[]), api.freshness(), api.policy()]);
+  const t = tracker();
+  const [allRows, fresh, corridor] = await Promise.all([
+    t.soft("reference rates", api.refrate(3650), [] as RefRateRow[]),
+    api.freshness(),
+    t.soft("policy corridor", api.policy(), { current: null, history: [] }),
+  ]);
+  // A failed fetch must not reach the "No reference-rate data" empty state below, which reads as BB having published none.
+  if (t.failed.includes("reference rates")) {
+    return (
+      <Unavailable what={t.failed}>
+        The data service did not answer, so the reference rates are <b>unknown</b>, not absent. Reload in a moment.
+      </Unavailable>
+    );
+  }
   const repoRate = corridor.current?.repo ?? null;
 
   const range = resolveRange(sp, allRows.map((r) => r.trade_date), 90);
@@ -52,6 +67,9 @@ export default async function RefRatePage({ searchParams }: { searchParams: Prom
         <DateRangeControl min={range.min} max={range.max} from={range.from} to={range.to} />
       </div>
 
+      <Unavailable what={t.failed}>
+        The policy corridor did not answer, so the repo-rate comparison is not shown.
+      </Unavailable>
       {rows.length === 0 && (
         <div className="panel" style={{ padding: 40, textAlign: "center", color: "var(--fg-mute)" }}>No reference-rate data for this period. Try a wider window.</div>
       )}

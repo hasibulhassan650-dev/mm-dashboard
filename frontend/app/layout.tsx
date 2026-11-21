@@ -28,7 +28,8 @@ async function buildTicker(): Promise<TickItem[]> {
       api.yieldCurve().catch(() => []),
       api.yields(3).catch(() => []),
       api.callmoney(30).catch(() => ({ daily_summary: [], latest_breakdown: [], latest_date: null })),
-      api.macro(),
+      // omitted from the ticker when it fails (an absent tick, never a zero one)
+      api.macro().catch(() => ({ series: [], latest: null })),
     ]);
 
     // change of the two most-recent distinct readings (rounded to 2dp)
@@ -39,7 +40,7 @@ async function buildTicker(): Promise<TickItem[]> {
     if (ds.length) {
       const last = ds[ds.length - 1], prev = ds[ds.length - 2];
       if (last.overnight_wavg_rate != null)
-        ticks.push({ sym: "CALL WAR", val: last.overnight_wavg_rate.toFixed(2) + "%", d: diff(last.overnight_wavg_rate, prev?.overnight_wavg_rate) });
+        ticks.push({ sym: "CALL WAR", val: last.overnight_wavg_rate.toFixed(2) + "%", d: diff(last.overnight_wavg_rate, prev?.overnight_wavg_rate), rate: true });
     }
 
     // per-tenor yield: latest cut-off vs previous auction for that tenor
@@ -51,7 +52,7 @@ async function buildTicker(): Promise<TickItem[]> {
     for (const row of [...curve].sort((a, b) => byTenor(a.tenor_label, b.tenor_label))) {
       const t = row.tenor_label;
       ticks.push({ sym: t.replace("_FRTB", " FRTB") + (row.security_type === "FRTB" ? "" : " TB"),
-                   val: row.cutoff_yield_pct.toFixed(2) + "%", d: tenorDelta(t) });
+                   val: row.cutoff_yield_pct.toFixed(2) + "%", d: tenorDelta(t), rate: true });
     }
 
     // reserves & remittance: latest month vs previous month

@@ -10,12 +10,27 @@ import Freshness from "@/components/Freshness";
 import RelatedLinks from "@/components/RelatedLinks";
 import { DataWarning } from "@/components/DataWarning";
 import SourceLink from "@/components/SourceLink";
+import Unavailable from "@/components/Unavailable";
+import { tracker } from "@/lib/safe";
 
 export const revalidate = 300;
 
 export default async function FxPage({ searchParams }: { searchParams: Promise<{ from?: string; to?: string }> }) {
   const sp = await searchParams;
-  const [allRows, fresh, news] = await Promise.all([api.fx(3650).catch(() => []), api.freshness(), api.fxNewsCheck()]);
+  const t = tracker();
+  const [allRows, fresh, news] = await Promise.all([
+    t.soft("FX auctions", api.fx(3650), []),
+    api.freshness(),
+    // If this fails the press-vs-BB conflict warning below cannot appear: say so rather than show "no conflicts".
+    t.soft("press cross-check", api.fxNewsCheck(), { checks: [], matched: 0 }),
+  ]);
+  if (t.failed.includes("FX auctions")) {
+    return (
+      <Unavailable what={t.failed}>
+        The data service did not answer, so the FX auction figures are <b>unknown</b>, not zero. Reload in a moment.
+      </Unavailable>
+    );
+  }
   const range = resolveRange(sp, allRows.map((r) => r.auction_date), 365);
   const rows = allRows.filter((r) => inRange(r.auction_date, range.from, range.to));
 
@@ -28,6 +43,10 @@ export default async function FxPage({ searchParams }: { searchParams: Promise<{
   return (
     <>
       <DataWarning dataset={["fx"]} />
+      <Unavailable what={t.failed}>
+        The press-report cross-check did not answer, so any press report that conflicts with Bangladesh Bank&apos;s page
+        is <b>not being shown</b> here. The absence of a warning is not an all-clear.
+      </Unavailable>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: "var(--gap)", flexWrap: "wrap" }}>
         <Freshness updated={fresh.fx} />
         <DateRangeControl min={range.min} max={range.max} from={range.from} to={range.to} />
@@ -36,7 +55,7 @@ export default async function FxPage({ searchParams }: { searchParams: Promise<{
       {news.checks.length > 0 && (
         <div className="panel" style={{ padding: 14, marginBottom: "var(--gap)", borderColor: "var(--warn)" }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
-            <b style={{ fontSize: 13 }}>Reported by the press, not yet on Bangladesh Bank&apos;s page</b>
+            <b style={{ fontSize: 13 }}>Press report vs Bangladesh Bank&apos;s page — not yet on BB&apos;s page, or differing from it</b>
             <span style={{ fontSize: 11, color: "var(--fg-mute)" }}>news, not BB data · never totalled or charted · {news.matched} other press reports agree with BB&apos;s table</span>
           </div>
           {news.checks.map((c, i) => (

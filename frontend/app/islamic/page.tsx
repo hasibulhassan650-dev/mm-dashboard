@@ -5,6 +5,8 @@ import RelatedLinks from "@/components/RelatedLinks";
 import SourceLink from "@/components/SourceLink";
 import IslamicFacilities from "@/components/IslamicFacilities";
 import SukukPanel from "@/components/SukukPanel";
+import Unavailable from "@/components/Unavailable";
+import { tracker } from "@/lib/safe";
 
 export const revalidate = 300;
 
@@ -12,28 +14,30 @@ const n2 = (v: number | null | undefined) =>
   v == null ? "" : v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export default async function IslamicPage() {
-  let data: IslamicWindow | null = null;
-  try { data = await api.islamic(26); } catch { data = null; }
+  // The three reads are independent: one failing must not hide the others, and "BGIIB has no rows" must not hide
+  // the sukuk or the Islamic banks' OMO facilities (which come from other tables).
+  const t = tracker();
   // The Islamic banks' own facilities live in the OMO data; this page shows them,
   // it does not keep a second copy.
-  const [inj, txns]: [OmoInjection | null, OmoTxnRow[]] = await Promise.all([
-    api.omoInjection(30).catch(() => null),
-    api.omoTransactions(90).catch(() => [] as OmoTxnRow[]),
+  const [data, inj, txns]: [IslamicWindow | null, OmoInjection | null, OmoTxnRow[]] = await Promise.all([
+    t.soft<IslamicWindow | null>("BGIIB & sukuk", api.islamic(26), null),
+    t.soft<OmoInjection | null>("OMO injection", api.omoInjection(30), null),
+    t.soft<OmoTxnRow[]>("OMO operations", api.omoTransactions(90), []),
   ]);
-
-  if (!data || !data.count) {
-    return (
-      <Panel title="Islamic Window — BGIIB" span={12}>
-        <p style={{ margin: 0, fontSize: 13, color: "var(--warn)" }}>
-          Nothing stored yet, or <code>/api/islamic</code> is not deployed. BGIIB figures are
-          parsed from BB's weekly press releases; no numbers are invented in the meantime.
-        </p>
-      </Panel>
-    );
-  }
+  const hasBgiib = !!data && data.count > 0;
 
   return (
     <>
+      <Unavailable what={t.failed} />
+      {data && !hasBgiib && (
+        <Panel title="Islamic Window — BGIIB" span={12}>
+          <p style={{ margin: 0, fontSize: 13, color: "var(--warn)" }}>
+            No BGIIB auctions stored in this window. BGIIB figures are
+            parsed from BB&apos;s weekly press releases; no numbers are invented in the meantime.
+          </p>
+        </Panel>
+      )}
+      {data && hasBgiib && (<>
       <div className="kpi-strip" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))" }}>
         {data.by_tenor.map((t) => (
           <div className="kpi" key={t.tenor_label}>
@@ -139,14 +143,17 @@ export default async function IslamicPage() {
           </div>
         </Panel>
       </div>
+      </>)}
 
       <div className="grid12">
         <IslamicFacilities inj={inj} txns={txns} />
       </div>
 
-      <div className="grid12">
-        <SukukPanel data={data.sukuk} />
-      </div>
+      {data && (
+        <div className="grid12">
+          <SukukPanel data={data.sukuk} />
+        </div>
+      )}
 
       <SourceLink k={["bgiib", "sukuk"]} />
       <RelatedLinks items={[

@@ -4,6 +4,7 @@
  * inRange filters a row by its date field. Presets in DateRangeControl are
  * computed off the latest DATA date, so filtering and the picker agree.
  */
+import { todayDhaka } from "@/lib/format";
 export function minusDays(dateStr: string, days: number): string {
   const d = new Date(dateStr + "T00:00:00Z");
   d.setUTCDate(d.getUTCDate() - days);
@@ -17,7 +18,7 @@ export function resolveRange(
 ): { from: string; to: string; min: string; max: string } {
   const clean = dates.filter(Boolean).map((d) => (d as string).slice(0, 10)).sort();
   const min = clean[0] ?? "2007-01-01";
-  const max = clean[clean.length - 1] ?? new Date().toISOString().slice(0, 10);
+  const max = clean[clean.length - 1] ?? todayDhaka();
   let to = sp.to ? sp.to.slice(0, 10) : max;
   if (to > max) to = max;
   if (to < min) to = max;

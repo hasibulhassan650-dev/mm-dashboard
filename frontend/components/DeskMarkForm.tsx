@@ -1,5 +1,6 @@
 "use client";
 import * as React from "react";
+import { todayDhaka } from "@/lib/format";
 
 /**
  * The desk's cut-off, typed in on auction day.
@@ -12,7 +13,7 @@ import * as React from "react";
  */
 export default function DeskMarkForm({ tenors, configured }:
   { tenors: string[]; configured: boolean }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayDhaka();
   const [date, setDate] = React.useState(today);
   const [tenor, setTenor] = React.useState(tenors[0] ?? "91D");
   const [cutoff, setCutoff] = React.useState("");

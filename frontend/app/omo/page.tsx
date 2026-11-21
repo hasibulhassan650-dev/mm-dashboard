@@ -11,6 +11,8 @@ import OmoView, { type OmoOpRow } from "@/components/terminal/views/OmoView";
 import { DataWarning } from "@/components/DataWarning";
 import OmoMaturityLadderPanel from "@/components/OmoMaturityLadder";
 import OmoInjectionPanel from "@/components/OmoInjection";
+import Unavailable from "@/components/Unavailable";
+import { tracker } from "@/lib/safe";
 
 export const revalidate = 300;
 
@@ -18,15 +20,16 @@ const INST_LABEL: Record<string, string> = Object.fromEntries(OMO_INSTRUMENTS.ma
 
 export default async function OmoPage({ searchParams }: { searchParams: Promise<{ from?: string; to?: string }> }) {
   const sp = await searchParams;
+  const t = tracker();
   const [outAll, txnAll, fresh, status, ladder, injection] = await Promise.all([
-    api.omoOutstanding(365).catch(() => []),
-    api.omoTransactions(365).catch(() => []),
+    t.soft("OMO outstanding", api.omoOutstanding(365), []),
+    t.soft("OMO operations", api.omoTransactions(365), []),
     api.freshness(),
     api.status(),
     // The forward roll-off: 180 days covers BB's longest live tranche (AR runs
     // to 180D), so no funding cliff falls off the end of the window.
     api.omoMaturityLadder({ days: 180 }),
-    api.omoInjection(30).catch(() => null),
+    t.soft("OMO injection", api.omoInjection(30), null),
   ]);
   // OMO-cadence integrity alerts (missing operation / no CB Repo on a working
   // Tuesday) — the class of BB press-release mistake that must never pass
@@ -63,6 +66,7 @@ export default async function OmoPage({ searchParams }: { searchParams: Promise<
   return (
     <>
       <DataWarning dataset={["omo", "omo-ledger", "omo-policy"]} />
+      <Unavailable what={t.failed} />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: "var(--gap)", flexWrap: "wrap" }}>
         <Freshness updated={fresh.omo} />
         <DateRangeControl min={range.min} max={range.max} from={range.from} to={range.to} />

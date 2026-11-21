@@ -1,5 +1,6 @@
 "use client";
 import * as React from "react";
+import { todayDhaka } from "@/lib/format";
 
 /**
  * A buyback BB has announced but not yet resulted, as the desk knows it.
@@ -11,7 +12,7 @@ import * as React from "react";
  * the shared secret server-side.
  */
 export default function DeskBuybackForm({ configured }: { configured: boolean }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayDhaka();
   const [isin, setIsin] = React.useState("");
   const [date, setDate] = React.useState(today);
   const [face, setFace] = React.useState("");

@@ -42,9 +42,9 @@ export default async function SchedulePage({
         <DataWarning dataset={["coupons", "maturities", "calendar"]} />
         <Panel title="Redemption & Coupon Schedule" span={12}>
           <p style={{ fontSize: 13, color: "var(--warn)", margin: 0 }}>
-            The schedule endpoint returned nothing. This is the API being behind the site,
-            not an empty schedule — <code>/api/flows/by-product</code> needs the API project
-            redeployed. No figures are shown rather than zeros, which would read as
+            The schedule endpoint returned nothing. Either the data service could not be reached, or the
+            API is behind this site and <code>/api/flows/by-product</code> needs the API project redeployed.
+            It is not an empty schedule. No figures are shown rather than zeros, which would read as
             &ldquo;nothing matures&rdquo;.
           </p>
         </Panel>

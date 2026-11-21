@@ -11,7 +11,8 @@ import CommandPalette from "./CommandPalette";
 
 function openCommand() { if (typeof window !== "undefined") window.dispatchEvent(new Event("bb:command")); }
 
-export interface TickItem { sym: string; val: string; d: number }
+/** `rate`: a rise in this series is red (costlier funding), matching the rate pages; other series rise green. */
+export interface TickItem { sym: string; val: string; d: number; rate?: boolean }
 
 // ---------------- Sidebar ----------------
 function Sidebar({ active, collapsed, onToggle, onNav }: { active: string; collapsed: boolean; onToggle: () => void; onNav: () => void }) {
@@ -77,13 +78,13 @@ function Ticker({ items }: { items: TickItem[] }) {
   const doubled = [...items, ...items];
   return (
     <div className="ticker">
-      <div className="ticker-tag"><Icon name="dot" size={9} /> LIVE</div>
+      <div className="ticker-tag"><Icon name="dot" size={9} /> Auto-refreshed</div>
       <div className="ticker-track" style={{ animationDuration: tickerSpeed + "s" }}>
         {doubled.map((it, i) => (
           <span className="tick" key={i}>
             <span className="tick-sym">{it.sym}</span>
             <span className="tick-val">{it.val}</span>
-            {it.d !== 0 && <span className={"tick-d " + (it.d > 0 ? "pos" : "neg")}>{it.d > 0 ? "▲" : "▼"} {Math.abs(it.d).toFixed(2)}</span>}
+            {it.d !== 0 && <span className={"tick-d " + ((it.d > 0) !== !!it.rate ? "pos" : "neg")}>{it.d > 0 ? "▲" : "▼"} {Math.abs(it.d).toFixed(2)}</span>}
           </span>
         ))}
       </div>
@@ -135,7 +136,7 @@ function TweaksPanel() {
 }
 
 // ---------------- App shell ----------------
-import { BBOutageBanner, EscalationBanner, SourceChangeNotice, StaleDataBanner, WaitingNotice }
+import { BBOutageBanner, EscalationBanner, SourceChangeNotice, StaleDataBanner, UnreachableBanner, WaitingNotice }
   from "@/components/DataWarning";
 
 export function AppShell({ children, ticker, sub }: { children: React.ReactNode; ticker: TickItem[]; sub?: string }) {
@@ -155,12 +156,13 @@ export function AppShell({ children, ticker, sub }: { children: React.ReactNode;
           <div className="view-head">
             <div>
               <h1 className="view-title">{cur.label}</h1>
-              <p className="view-sub">{sub || "Bangladesh money market · live data from Bangladesh Bank"}</p>
+              <p className="view-sub">{sub || "Bangladesh money market · Bangladesh Bank data, auto-refreshed"}</p>
             </div>
             <div className="view-meta">
-              <span className="meta-dot" /> Live · cloud-refreshed daily
+              <span className="meta-dot" /> Auto-refreshed · not live
             </div>
           </div>
+          <UnreachableBanner />
           <StaleDataBanner />
           {/* Order is the message: the refresh being dead outranks everything,
               then a feed past its tolerance, then BB moving a page, then BB

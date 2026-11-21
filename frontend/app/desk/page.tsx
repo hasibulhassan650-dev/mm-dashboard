@@ -5,6 +5,7 @@ import DeskMarkForm from "@/components/DeskMarkForm";
 import DeskSetup from "@/components/DeskSetup";
 import DeskBuybackForm from "@/components/DeskBuybackForm";
 import RelatedLinks from "@/components/RelatedLinks";
+import Unavailable from "@/components/Unavailable";
 
 export const revalidate = 0;   // a mark entered a second ago must show
 
@@ -14,6 +15,15 @@ export default async function DeskPage() {
 
   // The page is a server component, so it can read the SITE's own env var - a
   // boolean only, never the value. The API's side comes from /api/desk/marks.
+  // A failed read must not render as "no marks yet / 0 awaiting BB", nor as the API's secret being unset.
+  if (!data) {
+    return (
+      <Unavailable what="desk marks">
+        The data service did not answer, so the desk marks, the number awaiting BB and the API secret check are all
+        <b> unknown</b>. Nothing is shown rather than an empty list. Reload in a moment.
+      </Unavailable>
+    );
+  }
   const siteSet = !!process.env.DESK_WRITE_SECRET;
   const apiSet = data?.configured ?? false;
   const marks = data?.marks ?? [];

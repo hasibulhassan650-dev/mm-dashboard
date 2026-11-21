@@ -1,7 +1,7 @@
 "use client";
 import * as React from "react";
 import { api, type MetaStatus } from "@/lib/api";
-import { parseTs } from "@/lib/format";
+import { parseTs, fmtDate, fmtDateTime } from "@/lib/format";
 
 /**
  * Two honest warnings about the data, both driven by /api/meta/status.
@@ -34,12 +34,37 @@ function daysAgo(iso: string | null | undefined): string {
   return `${Math.round(h / 24)} days`;
 }
 
+/**
+ * The status call itself failed (api.status() sets `unreachable`). Every other banner below reads that same payload,
+ * so without this one a dead data service looked like "no warnings": the one situation where every figure on the
+ * page may be missing or zero showed nothing at all.
+ */
+export function UnreachableBanner() {
+  const s = useStatus();
+  if (!s?.unreachable) return null;
+  return (
+    <div role="alert" style={{
+      background: "color-mix(in oklab, var(--neg) 18%, var(--panel))",
+      border: "2px solid var(--neg)", borderRadius: "var(--radius)",
+      padding: "11px 14px", marginBottom: "var(--gap)",
+    }}>
+      <div style={{ color: "var(--neg)", fontWeight: 700, fontSize: 13 }}>
+        ⚠ Data service unreachable — figures may be missing or zero
+      </div>
+      <div style={{ color: "var(--fg-dim)", fontSize: 11.5, marginTop: 3, lineHeight: 1.6 }}>
+        The status check did not get an answer, so none of the freshness or integrity warnings can be shown either.
+        A blank or zero figure on this page is <b>unknown</b>, not a real reading. Reload in a moment.
+      </div>
+    </div>
+  );
+}
+
 export function StaleDataBanner() {
   const s = useStatus();
   // `pipeline_alive === false` only — never `!pipeline_alive`, or an older API
   // build that omits the field would show a false alarm on every page.
   if (!s || s.pipeline_alive !== false) return null;
-  const when = s.last_run ? parseTs(s.last_run).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "unknown";
+  const when = s.last_run ? fmtDateTime(s.last_run) : "unknown";
   return (
     <div role="alert" style={{
       background: "color-mix(in oklab, var(--neg) 16%, var(--panel))",
@@ -229,7 +254,7 @@ export function DataWarning({ dataset }: { dataset: string | string[] }) {
       <b style={{ color: "var(--warn)" }}>⚠ {issues.length} integrity issue(s) affect this page</b>
       {s?.health_as_of && (
         <span style={{ color: "var(--fg-mute)" }}>
-          {" "}· checked {parseTs(s.health_as_of).toLocaleDateString(undefined, { dateStyle: "medium" })}
+          {" "}· checked {fmtDate(s.health_as_of)}
         </span>
       )}
       <ul style={{ margin: "4px 0 0", paddingLeft: 16 }}>

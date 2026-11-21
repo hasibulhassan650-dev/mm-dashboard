@@ -9,14 +9,17 @@ import Freshness from "@/components/Freshness";
 import RelatedLinks from "@/components/RelatedLinks";
 import SourceLink from "@/components/SourceLink";
 import { DataWarning } from "@/components/DataWarning";
+import Unavailable from "@/components/Unavailable";
+import { tracker } from "@/lib/safe";
 
 export const revalidate = 300;
 
 export default async function RepoPage({ searchParams }: { searchParams: Promise<{ from?: string; to?: string }> }) {
   const sp = await searchParams;
+  const t = tracker();
   const [allRows, cm, fresh] = await Promise.all([
-    api.interbankRepo(3650),
-    api.callmoney(365).catch(() => ({ daily_summary: [], latest_breakdown: [], latest_date: null })),
+    api.interbankRepo(3650),   // throws on failure -> the route's error boundary, never an empty table
+    t.soft("call money (repo-vs-call spread)", api.callmoney(365), { daily_summary: [], latest_breakdown: [], latest_date: null }),
     api.freshness(),
   ]);
 
@@ -39,6 +42,7 @@ export default async function RepoPage({ searchParams }: { searchParams: Promise
   return (
     <>
       <DataWarning dataset={["repo", "cross-source"]} />
+      <Unavailable what={t.failed} />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: "var(--gap)", flexWrap: "wrap" }}>
         <Freshness updated={fresh.repo} />
         <DateRangeControl min={range.min} max={range.max} from={range.from} to={range.to} />

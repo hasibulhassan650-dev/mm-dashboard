@@ -1,8 +1,10 @@
-import { api, exportUrl } from "@/lib/api";
+import { api, exportUrl, type LiquidityForecast } from "@/lib/api";
+import Unavailable from "@/components/Unavailable";
+import { tracker } from "@/lib/safe";
 import Link from "next/link";
 import RelatedLinks from "@/components/RelatedLinks";
 import SourceLink from "@/components/SourceLink";
-import { fmtDate, fmtCrore, fmtRate } from "@/lib/format";
+import { fmtDate, fmtCrore, fmtRate, todayDhaka } from "@/lib/format";
 import { Panel } from "@/components/terminal/ui";
 import LiquidityLadderChart from "@/components/LiquidityLadderChart";
 import DateRangeControl from "@/components/DateRangeControl";
@@ -20,7 +22,7 @@ export default async function ForecastPage({
   searchParams,
 }: { searchParams: Promise<{ from?: string; to?: string; days?: string }> }) {
   const sp = await searchParams;
-  const today = iso(new Date());
+  const today = todayDhaka();
 
   // The window. `?days=` still works so old links and bookmarks keep resolving,
   // but the page is now driven by an explicit from/to that may sit in the past.
@@ -28,12 +30,37 @@ export default async function ForecastPage({
   const from = sp.from ?? (legacyDays ? shift(today, 1) : shift(today, 1));
   const to = sp.to ?? (legacyDays ? shift(today, legacyDays) : shift(today, 28));
 
+  const t = tracker();
   const [forecast, cm, policy, fresh] = await Promise.all([
-    api.flowsLadder(from, to),
-    api.callmoney(14).catch(() => null),
-    api.policy(),
+    t.soft<LiquidityForecast | null>("cash ladder", api.flowsLadder(from, to), null),
+    t.soft("call money", api.callmoney(14), null),
+    t.soft("policy corridor", api.policy(), { current: null, history: [] }),
     api.freshness(),
   ]);
+
+  // No ladder rows (the fetch failed, or the window really holds none) must never fall through to the KPIs: an empty
+  // sum is 0, and 0 would be labelled "FLUSH - downward pressure on call rates".
+  if (!forecast || forecast.days.length === 0) {
+    return (
+      <>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: "var(--gap)", flexWrap: "wrap" }}>
+          <Freshness updated={fresh.flows} />
+          <DateRangeControl min={forecast?.flows_data_from ?? "2025-07-01"} max={forecast?.flows_data_to ?? shift(today, 180)} from={from} to={to} />
+        </div>
+        {!forecast
+          ? <Unavailable what={t.failed}>
+              The data service did not answer for the cash ladder, so there is no liquidity pressure reading: the
+              7-day net, the tightest/flushest day and the call-rate pressure label are <b>unknown</b>, not flush and
+              not zero. Reload in a moment.
+            </Unavailable>
+          : <Panel title="Known Liquidity Ladder" span={12}>
+              <p style={{ margin: 0, fontSize: 13, color: "var(--fg-mute)" }}>
+                No dated flows are recorded for {from} → {to}, so no pressure reading is given. Pick another window above.
+              </p>
+            </Panel>}
+      </>
+    );
+  }
   const days = forecast.days;
 
   // Looking at the past is a different job from planning the next four weeks.
@@ -99,6 +126,7 @@ export default async function ForecastPage({
 
   return (
     <>
+      <Unavailable what={t.failed} />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: "var(--gap)", flexWrap: "wrap" }}>
         <Freshness updated={fresh.flows} />
         <DateRangeControl min={minDate} max={maxDate} from={from} to={to} />

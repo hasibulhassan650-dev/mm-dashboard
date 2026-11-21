@@ -63,13 +63,37 @@ export function parseTs(iso: string): Date {
   return new Date(hasTime && !hasZone ? iso + "Z" : iso);
 }
 
-/** ISO/date string → "DD MMM YY" (BD convention). */
+/** Every date shown on this site is a Bangladesh date. Formatting in the viewer's zone made Vercel (UTC) and a Dhaka
+ *  browser (UTC+6) render different text (a hydration mismatch) and left the zone unlabeled. */
+export const DESK_TZ = "Asia/Dhaka";
+export const DESK_TZ_LABEL = "UTC+6";
+
+const DHAKA_FMT = new Intl.DateTimeFormat("en-GB", {
+  timeZone: DESK_TZ, year: "numeric", month: "2-digit", day: "2-digit",
+  hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+});
+
+/** Calendar/clock parts of an instant as read in Dhaka. */
+function dhaka(d: Date) {
+  const p: Record<string, string> = {};
+  for (const x of DHAKA_FMT.formatToParts(d)) p[x.type] = x.value;
+  return { y: p.year, m: parseInt(p.month, 10) - 1, d: p.day, hh: p.hour, mm: p.minute };
+}
+
+/** Today's date (YYYY-MM-DD) in Dhaka. `new Date().toISOString().slice(0, 10)` is the UTC date, which is yesterday's
+ *  date between 00:00 and 06:00 Dhaka. */
+export function todayDhaka(): string {
+  const t = dhaka(new Date());
+  return `${t.y}-${String(t.m + 1).padStart(2, "0")}-${t.d}`;
+}
+
+/** ISO/date string → "DD MMM YY" (BD convention), read in Dhaka. */
 export function fmtDate(iso: string | null | undefined): string {
   if (!iso) return DASH;
   const d = parseTs(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  const yy = String(d.getFullYear()).slice(2);
-  return `${String(d.getDate()).padStart(2, "0")} ${MONTHS[d.getMonth()]} ${yy}`;
+  const t = dhaka(d);
+  return `${t.d} ${MONTHS[t.m]} ${t.y.slice(2)}`;
 }
 
 /** "YYYY-MM" (or any parseable date) → "MMM YY". */
@@ -90,17 +114,17 @@ export function fmtDateShort(iso: string | null | undefined): string {
   if (!iso) return DASH;
   const d = parseTs(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return `${String(d.getDate()).padStart(2, "0")} ${MONTHS[d.getMonth()]}`;
+  const t = dhaka(d);
+  return `${t.d} ${MONTHS[t.m]}`;
 }
 
-/** ISO → "DD MMM YY, HH:mm". */
+/** ISO → "DD MMM YY, HH:mm UTC+6" (Dhaka time, labelled). */
 export function fmtDateTime(iso: string | null | undefined): string {
   if (!iso) return DASH;
   const d = parseTs(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  return `${fmtDate(iso)}, ${hh}:${mm}`;
+  const t = dhaka(d);
+  return `${fmtDate(iso)}, ${t.hh}:${t.mm} ${DESK_TZ_LABEL}`;
 }
 
 /** Relative age — e.g. "3m ago". */

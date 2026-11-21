@@ -7,6 +7,7 @@ import Freshness from "@/components/Freshness";
 import RelatedLinks from "@/components/RelatedLinks";
 import SourceLink from "@/components/SourceLink";
 import Link from "next/link";
+import { todayDhaka } from "@/lib/format";
 
 export const revalidate = 300;
 
@@ -23,7 +24,7 @@ export default async function AuctionDataPage({
   searchParams,
 }: { searchParams: Promise<{ from?: string; to?: string; page?: string }> }) {
   const sp = await searchParams;
-  const today = iso(new Date());
+  const today = todayDhaka();
   const from = sp.from ?? shift(today, -730);
   const to = sp.to ?? today;
   const page = Math.max(1, parseInt(sp.page ?? "1", 10) || 1);
