@@ -1598,6 +1598,23 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
         except Exception:
             pass  # table not created yet (first pipeline run makes it)
 
+        # ---- OMO coverage: a day the market traded (call money printed) with no OMO operation held and no recorded absence ----
+        # BB's OMO release exists for every day it operates (the standing deposit facility alone prints daily). The 31-Mar-2026
+        # release was never held and nothing said so, because the ledger audit only walks days BB printed something on.
+        try:
+            _since = today - datetime.timedelta(days=270)
+            _traded = {str(r[0])[:10] for r in q("SELECT DISTINCT trade_date FROM call_money_rates WHERE trade_date >= :s", s=str(_since))}
+            _held = {str(r[0])[:10] for r in q("SELECT DISTINCT transaction_date FROM omo_transactions WHERE transaction_date >= :s", s=str(_since))}
+            _gone = {str(r[0])[:10] for r in q("SELECT absent_date FROM data_absences WHERE dataset = 'omo'")}
+            _start = min(_held) if _held else None          # nothing is owed from before OMO history begins
+            _hole = sorted(d for d in _traded if _start and d > _start and d not in _held and d not in _gone
+                           and d < str(today - datetime.timedelta(days=3)))
+            if _hole:
+                add("omo-coverage", f"{len(_hole)} day(s) the market traded have no OMO operation held and no recorded absence: "
+                                    f"{', '.join(_hole[:6])} - re-read BB's release for them, or record BB's omission with evidence", "notice")
+        except Exception:
+            s.rollback()
+
         # ---- news vs BB's FX auction table: a dollar sale the press reports that BB's page does not list ----
         # BB posts these late and in batches. Never a defect (BB also sells outside auctions) and never written into a BB
         # table: 'waiting' while BB is late, 'notice' when it stays absent or the amounts disagree.

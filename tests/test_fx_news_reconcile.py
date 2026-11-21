@@ -85,3 +85,4 @@ def test_the_press_never_turns_the_build_red(monkeypatch):
     v = validate.integrity_check()
     assert not [i for i in v["issues"] if i.startswith("fx-news")]
     assert any(w.startswith("fx-news") for w in v["waiting"])
+
