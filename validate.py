@@ -1620,6 +1620,23 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
         except Exception:
             pass  # table not created yet (first pipeline run makes it)
 
+        # ---- reference rates: one BB block must never be stamped on two different dates ----
+        # March-April 2026 held the same block (amounts 3,986.00 / 3,728.94 / 300 / 418, deals 42 / 39 / 7 / 10, DOMMR 11.0 against
+        # a 9.8 call market) under four dates: BB's page shows only the latest day, and an early fetch stamped it with the day it ran.
+        try:
+            _sig: dict = {}
+            for _d, _t, _p, _a, _n in q("SELECT trade_date, rate_type, product, amount_crore, num_deals FROM ref_rates "
+                                         "WHERE amount_crore IS NOT NULL AND num_deals IS NOT NULL ORDER BY trade_date"):
+                _sig.setdefault(str(_d)[:10], []).append((_t, _p, round(float(_a), 2), int(_n)))
+            _seen: dict = {}
+            for _d, _rows in sorted(_sig.items()):
+                _k = tuple(sorted(_rows))
+                if len(_k) >= 3 and _k in _seen:
+                    add("ref_rates", f"{_d}: the same block of amounts and deal counts as {_seen[_k]} - one BB print stamped on two dates")
+                _seen.setdefault(_k, _d)
+        except Exception:
+            s.rollback()
+
         # ---- OMO coverage: a day the market traded (call money printed) with no OMO operation held and no recorded absence ----
         # BB's OMO release exists for every day it operates (the standing deposit facility alone prints daily). The 31-Mar-2026
         # release was never held and nothing said so, because the ledger audit only walks days BB printed something on.
