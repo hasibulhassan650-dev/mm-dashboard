@@ -27,7 +27,9 @@ function Register-Job($name, $module, $moduleArgs, $minutes, $logName, $envSet =
     # 2>&1 | ForEach-Object { [string]$_ } keeps Python's harmless INFO lines on stderr from being reported by
     # Windows PowerShell as a failed run (exit 1) and from being wrapped in error decoration in the log;
     # the exit code is Python's own.
-    if (Test-Path $log) { Remove-Item $log -Force }
+    # Keep the log across re-installs (it is the evidence of what the last run did); only trim one that has grown large, and never
+    # fail the install because a running job holds its log open.
+    try { if ((Test-Path $log) -and ((Get-Item $log).Length -gt 8MB)) { Remove-Item $log -Force } } catch { }
     $cmd = "Set-Location '$dir'; $envSet `$env:PYTHONIOENCODING='utf-8'; Add-Content -Encoding utf8 '$log' ('--- ' + (Get-Date -Format s)); & '$py' -m $module $moduleArgs 2>&1 | ForEach-Object { [string]`$_ } | Add-Content -Encoding utf8 '$log'; exit `$LASTEXITCODE"
     $action = New-ScheduledTaskAction -Execute "powershell.exe" -WorkingDirectory $dir `
         -Argument "-NoProfile -WindowStyle Hidden -Command `"$cmd`""
@@ -38,10 +40,19 @@ function Register-Job($name, $module, $moduleArgs, $minutes, $logName, $envSet =
     }
     # IgnoreNew: a run still going when the next is due is not doubled up. StartWhenAvailable: a run
     # missed while the PC was asleep happens when it wakes.
-    $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhenAvailable `
+    # WakeToRun wakes the PC from sleep for the run (wake timers are on in the power plan); RunOnlyIfNetworkAvailable keeps a run
+    # from burning its time limit offline. After a shutdown, StartWhenAvailable runs the missed job as soon as the PC is back, and
+    # the repeating jobs also start the moment you sign in, so a PC that was off for hours catches up straight away.
+    $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhenAvailable -WakeToRun -RunOnlyIfNetworkAvailable `
         -ExecutionTimeLimit (New-TimeSpan -Minutes $limitMinutes) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
     $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
-    Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Settings $settings `
+    $triggers = @($trigger)
+    if (-not $dailyAt) {
+        $logon = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+        $logon.Delay = "PT2M"          # let the network and the desktop settle before Chrome starts
+        $triggers += $logon
+    }
+    Register-ScheduledTask -TaskName $name -Action $action -Trigger $triggers -Settings $settings `
         -Principal $principal -Force | Out-Null
     $when = if ($dailyAt) { "daily at $dailyAt" } else { "every $minutes minutes" }
     Write-Host "Installed '$name': $when while you are signed in. Log: $log"
