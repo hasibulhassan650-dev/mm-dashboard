@@ -142,7 +142,7 @@ export default async function CallMoneyPage({ searchParams }: { searchParams: Pr
           </div>
         </Panel>
       </div>
-      <SourceLink k="callmoney" />
+      <SourceLink k={["callmoney", "policy"]} />
       <RelatedLinks items={[
         { href: "/omo", label: "OMO Operations", why: "the corridor tools that anchor this rate" },
         { href: "/forecast", label: "Liquidity Forecast", why: "why tight/flush days move the rate" },

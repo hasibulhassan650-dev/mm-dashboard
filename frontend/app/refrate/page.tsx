@@ -89,6 +89,11 @@ export default async function RefRatePage({ searchParams }: { searchParams: Prom
         <div className="kpi"><div className="kpi-top"><span className="kpi-label">BOFR — 1W/1M/3M</span></div>{miniList("BOFR", "var(--s-violet)")}</div>
       </div>
 
+      <p style={{ margin: "0 0 var(--gap)", fontSize: 11.5, color: "var(--fg-mute)", lineHeight: 1.5 }}>
+        Dates are Bangladesh Bank&apos;s own. In our stored data a DOMMR dated D agrees with the call-money overnight average of the
+        previous trading day far better than with day D itself, so read each reference rate as describing the day before its date.
+      </p>
+
       <div className="grid12">
         <Panel title="DOMMR — rate by product" sub="vs policy repo" span={6}><RefRateChart rows={rows} rateType="DOMMR" repoRate={repoRate} /></Panel>
         <Panel title="BOFR — rate by product" sub="bank overnight financing" span={6}><RefRateChart rows={rows} rateType="BOFR" repoRate={repoRate} /></Panel>
@@ -134,7 +139,7 @@ export default async function RefRatePage({ searchParams }: { searchParams: Prom
           </Panel>
         )}
       </div>
-      <SourceLink k="refrate" />
+      <SourceLink k={["refrate", "policy"]} />
       <RelatedLinks items={[
         { href: "/callmoney", label: "Call Money", why: "the actual traded overnight rate" },
         { href: "/omo", label: "OMO Operations", why: "policy rates these benchmark against" },

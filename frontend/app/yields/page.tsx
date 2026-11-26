@@ -190,7 +190,7 @@ export default async function YieldsPage({ searchParams }: { searchParams: Promi
       <p style={{ fontSize: 11, color: "var(--fg-mute)", marginTop: 14, display: "flex", gap: 4, flexWrap: "wrap" }}>
         <InfoTip term="GSOM" /> <InfoTip term="MTM" /> <InfoTip term="Bid-to-cover" /> <InfoTip term="Yield-curve slope (2s10s)" />
       </p>
-      <SourceLink k="yields" />
+      <SourceLink k={["yields", "secondary"]} />
       <RelatedLinks items={[
         { href: "/auctions", label: "Treasury Auctions", why: "the tenders behind these cut-offs: notified, bids, accepted" },
         { href: "/schedule", label: "Redemption Schedule", why: "how much of each product is redeemed, by month" },

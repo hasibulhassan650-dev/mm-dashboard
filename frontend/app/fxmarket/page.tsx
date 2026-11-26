@@ -161,7 +161,7 @@ export default async function FxMarketPage({ searchParams }: { searchParams: Pro
         </Panel>
       </div>
 
-      <SourceLink k="fxmarket" />
+      <SourceLink k={["fxmarket", "fxrates"]} />
       <RelatedLinks items={[
         { href: "/fx", label: "FX Auctions", why: "BB's own interventions in this market" },
         { href: "/macro", label: "External Sector", why: "reserves behind the rate" },

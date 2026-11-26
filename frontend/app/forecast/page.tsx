@@ -249,7 +249,7 @@ export default async function ForecastPage({
           </div>
         </Panel>
       </div>
-      <SourceLink k="flows" />
+      <SourceLink k={["flows", "callmoney", "policy"]} />
       <RelatedLinks items={[
         { href: "/auctions", label: "Treasury Auctions", why: "every tender: notified, bids, accepted, cut-off" },
         { href: "/omo", label: "OMO Operations", why: "the repos & SDF driving these flows" },
