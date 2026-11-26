@@ -187,6 +187,36 @@ def cointegration(tenor: str, f: pd.DataFrame, today) -> list[dict]:
     return out
 
 
+def ecm_verdict(today, gate_ok: bool, gate_why: str, coint_rows: list[dict]) -> dict:
+    """The ONE word the /research page shows for the error-correction model, from the stored evidence.
+
+    BLOCKED       the policy-corridor gate is shut (the reason is carried in the text)
+    NOT TESTED    the gate is open but no tenor had enough corridor data for a cointegration test
+    SUPPORTED     the cutoff-vs-repo cointegration p-value is below ALPHA on at least one tenor (the tenors are named)
+    REJECTED      tested, and no tenor's p-value is below ALPHA
+
+    The page used to hard-code REJECTED and 'no cointegration on any tenor'. A verdict that is typed in cannot
+    change when the evidence does; this one is recomputed every run from the same p-values the table shows,
+    so SUPPORTED is reachable the day the data says so and REJECTED is never shown over a p-value below ALPHA.
+    """
+    ps = {r["tenor"]: r["pvalue"] for r in coint_rows
+          if r["test"] == "coint" and r["pvalue"] is not None}
+    if not gate_ok:
+        word, text = "BLOCKED", gate_why
+        p = None
+    elif not ps:
+        word, text = "NOT TESTED", "gate open but no tenor had enough corridor data for a cointegration test"
+        p = None
+    else:
+        hit = sorted((t for t, v in ps.items() if v < ALPHA), key=lambda t: ps[t])
+        p = min(ps.values())
+        if hit:
+            word, text = "SUPPORTED", f"on {', '.join(hit)} (cointegration p<{ALPHA}; {len(ps)} tenors tested)"
+        else:
+            word, text = "REJECTED", f"no cointegration at p<{ALPHA} on any of {len(ps)} tenors tested"
+    return _rows(today, "ALL", "ecm_verdict", "ecm", None, p, None, f"{word} - {text}")
+
+
 def save(session, rows: list[dict]) -> int:
     n = 0
     for r in rows:
@@ -217,16 +247,21 @@ def run(dry_run: bool = False) -> dict:
         rows = [_rows(today, "ALL", "policy_gate", "ecm", None, None, None,
                       ("OPEN — " if ecm_ok else "BLOCKED — ") + ecm_why)]
         tested = []
+        coint_rows: list[dict] = []
         for (tenor, _instrument), g in hist.groupby(["tenor_label", "security_type"], sort=True):
             f = build_features(g.sort_values("auction_date"))
             if len(f) - MIN_TRAIN < MIN_SCORED:
                 continue
             r = diagnose_tenor(tenor, f, today)
             if ecm_ok:
-                r.extend(cointegration(tenor, policy_attach(f, pol), today))
+                c = cointegration(tenor, policy_attach(f, pol), today)
+                coint_rows.extend(c)
+                r.extend(c)
             rows.extend(r)
             tested.append(f"{tenor}({len(f)})")
 
+        rows.append(ecm_verdict(today, ecm_ok, ecm_why, coint_rows))
+        log.info("ECM verdict: %s", rows[-1]["conclusion"])
         log.info("tested %d tenors: %s", len(tested), ", ".join(tested))
         for r in rows:
             if r["test"] in ("adf", "kpss", "granger"):

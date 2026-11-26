@@ -20,7 +20,9 @@ The published band is +/-z x an EWMA estimate of the model's own out-of-sample
 error volatility (robustness.band_half_width; z = 1.96, EWMA lambda 0.94). It is
 built from measured forecast error, not a distributional assumption about
 yields, and it is NOT guaranteed to be a 95% interval: the share of prints that
-really land inside it is measured per tenor and stored as `coverage`.
+really land inside it is measured per tenor and stored as `coverage`, SEQUENTIALLY
+(each error is checked against the band drawn from only the errors before it,
+robustness.sequential_coverage) so the figure is not in-sample.
 
 Usage:  python forecast/run_forecast.py            (writes to DATABASE_URL)
         python forecast/run_forecast.py --dry-run  (prints, writes nothing)
@@ -39,7 +41,7 @@ sys.path.insert(0, str(ROOT))
 
 from db import (init_db, get_session, fix_all_sequences,       # noqa: E402
                 PrimaryYieldSnapshot, AuctionForecast, BacktestMetric,
-                BacktestPrediction)
+                BacktestPrediction, AuctionEvent)
 from forecast.features import (build as build_features, ols_fit, ols_predict,  # noqa: E402
                                build_anchor, add_curve_anchor, beta_no_intercept,
                                FEATURE_COLS)
@@ -111,12 +113,50 @@ LOOKBACK_BONDS = float(os.environ.get("FORECAST_LOOKBACK_BONDS", "5"))
 # most recent share of scored forecasts.
 BAND_RECENT_FRAC = float(os.environ.get("FORECAST_BAND_RECENT_FRAC", "0.5"))
 
-BILL_TENORS = {"91D", "182D", "364D", "14D", "28D"}
+# Which evidence window a series gets is decided by WHAT IT IS (security type T_BILL), never by a list of tenor
+# labels: a bill BB starts auctioning tomorrow under a new label is still a bill and must get the bill window.
+BILL_INSTRUMENT = "T_BILL"
+
+# -- two known gaps between the backtest and the live forecast, each behind a switch -----------------------
+# Both default to the CURRENT behaviour; flipping one changes published numbers, so the owner decides.
+#
+# ANCHOR_AS_OF_RUN. The backtest gives each auction the last 364D print strictly before THAT AUCTION. The live
+# forecast is made on the weekly run day (RUN_WEEKDAY), days before a Tuesday bond auction, so any 364D print
+# in between is unknown when it is published. True: the backtest uses the last print strictly before the run
+# day that precedes each auction, which is the information a published forecast really had.
+ANCHOR_AS_OF_RUN = False
+# TARGET_FROM_CALENDAR. The live target date is the last print plus the median recent gap. True: it is BB's
+# calendar (auction_events): the earliest scheduled auction of the tenor after its last print; the gap estimate
+# is only the fallback when the calendar holds no later date. Changes the target date and nothing else.
+TARGET_FROM_CALENDAR = False
+# Monday = 0. Thursday, the day .github/workflows/forecast_weekly.yml runs (tests parse the cron to prove it).
+RUN_WEEKDAY = 3
+
+# Bump when what a published number MEANS changes. r1 = everything before Nov-2026 (in-sample coverage, ECM
+# published below MIN_SCORED, lambda unstored); r2 = sequential coverage, per-model MIN_SCORED, stored lambda.
+METHOD_REV = 2
 
 
-def lookback_for(tenor: str) -> float:
-    """Evidence window for this tenor, in years."""
-    return LOOKBACK_YEARS if tenor in BILL_TENORS else LOOKBACK_BONDS
+def method_version() -> str:
+    """Stored with every forecast and metric so a number can be tied to the method that produced it."""
+    return (f"r{METHOD_REV};anchor_as_of_run={int(ANCHOR_AS_OF_RUN)};"
+            f"target_from_calendar={int(TARGET_FROM_CALENDAR)}")
+
+
+def lookback_for(instrument: str | None) -> float:
+    """Evidence window for a series of this security type, in years."""
+    return LOOKBACK_YEARS if instrument == BILL_INSTRUMENT else LOOKBACK_BONDS
+
+
+def last_run_date(auction_dates: pd.Series) -> pd.Series:
+    """The weekly run day on or before each auction date (the run that publishes its forecast)."""
+    back = (auction_dates.dt.weekday - RUN_WEEKDAY) % 7
+    return auction_dates - pd.to_timedelta(back, unit="D")
+
+
+def attach_anchor(f: pd.DataFrame, anchor: pd.DataFrame) -> pd.DataFrame:
+    """Curve-anchor columns for the feature frame, under the ANCHOR_AS_OF_RUN setting."""
+    return add_curve_anchor(f, anchor, info_date=last_run_date if ANCHOR_AS_OF_RUN else None)
 
 
 # ── models ────────────────────────────────────────────────────────────────────
@@ -138,13 +178,23 @@ def momentum_beta(changes: np.ndarray) -> float:
     return float(np.dot(x, y) / denom)
 
 
-def predict(train: pd.DataFrame, row: pd.Series) -> dict:
+def curve_lambda(train: pd.DataFrame) -> float:
+    """The curve model's pass-through: slope through the origin of each change on the anchor's move."""
+    return beta_no_intercept(train["d_anchor"].to_numpy(dtype=float),
+                             train["d_cutoff"].to_numpy(dtype=float))
+
+
+def predict(train: pd.DataFrame, row: pd.Series, curve_lam: float | None = None) -> dict:
     """One-step-ahead point forecast per model.
 
     `train` is every auction strictly before the one being forecast; `row` is
     the target auction, from which ONLY the lagged feature columns are read —
     never its own cutoff. All three models predict the same quantity (the next
     cutoff level) so their errors are directly comparable.
+
+    `curve_lam` lets the caller supply the curve model's lambda so the live run
+    computes it ONCE and stores that same number; the backtest leaves it unset and
+    re-estimates it at every step.
     """
     last = float(row["cutoff_lag1"])
 
@@ -168,8 +218,7 @@ def predict(train: pd.DataFrame, row: pd.Series) -> dict:
     # predicted move, which is the correct behaviour when nothing has happened.
     d_anchor = row.get("d_anchor")
     if d_anchor is not None and np.isfinite(d_anchor):
-        lam = beta_no_intercept(train["d_anchor"].to_numpy(dtype=float),
-                                train["d_cutoff"].to_numpy(dtype=float))
+        lam = curve_lambda(train) if curve_lam is None else curve_lam
         out["curve"] = last + lam * float(d_anchor)
 
     # Model 4 — error correction (guide Phase 5.3). Only reachable when
@@ -225,40 +274,6 @@ def backtest(f: pd.DataFrame) -> dict:
             e["actual"].append(actual)
             e["pred"].append(p)
     return errs
-
-
-def diebold_mariano(err_model: np.ndarray, err_naive: np.ndarray) -> float | None:
-    """Two-sided DM p-value on squared-error loss, model vs naive.
-
-    NOT CALLED by run(): the published p-values come from robustness.dm_test,
-    which adds the Harvey-Leybourne-Newbold small-sample correction. This older
-    normal-reference version is kept only for reference.
-
-    Answers the question the guide insists on: is the improvement real, or
-    luck? Uses a Newey-West (Bartlett) long-run variance of the loss
-    differential so serial correlation in the errors does not inflate
-    significance, and a normal reference distribution — so no scipy needed and
-    the weekly job stays dependency-free.
-    """
-    n = len(err_model)
-    if n < 20 or n != len(err_naive):
-        return None
-    d = err_naive ** 2 - err_model ** 2          # >0 means the model is better
-    dbar = float(np.mean(d))
-    dc = d - dbar
-    lag = int(np.floor(4 * (n / 100) ** (2 / 9))) or 1
-    gamma0 = float(np.dot(dc, dc) / n)
-    lrv = gamma0
-    for k in range(1, lag + 1):
-        cov = float(np.dot(dc[k:], dc[:-k]) / n)
-        lrv += 2 * (1 - k / (lag + 1)) * cov
-    if lrv <= 0:
-        return None
-    dm = dbar / np.sqrt(lrv / n)
-    # two-sided normal tail via the erf-based CDF
-    from math import erf, sqrt
-    p = 2 * (1 - 0.5 * (1 + erf(abs(dm) / sqrt(2))))
-    return round(float(p), 4)
 
 
 def score(e: dict) -> dict | None:
@@ -324,9 +339,10 @@ def load_history(session, lookback_years: float = LOOKBACK_YEARS) -> pd.DataFram
 def next_auction_date(dates: pd.Series) -> datetime.date | None:
     """Estimate the next auction date as last date + median recent gap.
 
-    BB publishes a calendar but we don't ingest it yet, so the cadence is read
-    off the prints themselves: 7d for bills, ~28d for bonds. The median over the
-    last 12 gaps rides out holiday shifts without chasing a single odd week.
+    The fallback when TARGET_FROM_CALENDAR is off (or the calendar holds no later
+    date): the cadence is read off the prints themselves, 7d for bills, ~28d for
+    bonds. The median over the last 12 gaps rides out holiday shifts without
+    chasing a single odd week, but it is an estimate, not BB's calendar.
     """
     if len(dates) < 2:
         return None
@@ -337,6 +353,35 @@ def next_auction_date(dates: pd.Series) -> datetime.date | None:
     if gap <= 0:
         return None
     return (dates.iloc[-1] + datetime.timedelta(days=gap)).date()
+
+
+def next_calendar_date(calendar_dates, last_print: datetime.date) -> datetime.date | None:
+    """The earliest calendar date strictly after the tenor's last print, or None.
+
+    One-step-ahead means the NEXT auction, not the next future one: if that date has
+    already passed the print is missing, and it is still the auction being forecast.
+    """
+    later = sorted(d for d in calendar_dates if d > last_print)
+    return later[0] if later else None
+
+
+def choose_target(dates: pd.Series, calendar_dates=None) -> tuple[datetime.date | None, str]:
+    """(target auction date, 'calendar' | 'estimated') under the TARGET_FROM_CALENDAR setting."""
+    if TARGET_FROM_CALENDAR and calendar_dates:
+        cal = next_calendar_date(calendar_dates, dates.iloc[-1].date())
+        if cal is not None:
+            return cal, "calendar"
+    return next_auction_date(dates), "estimated"
+
+
+def load_calendar(session) -> dict[str, list[datetime.date]]:
+    """BB's auction calendar by tenor (auction_events). Read-only."""
+    rows = (session.query(AuctionEvent.tenor_label, AuctionEvent.auction_date)
+            .filter(AuctionEvent.auction_date.isnot(None)).all())
+    out: dict[str, list[datetime.date]] = {}
+    for tenor, d in rows:
+        out.setdefault(tenor, []).append(d)
+    return out
 
 
 def _verdict(gap: tuple[float, float] | None, dm_p: float | None) -> str:
@@ -495,7 +540,8 @@ def score_past_forecasts(session, hist: pd.DataFrame) -> int:
 
 # ── main ──────────────────────────────────────────────────────────────────────
 
-def run(dry_run: bool = False) -> dict:
+def run(dry_run: bool = False, return_rows: bool = False) -> dict:
+    """`return_rows` adds the forecast and metric dicts to the result (for comparing configurations)."""
     today = datetime.date.today()
     session = get_session()
     try:
@@ -515,6 +561,10 @@ def run(dry_run: bool = False) -> dict:
         anchor = build_anchor(hist, ANCHOR_TENOR)
         log.info("curve anchor: %s with %d prints", ANCHOR_TENOR, len(anchor))
 
+        calendar = load_calendar(session) if TARGET_FROM_CALENDAR else {}
+        version = method_version()
+        log.info("method %s", version)
+
         pol_hist = policy_history(session)
         ecm_ok, ecm_why = policy_usable(pol_hist, hist["auction_date"].min())
         log.info("ECM gate: %s — %s", "OPEN" if ecm_ok else "BLOCKED", ecm_why)
@@ -523,7 +573,7 @@ def run(dry_run: bool = False) -> dict:
             g = g.sort_values("auction_date")
             # Trim to THIS tenor's evidence window — bonds get more history than
             # bills because they auction ~12x less often. See lookback_for().
-            yrs = lookback_for(tenor)
+            yrs = lookback_for(instrument)
             if yrs > 0 and not g.empty:
                 cut = g["auction_date"].max() - pd.Timedelta(days=round(365.25 * yrs))
                 g = g[g["auction_date"] >= cut]
@@ -531,7 +581,7 @@ def run(dry_run: bool = False) -> dict:
                 skipped.append(f"{tenor} (n={len(g)})")
                 continue
 
-            f = add_curve_anchor(build_features(g), anchor)
+            f = attach_anchor(build_features(g), anchor)
             # Attaching only when the gate is open is what keeps unverified
             # corridor numbers out of every downstream fit.
             f = policy_attach(f, pol_hist if ecm_ok else pol_hist.iloc[0:0])
@@ -544,22 +594,27 @@ def run(dry_run: bool = False) -> dict:
                 skipped.append(f"{tenor} (only {max(0, len(f) - MIN_TRAIN)} scorable)")
                 continue
 
-            target = next_auction_date(g["auction_date"])
+            target, target_src = choose_target(g["auction_date"], calendar.get(tenor))
+            if TARGET_FROM_CALENDAR and target_src != "calendar":
+                log.warning("%-8s calendar holds no auction after the last print; target %s is the gap estimate",
+                            tenor, target)
+            elif target_src == "calendar" and target is not None and target <= today:
+                log.warning("%-8s calendar auction %s is already past but has no print yet; it is still the "
+                            "auction being forecast", tenor, target)
             bt = backtest(f)
             bt_by_tenor[tenor] = bt
 
             # The live forecast: train on EVERY usable row, then predict the
             # next auction from a synthetic row carrying only lagged inputs.
             live_row = _next_row(f, anchor if tenor != ANCHOR_TENOR else None)
-            points = predict(f, live_row)
-
             # The pass-through actually being applied — the single number that
-            # decides how aggressive the curve model is. Worth seeing in the log
-            # every run: a lambda drifting far from its usual level is the first
-            # sign the tenor's relationship to the bill curve has changed.
+            # decides how aggressive the curve model is. Computed ONCE here, used
+            # for the live point and STORED with the curve metric row, so a
+            # lambda drifting far from its usual level (the first sign the
+            # tenor's relationship to the bill curve has changed) is on record.
+            lam = curve_lambda(f)
+            points = predict(f, live_row, curve_lam=lam)
             if "curve" in points:
-                lam = beta_no_intercept(f["d_anchor"].to_numpy(dtype=float),
-                                        f["d_cutoff"].to_numpy(dtype=float))
                 log.info("%-8s curve lambda=%.3f (anchor moved %+.0f bps since last auction)",
                          tenor, lam, float(live_row["d_anchor"]) * 100)
 
@@ -570,6 +625,13 @@ def run(dry_run: bool = False) -> dict:
                     continue
                 s = score(bt[model])
                 if s is None:
+                    continue
+                if s["n_obs"] < MIN_SCORED:
+                    # The tenor-level gate above only counts the first model that runs. A model that starts
+                    # later (the ECM needs MIN_TRAIN_OLS rows WITH policy data) can have a handful of scored
+                    # forecasts: its MAE and band would be noise wearing a decimal point, so it is withheld.
+                    log.info("%-8s %-9s withheld: only %d scored forecasts (need %d)",
+                             tenor, model, s["n_obs"], MIN_SCORED)
                     continue
                 err = np.asarray(bt[model]["err"], dtype=float)
                 rmse_pct = s["rmse_bps"] / 100.0
@@ -583,8 +645,9 @@ def run(dry_run: bool = False) -> dict:
                 s["band_bps"] = round(band_hw * 100, 2)
                 ci = rb.bootstrap_ci(err)
                 s["mae_lo"], s["mae_hi"] = (round(ci[0], 2), round(ci[1], 2)) if ci else (None, None)
-                # Coverage against the band actually published, not a nominal one.
-                s["coverage"] = round(float(np.mean(np.abs(err) <= band_hw)), 4)
+                # SEQUENTIAL coverage: each error against the band drawn from only the errors before it.
+                # (The band published today, applied to the errors it was built from, is in-sample.)
+                s["coverage"] = rb.sequential_coverage(err)
                 st = rb.stability(err)
                 s["mae_first"], s["mae_recent"] = st if st else (None, None)
 
@@ -624,8 +687,11 @@ def run(dry_run: bool = False) -> dict:
                     "lo_yield": round(point - band, 4),
                     "hi_yield": round(point + band, 4),
                     "actual_yield": None,
+                    "method_version": version,
                 })
-                metrics.append({"computed_date": today, "model": model, "tenor": tenor, **s})
+                metrics.append({"computed_date": today, "model": model, "tenor": tenor, **s,
+                                "curve_lambda": round(float(lam), 6) if model == "curve" else None,
+                                "method_version": version})
                 log.info("%-8s %-9s MAE=%.2f [%s,%s]  gap=[%s,%s]  DM=%s  cov=%s  "
                          "%s->%s  %s",
                          tenor, model, s["mae_bps"], s.get("mae_lo"), s.get("mae_hi"),
@@ -711,8 +777,11 @@ def run(dry_run: bool = False) -> dict:
         if dry_run:
             log.info("DRY RUN — %d forecasts / %d metrics / %d predictions not written",
                      len(forecasts), len(metrics), len(preds))
-            return {"forecasts": len(forecasts), "metrics": len(metrics),
-                    "predictions": len(preds), "scored": 0, "dry_run": True}
+            out = {"forecasts": len(forecasts), "metrics": len(metrics),
+                   "predictions": len(preds), "scored": 0, "dry_run": True}
+            if return_rows:
+                out["forecast_rows"], out["metric_rows"] = forecasts, metrics
+            return out
 
         scored = score_past_forecasts(session, hist)
         nf = save_forecasts(session, forecasts)

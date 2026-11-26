@@ -119,6 +119,7 @@ def usable(hist: pd.DataFrame, window_start) -> tuple[bool, str]:
 
     The reason string is surfaced verbatim in the UI — someone looking at a
     blocked ECM should be told exactly which condition failed and by how much.
+    `window_start` is NOT used (see the note at `covered` below).
     """
     if hist.empty:
         return False, "no verified corridor history — every seed entry is unverified"
@@ -132,7 +133,10 @@ def usable(hist: pd.DataFrame, window_start) -> tuple[bool, str]:
                        f"history; an anchor that never moves explains nothing")
     start = hist["effective_date"].min()
     end = hist["effective_date"].max()
-    covered = (pd.Timestamp(window_start).normalize() if False else pd.Timestamp.today()) - start
+    # How long the corridor has existed, measured to TODAY. Deliberately not from window_start: a 5-year bond
+    # window starts before the corridor was introduced (2023-06-20) and measuring from there would block the
+    # gate forever on a condition reality cannot meet. window_start is accepted for the callers' sake only.
+    covered = pd.Timestamp.today() - start
     years = covered.days / 365.25
     if years < MIN_COVERED_YEARS:
         return False, (f"verified corridor covers only {years:.1f} years "

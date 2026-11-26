@@ -35,13 +35,18 @@ const range = (xs: number[], f: (v: number) => string) =>
 const signed = (v: number) => `${v > 0 ? "+" : ""}${v.toFixed(1)}`;
 
 export default function ForecastMethod({ fc, label }: { fc: ForecastPayload; label: Record<ForecastModel, string> }) {
-  const isBill = (t: string) => spec.bill_tenors.includes(t);
+  // A bill is a series whose security type is the bill instrument, read off the stored forecasts: no list of tenor
+  // labels lives here, so a bill BB adds or revives is a bill with nobody editing anything.
+  const billTenors = [...new Set(fc.forecasts.filter(f => f.instrument === spec.bill_instrument).map(f => f.tenor))]
+    .sort(byTenor);
+  const isBill = (t: string) => billTenors.includes(t);
+  const knownType = new Set(fc.forecasts.filter(f => f.instrument != null).map(f => f.tenor));
   const primary = spec.primary_model as ForecastModel;
 
   // Everything measured is read off the payload, per tenor, from the benchmark rows (one per tenor).
   const bench = fc.metrics.filter(m => m.model === "naive");
   const nBills = bench.filter(m => isBill(m.tenor)).map(m => m.n_obs);
-  const nBonds = bench.filter(m => !isBill(m.tenor)).map(m => m.n_obs);
+  const nBonds = bench.filter(m => knownType.has(m.tenor) && !isBill(m.tenor)).map(m => m.n_obs);
   const coverages = fc.metrics.map(m => m.coverage).filter((c): c is number => c != null);
 
   const fam: BacktestRow[] = fc.metrics.filter(m => m.model === primary).sort((a, b) => byTenor(a.tenor, b.tenor));
@@ -67,10 +72,14 @@ export default function ForecastMethod({ fc, label }: { fc: ForecastPayload; lab
             contains it) looks at it. Every other model sees nothing but its own tenor&apos;s history (the
             error-correction model also sees the repo rate).</p>
             <p>The forecast is a yield <i>level</i> in percent. Errors are measured in basis points so a
-            short bill and a long bond can be read on the same axis. The target date shown is not Bangladesh
-            Bank&apos;s auction calendar: it is the last print date plus the median of that tenor&apos;s
-            last <M>{spec.next_date_gap_window}</M> gaps between prints, so it can be wrong around holidays
-            and rescheduled auctions.</p>
+            short bill and a long bond can be read on the same axis. {spec.target_from_calendar
+              ? <>The target date shown is the next auction of that tenor on Bangladesh Bank&apos;s auction
+                calendar after its last print. Only where the calendar holds no later date is it estimated as the
+                last print date plus the median of that tenor&apos;s last <M>{spec.next_date_gap_window}</M> gaps
+                between prints, which can be wrong around holidays and rescheduled auctions.</>
+              : <>The target date shown is not Bangladesh Bank&apos;s auction calendar: it is the last print date
+                plus the median of that tenor&apos;s last <M>{spec.next_date_gap_window}</M> gaps between prints,
+                so it can be wrong around holidays and rescheduled auctions.</>}</p>
           </div>
         </Panel>
 
@@ -82,7 +91,7 @@ export default function ForecastMethod({ fc, label }: { fc: ForecastPayload; lab
             <M>offered / accepted</M>, the cover on what BB actually took. It is not the textbook bid-to-cover,
             because the announced amount is not stored.</p>
             <p><B>Windows.</B> A tenor is fitted and judged on its most recent{" "}
-            <M>{spec.lookback_years.bills}</M> years of prints if it is a bill (<M>{spec.bill_tenors.join(", ")}</M>),
+            <M>{spec.lookback_years.bills}</M> years of prints if it is a bill{billTenors.length ? <> (<M>{billTenors.join(", ")}</M>)</> : null},
             and <M>{spec.lookback_years.bonds}</M> years otherwise. The longer bond window exists because bonds
             auction roughly monthly, so a short window leaves too few scored forecasts to tell skill from luck.
             See <Term t="Lookback Window" />.</p>
@@ -165,10 +174,14 @@ export default function ForecastMethod({ fc, label }: { fc: ForecastPayload; lab
               ? <>In the stored run it ranges from <M>{range(coverages, pct0)}</M>.</>
               : <>No run is stored yet.</>}{" "}
             Treat the column, not the multiplier, as the truth about the band.</p>
-            <p><B>Caveat on that measurement.</B> Coverage applies the band width as it stands today to every
-            past error. It is a check on whether the band width was reasonable, not a record of bands as they
-            were published at the time. The Live Track Record, which scores forecasts exactly as they were
-            published, is the genuine out-of-sample check.</p>
+            <p><B>How that is measured.</B> Sequentially: each backtested error is checked against the band drawn from
+            only the errors that came before it, using the same recipe as above, and the first{" "}
+            <M>{spec.band.coverage_min_prior}</M> errors only seed that estimate. So the figure is the share of
+            prints that landed inside the band a user could have been shown at the time, not the band of today
+            applied to the errors it was built from (that in-sample check flatters a band, most of all when
+            volatility has shifted). It is still a simulation. The live scoreboard on this page, which scores
+            forecasts exactly as they were published, is the genuine check, and where it disagrees with this
+            column, believe the scoreboard.</p>
           </div>
         </Panel>
 
@@ -272,18 +285,26 @@ export default function ForecastMethod({ fc, label }: { fc: ForecastPayload; lab
             <ul style={list}>
               <li style={item}><B>One auction ahead only.</B> There is no multi-step path and no forecast of
               where a tenor will be after the next one.</li>
-              <li style={item}><B>The calendar date is estimated</B> from the median gap between prints, not
-              taken from BB&apos;s calendar.</li>
+              {spec.target_from_calendar
+                ? <li style={item}><B>The calendar date can still be an estimate.</B> It is BB&apos;s calendar date
+                  where the calendar holds one after the last print, and the median gap between prints where it
+                  does not.</li>
+                : <li style={item}><B>The calendar date is estimated</B> from the median gap between prints, not
+                  taken from BB&apos;s calendar.</li>}
               <li style={item}><B>Samples are small for bonds.</B> {hasData
                 ? <>Scored auctions per non-bill tenor: <M>{range(nBonds, String)}</M>, against{" "}
                 <M>{range(nBills, String)}</M> for bills.</>
                 : <>See the n column once a run is stored.</>}{" "}
               The bond window was lengthened after a shorter one left the long end unresolved, so that choice
               was made having seen results.</li>
-              <li style={item}><B>Live forecast versus backtest.</B> The live forecast uses the anchor as of
-              its run date. Each backtested forecast used the anchor just before its auction. When an auction
-              falls days after the run, the live forecast is working from older anchor information than the
-              backtest assumed.</li>
+              {spec.anchor_as_of_run
+                ? <li style={item}><B>Live forecast versus backtest.</B> Each backtested forecast used the anchor
+                  as it stood on the weekly run day before its auction, which is what the published forecast
+                  knew. Prints between the run day and the auction are not seen by either.</li>
+                : <li style={item}><B>Live forecast versus backtest.</B> The live forecast uses the anchor as of
+                  its run date. Each backtested forecast used the anchor just before its auction. When an auction
+                  falls days after the run, the live forecast is working from older anchor information than the
+                  backtest assumed, so the backtest is somewhat flattering to the published forecast.</li>}
               <li style={item}><B>Only auction history.</B> No model sees an MPC decision, a BB circular, a
               funding squeeze or a devolvement. Those are step changes and the forecast will be most wrong
               exactly then.</li>

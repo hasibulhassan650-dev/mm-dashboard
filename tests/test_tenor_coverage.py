@@ -117,3 +117,37 @@ class TestNoViewKeepsItsOwnListOfTenors:
     def test_a_carried_forward_print_has_a_shelf_life_in_the_correlation(self):
         src = _src("components", "ExploreTool.tsx")
         assert "carryDays" in src and "limit" in src
+
+
+class TestTheForecastEngineKeepsNoListOfBillTenors:
+    """The forecast window followed a literal {"91D", "182D", "364D", "14D", "28D"}: a bill BB starts auctioning
+    under a new label would have been fitted on the 5-year BOND window with nothing to say so. What a series is
+    (its security type) decides its window, the front end reads bills off forecasts[].instrument, and this fails
+    the build if a literal list of tenors comes back."""
+
+    _TENOR_LITERAL = re.compile(r"""[\[{(]\s*["']\d+[DY]["']\s*,\s*["']\d+[DY]["']""")
+
+    def _offences(self, text):
+        return ([m.group(0) for m in self._TENOR_LITERAL.finditer(text)]
+                + re.findall(r"\bBILL_TENORS\b|\bbill_tenors\b", text))
+
+    def test_the_guard_can_fail(self):
+        assert self._offences('BILL_TENORS = {"91D", "182D"}')
+        assert self._offences('const bills = ["91D", "182D", "364D"];')
+        assert not self._offences('lookback_for(instrument)  # T_BILL')
+
+    def test_no_forecast_module_lists_tenors(self):
+        folder = os.path.join(_ROOT, "forecast")
+        bad = {}
+        for name in sorted(os.listdir(folder)):
+            if name.endswith(".py"):
+                found = self._offences(open(os.path.join(folder, name), encoding="utf-8").read())
+                if found:
+                    bad[name] = found
+        assert not bad, f"a literal list of tenors is back in forecast/: {bad}"
+
+    def test_the_forecast_page_and_its_method_component_do_not_list_bills(self):
+        for parts in (("app", "research", "page.tsx"), ("components", "ForecastMethod.tsx"),
+                      ("lib", "forecastMethod.json")):
+            found = self._offences(_src(*parts))
+            assert not found, f"{'/'.join(parts)} lists bill tenors: {found}"

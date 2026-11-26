@@ -1,4 +1,4 @@
-import { tenorYears } from "@/lib/tenor";
+import { tenorYears, byTenor as byTenorOrder } from "@/lib/tenor";
 import { api, BacktestRow, ForecastRow, ForecastModel } from "@/lib/api";
 import RelatedLinks from "@/components/RelatedLinks";
 import { Panel } from "@/components/terminal/ui";
@@ -25,7 +25,6 @@ const TRACK_TENOR = "91D";   // deepest series — the one worth eyeballing
 const CI_PCT = Math.round(spec.bootstrap.ci_level * 100);
 const DM_ALPHA = spec.verdict.dm_alpha;
 const DIAG_ALPHA = spec.diagnostics.alpha;
-const isBillTenor = (t: string) => spec.bill_tenors.includes(t);
 const spanOf = (xs: number[], f: (v: number) => string) =>
   xs.length === 0 ? DASH : Math.min(...xs) === Math.max(...xs) ? f(xs[0]) : `${f(Math.min(...xs))} to ${f(Math.max(...xs))}`;
 
@@ -40,10 +39,11 @@ function H({ children }: { children: React.ReactNode }) {
 }
 
 export default async function ResearchPage() {
-  const [fc, track, diags] = await Promise.all([
+  const [fc, track, diags, board] = await Promise.all([
     api.forecast(),
     api.forecastPredictions(TRACK_TENOR),
     api.forecastDiagnostics(),
+    api.forecastScoreboard(),
   ]);
 
   const byTenor = new Map<string, Partial<Record<ForecastModel, BacktestRow>>>();
@@ -91,7 +91,9 @@ export default async function ResearchPage() {
   const sharpest = headline
     .filter(h => (h.metric.mae_recent ?? h.metric.mae_bps) != null)
     .sort((a, b) => (a.metric.mae_recent ?? a.metric.mae_bps!) - (b.metric.mae_recent ?? b.metric.mae_bps!))[0] ?? null;
-  const scored = fc.track_record.length;
+  // Scored AUCTIONS (one per tenor and target date, however many models and runs forecast it), counted by the API.
+  // fc.track_record is only the latest rows for display and is never counted here. Absent on an older API: a dash.
+  const ts = fc.track_summary ?? null;
   // Economic value is only stored for established models, so this list is
   // already filtered to edges the page is willing to stand behind.
   const evRows = tenors
@@ -113,7 +115,11 @@ export default async function ResearchPage() {
 
   // Figures the prose below quotes, read from the stored run instead of typed.
   const naive91 = byTenor.get(TRACK_TENOR)?.naive ?? null;
-  const nBonds = fc.metrics.filter(m => m.model === "naive" && !isBillTenor(m.tenor)).map(m => m.n_obs);
+  // Bill or not comes from each series' own security type (stored with its forecasts), never from a list of tenors.
+  const instrOf = new Map<string, string | null>(fc.forecasts.map(f => [f.tenor, f.instrument] as [string, string | null]));
+  const nBonds = fc.metrics
+    .filter(m => m.model === "naive" && instrOf.get(m.tenor) != null && instrOf.get(m.tenor) !== spec.bill_instrument)
+    .map(m => m.n_obs);
   const grangerTests = diags.filter(d => d.test === "granger" && d.pvalue != null);
   const grangerHits = grangerTests.filter(d => (d.pvalue as number) < DIAG_ALPHA);
   const diagP = (test: string, subject: string) =>
@@ -121,6 +127,21 @@ export default async function ResearchPage() {
   const spreadAdfP = diagP("adf", "spread_policy");
   const cointP = diagP("coint", "cutoff~repo");
   const ecmRows = fc.metrics.filter(m => m.model === "ecm");
+  // The ECM's status is the verdict the weekly diagnostics run COMPUTED from the stored p-values ("WORD - detail"),
+  // never a word typed here. Without one (the run has not happened since this was added) the page says so.
+  const ecmV = diags.find(d => d.test === "ecm_verdict")?.conclusion ?? null;
+  const ecmWord = ecmV ? ecmV.split(" - ")[0] : gateBlocked ? "BLOCKED" : "NOT YET COMPUTED";
+  const ecmWhy = ecmV ? ecmV.split(" - ").slice(1).join(" - ")
+    : gateBlocked ? (gate?.conclusion ?? "").replace(/^(BLOCKED|OPEN) — /, "")
+    : "the next weekly diagnostics run records the verdict";
+  const ecmColor = ecmWord === "REJECTED" ? "var(--neg)" : ecmWord === "SUPPORTED" ? "var(--pos)" : "var(--warn)";
+  const lams = fc.metrics.filter(m => m.model === "curve" && m.curve_lambda != null)
+    .sort((a, b) => byTenorOrder(a.tenor, b.tenor));
+  const lamText = lams.length
+    ? lams.map(m => `${m.tenor} ${(m.curve_lambda as number).toFixed(2)}`).join(" · ")
+    : "not available yet (it appears after the next weekly run)";
+  const spreadStationary = spreadAdfP.filter(v => v < DIAG_ALPHA).length;
+  const cointSignificant = cointP.filter(v => v < DIAG_ALPHA).length;
 
   return (
     // Fragment: the page needs no client state at the top level — each Term
@@ -178,8 +199,15 @@ export default async function ResearchPage() {
         </div>
         <div className="kpi">
           <div className="kpi-top"><span className="kpi-label">Live Track Record</span></div>
-          <div className="kpi-val"><span className="kpi-num">{scored}</span><span className="kpi-unit">scored</span></div>
-          <div className="kpi-sub">{scored ? "published forecasts vs actual prints" : "builds as auctions print"}</div>
+          <div className="kpi-val">
+            <span className="kpi-num">{ts ? ts.scored_auctions : DASH}</span><span className="kpi-unit">auctions scored</span>
+          </div>
+          <div className="kpi-sub" style={ts && ts.overdue_unscored ? { color: "var(--warn)" } : undefined}
+            title={ts?.overdue_tenors.length ? `unscored: ${ts.overdue_tenors.join(", ")}` : undefined}>
+            {!ts ? "not reported by the API yet"
+              : ts.overdue_unscored ? `${ts.overdue_unscored} more past their date, still unscored`
+              : ts.scored_auctions ? "published forecasts vs actual prints" : "builds as auctions print"}
+          </div>
         </div>
       </div>
 
@@ -248,6 +276,56 @@ export default async function ResearchPage() {
                 {headline.length === 0 && (
                   <tr><td colSpan={10} style={{ textAlign: "center", color: "var(--fg-mute)", padding: 16 }}>
                     No forecasts stored yet.
+                  </td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+
+        <Panel title="Live Trust Scoreboard — What Was Published, Against What Printed" span={12} pad={false}
+          sub={'built only from forecasts that were stored BEFORE their auction · the model scored is the one this page recommended in the run that published · '
+            + `a tenor shows no figures until it has ${board.min_scored ?? spec.min_scored} scored auctions`}>
+          <div style={{ padding: "10px 14px", fontSize: 12, color: "var(--fg-mute)", borderBottom: "1px solid var(--border-soft)" }}>
+            This is the check the backtest cannot be. &quot;Inside the band&quot; is how often the live band really held;
+            &quot;claimed&quot; is the backtest&apos;s own measurement of the same thing. Where live is clearly below claimed,
+            the band was too narrow. Win rate is over auctions where the recommended model was not naive itself.
+            A forecast made on or after its target date is never counted.
+          </div>
+          <div className="table-wrap">
+            <table className="dt">
+              <thead><tr>
+                <th>Tenor</th><th>Model</th><th className="r">Scored auctions</th>
+                <th className="r">Live miss<br /><span style={{ fontWeight: 400 }}>bps, mean</span></th>
+                <th className="r">Naive miss<br /><span style={{ fontWeight: 400 }}>bps, mean</span></th>
+                <th className="r">Beat naive</th>
+                <th className="r">Inside band, live</th>
+                <th className="r">Inside band, claimed</th>
+              </tr></thead>
+              <tbody>
+                {board.tenors.map(r => (
+                  <tr key={r.tenor}>
+                    <td style={{ fontWeight: 600 }}>{r.tenor}</td>
+                    <td>{MODEL_LABEL[r.recommended_model] ?? r.recommended_model}</td>
+                    <td className="r mono">{r.scored_auctions}</td>
+                    {r.status === "ok" ? (
+                      <>
+                        <td className="r mono" style={{ fontWeight: 600 }}>{r.live_mae_bps?.toFixed(1) ?? DASH}</td>
+                        <td className="r mono" style={{ color: "var(--fg-mute)" }}>{r.naive_mae_bps?.toFixed(1) ?? DASH}</td>
+                        <td className="r mono">{r.win_rate == null ? DASH : `${pct1(r.win_rate)} of ${r.win_rate_n}`}</td>
+                        <td className="r mono" style={{ fontWeight: 600 }}>{pct1(r.inside_band)}</td>
+                        <td className="r mono" style={{ color: "var(--fg-mute)" }}>{pct1(r.claimed_coverage)}</td>
+                      </>
+                    ) : (
+                      <td colSpan={5} style={{ color: "var(--warn)", fontSize: 11.5 }}>
+                        insufficient — {r.scored_auctions} of {r.min_scored} scored auctions needed before any figure is shown
+                      </td>
+                    )}
+                  </tr>
+                ))}
+                {board.tenors.length === 0 && (
+                  <tr><td colSpan={8} style={{ textAlign: "center", color: "var(--fg-mute)", padding: 16 }}>
+                    No published forecast has been scored against a print yet, or the API has not been updated to report it.
                   </td></tr>
                 )}
               </tbody>
@@ -444,65 +522,70 @@ export default async function ResearchPage() {
         )}
 
         {gate && (
-          <Panel title="Error-Correction Model — Tested and Rejected" span={12}
-            sub="the pull-to-anchor model from the project guide (Phase 5.3), now run on verified policy history">
+          <Panel title="Error-Correction Model — Status" span={12}
+            sub="the pull-to-anchor model from the project guide (Phase 5.3) · the verdict is recomputed every week from the stored test results">
             <div style={{ fontSize: 12.5, lineHeight: 1.75, color: "var(--fg-mute)", maxWidth: 980 }}>
               <div style={{
                 display: "inline-flex", alignItems: "center", gap: 8, marginBottom: 12,
                 padding: "6px 12px", borderRadius: "var(--radius-sm)", fontSize: 12,
-                border: `1px solid ${gateBlocked ? "var(--warn)" : "var(--neg)"}`,
-                color: gateBlocked ? "var(--warn)" : "var(--neg)",
-                background: `color-mix(in oklab, ${gateBlocked ? "var(--warn)" : "var(--neg)"} 10%, transparent)`,
+                border: `1px solid ${ecmColor}`, color: ecmColor,
+                background: `color-mix(in oklab, ${ecmColor} 10%, transparent)`,
               }}>
-                <b>{gateBlocked ? "BLOCKED" : "REJECTED"}</b>
-                <span style={{ color: "var(--fg-dim)" }}>
-                  {gateBlocked
-                    ? gate.conclusion?.replace(/^(BLOCKED|OPEN) — /, "")
-                    : "the corridor anchor exists, and the cutoff is not tethered to it"}
-                </span>
+                <b>{ecmWord}</b>
+                <span style={{ color: "var(--fg-dim)" }}>{ecmWhy}</span>
               </div>
 
               <p><b style={{ color: "var(--fg)" }}>The idea.</b> An ECM says a cutoff sitting far above
               the policy rate should be pulled back toward it, at a speed the data estimates. The
               project guide calls this the most theoretically honest specification for a corridor
-              regime, and it was the single highest-value thing still unbuilt.</p>
+              regime.</p>
 
-              <p><b style={{ color: "var(--fg)" }}>It was blocked on data, so the data was fetched.</b>{" "}
-              The corridor history now comes from Bangladesh Bank&apos;s own MPD circulars — 11 dated
-              re-fixations from the introduction of the Interest Rate Corridor on 20 Jun 2023 to
-              2 Aug 2026, parsed from the circular PDFs. Every entry is verified twice: each circular
-              states the rate it is replacing, so the chain validates link by link, and the final
-              corridor it produces equals what BB publishes live today.</p>
+              <p><b style={{ color: "var(--fg)" }}>The data.</b>{" "}
+              The corridor history comes from Bangladesh Bank&apos;s own MPD circulars, parsed from the
+              circular PDFs. Every entry is verified twice: each circular states the rate it is replacing, so
+              the chain validates link by link, and the final corridor it produces equals what BB publishes live
+              today.</p>
 
-              <p><b style={{ color: "var(--fg)" }}>With real data, the hypothesis fails — on the tests
-              below.</b></p>
-              <ul style={{ paddingLeft: 20, margin: "0 0 10px" }}>
-                <li style={{ marginBottom: 5 }}>The spread (cutoff − repo) is{" "}
-                <b style={{ color: "var(--fg)" }}>not stationary</b> on any tenor
-                (<Term t="Stationarity">ADF</Term> p = {spanOf(spreadAdfP, v => v.toFixed(2))}). It wanders; it does not revert.</li>
-                <li style={{ marginBottom: 5 }}>Engle-Granger finds{" "}
-                <b style={{ color: "var(--fg)" }}>no <Term t="Cointegration" /></b> between cutoff and
-                policy rate on any tenor (p = {spanOf(cointP, v => v.toFixed(2))}). There is no tether.</li>
-                <li>Fitted anyway, the ECM has{" "}
-                {ecmRows.length === 0
-                  ? "produced no forecast on any tenor"
-                  : <>scored forecasts on only {ecmRows.map((m, i) => (
-                      <span key={m.tenor}>{i ? "; " : ""}{m.tenor} (n = {m.n_obs}, {m.verdict ?? DASH})</span>
-                    ))}</>}
-                {" "}— see its rows in the backtest table for its error against naive.</li>
-              </ul>
+              {(spreadAdfP.length > 0 || cointP.length > 0) && (
+                <>
+                  <p><b style={{ color: "var(--fg)" }}>What the tests say.</b></p>
+                  <ul style={{ paddingLeft: 20, margin: "0 0 10px" }}>
+                    {spreadAdfP.length > 0 && (
+                      <li style={{ marginBottom: 5 }}>The spread (cutoff − repo) is{" "}
+                      <b style={{ color: "var(--fg)" }}>stationary on {spreadStationary} of {spreadAdfP.length} tenors</b>
+                      {" "}(<Term t="Stationarity">ADF</Term> p = {spanOf(spreadAdfP, v => v.toFixed(2))}, threshold {DIAG_ALPHA}).</li>
+                    )}
+                    {cointP.length > 0 && (
+                      <li style={{ marginBottom: 5 }}>Engle-Granger finds <Term t="Cointegration" /> between cutoff and
+                      policy rate on <b style={{ color: "var(--fg)" }}>{cointSignificant} of {cointP.length} tenors</b>
+                      {" "}(p = {spanOf(cointP, v => v.toFixed(2))}, threshold {DIAG_ALPHA}).</li>
+                    )}
+                    <li>
+                      {ecmRows.length === 0
+                        ? "No tenor has enough scored ECM forecasts to publish ECM numbers"
+                        : <>The ECM publishes scored forecasts on only {ecmRows.map((m, i) => (
+                            <span key={m.tenor}>{i ? "; " : ""}{m.tenor} (n = {m.n_obs}, {m.verdict ?? DASH})</span>
+                          ))}</>}
+                      {" "}— a model with fewer than {spec.min_scored} scored forecasts, or whose fitted pull toward the
+                      repo rate is not negative, is withheld. See its rows in the backtest table for its error against naive.</li>
+                  </ul>
+                </>
+              )}
 
-              <p>The two stationarity and cointegration tests say the same thing, which is what makes it
-              credible rather than a single unlucky test: over this sample BB&apos;s cutoffs are <i>not</i> anchored to the policy
-              corridor in a way an error-correction model can exploit. Imposing a pull that is not
-              there just adds noise, so the model is switched off — now for a measured reason rather
-              than a missing-data one.</p>
+              {ecmWord === "REJECTED" && (
+                <p>The tests agree, which is what makes this credible rather than a single unlucky test: over
+                this sample BB&apos;s cutoffs are <i>not</i> anchored to the policy corridor in a way an
+                error-correction model can exploit, so the ECM is not recommended for any tenor.</p>
+              )}
+              {ecmWord === "SUPPORTED" && (
+                <p>Cointegration alone does not make the ECM the recommended model: its forecasts are judged by
+                the same verdict rule as every other model, in the backtest table.</p>
+              )}
 
               <p style={{ color: "var(--fg-dim)" }}><b style={{ color: "var(--fg)" }}>Worth knowing
-              anyway.</b> The corridor history is now a first-class series in the database, so the
-              spread is available to any future model, and this result is re-tested automatically
-              every week. If BB tightens the corridor&apos;s grip on auction pricing, the tests will
-              say so.</p>
+              anyway.</b> The corridor history is a first-class series in the database, so the spread is
+              available to any future model, and this result is re-tested automatically every week. If BB
+              tightens the corridor&apos;s grip on auction pricing, the verdict will change by itself.</p>
             </div>
           </Panel>
         )}
@@ -539,8 +622,8 @@ export default async function ResearchPage() {
             <p>The fitted λ is how the curve behaves in numbers: a λ near one means a move in the bill
             anchor passes almost one-for-one into that tenor, a smaller λ means that part of the curve
             moves less than the bills. λ is estimated from the data, not assumed, and it is re-estimated at
-            every step of the backtest. It is written to the weekly job log but not stored with the
-            metrics, so no value is quoted here.</p>
+            every step of the backtest. The λ applied to this week&apos;s live forecast is stored with the curve model&apos;s metrics:{" "}
+            <b style={{ color: "var(--fg)" }}>{lamText}</b>.</p>
 
             <H>How an edge is judged, and the band</H>
             <p>A lower average error in a backtest is a <i>claim</i>, not a fact, and the page does not
@@ -629,7 +712,7 @@ export default async function ResearchPage() {
             both calls — the model forecast and your adjusted one — so you can tell later which added
             value.</p>
             <p><b style={{ color: "var(--fg)" }}>Watch λ for regime change.</b> If a tenor&apos;s
-            pass-through drifts materially from its usual level (it is logged by each weekly run), the relationship between that tenor
+            pass-through drifts materially from its usual level (it is stored with each weekly run), the relationship between that tenor
             and the bill curve is changing — a signal in its own right, and a reason to stop trusting
             the curve forecast until it settles.</p>
             <p><b style={{ color: "var(--fg)" }}>Reflexivity.</b> If the desk bids differently because
@@ -666,8 +749,12 @@ export default async function ResearchPage() {
             <p><b style={{ color: "var(--fg)" }}>A wide band is information, not a defect.</b> Where a model cannot
             call an auction, its band says so in basis points. Read the band before the point estimate.</p>
 
-            <p><b style={{ color: "var(--fg)" }}>Target auction dates are inferred</b> from the median recent gap between
-            prints, not from BB&apos;s published auction calendar. Expect them to shift around holidays.</p>
+            {spec.target_from_calendar
+              ? <p><b style={{ color: "var(--fg)" }}>Target auction dates</b> are BB&apos;s published auction calendar
+                where it holds a date after the last print, and otherwise inferred from the median recent gap between
+                prints. Expect inferred ones to shift around holidays.</p>
+              : <p><b style={{ color: "var(--fg)" }}>Target auction dates are inferred</b> from the median recent gap between
+                prints, not from BB&apos;s published auction calendar. Expect them to shift around holidays.</p>}
 
             <p style={{ color: "var(--fg-dim)" }}><b style={{ color: "var(--fg)" }}>Method.</b> Everything here is
             fitted weekly in GitHub Actions and written to the database; this page and its API only read pre-computed

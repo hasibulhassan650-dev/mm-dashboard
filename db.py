@@ -416,6 +416,9 @@ class AuctionForecast(Base):
     hi_yield            = Column(Float)                  # point + z×EWMA error volatility (z = 1.96)
     actual_yield        = Column(Float)                  # backfilled after the print
     created_utc         = Column(DateTime)
+    # Which definition of the method published this row (forecast/run_forecast.py
+    # method_version()). Nullable: rows from before it was recorded have none.
+    method_version      = Column(String(80))
 
 
 class BacktestMetric(Base):
@@ -448,7 +451,10 @@ class BacktestMetric(Base):
     # good the point estimate looks.
     gap_lo        = Column(Float)
     gap_hi        = Column(Float)
-    coverage      = Column(Float)    # share of actuals inside the published band
+    # Share of backtested prints that landed inside the band AS IT WOULD HAVE BEEN drawn just before each one
+    # (SEQUENTIAL: error i is a hit if within band_half_width(errors[:i]), i >= 5). Rows computed before
+    # Nov-2026 hold the old in-sample figure (today's band applied to every past error), which flattered the band.
+    coverage      = Column(Float)
     mae_first     = Column(Float)    # first-half MAE (bps)
     mae_recent    = Column(Float)    # second-half MAE (bps) — what today looks like
     verdict       = Column(String(20))  # established | unproven | worse
@@ -463,6 +469,10 @@ class BacktestMetric(Base):
     ev_shade_bps       = Column(Float)   # shading this model needs for the fill target
     ev_bench_shade_bps = Column(Float)   # shading naive needs for the same fill
     ev_fill_target     = Column(Float)
+    # The curve model's pass-through (lambda) actually applied to the live forecast of this run; set on the
+    # model='curve' row only, never recomputed for past rows. NULL on older rows and on every other model.
+    curve_lambda       = Column(Float)
+    method_version     = Column(String(80))
 
 
 class BacktestPrediction(Base):
@@ -1333,6 +1343,9 @@ def init_db():
         "ALTER TABLE backtest_metrics ADD COLUMN IF NOT EXISTS ev_shade_bps DOUBLE PRECISION",
         "ALTER TABLE backtest_metrics ADD COLUMN IF NOT EXISTS ev_bench_shade_bps DOUBLE PRECISION",
         "ALTER TABLE backtest_metrics ADD COLUMN IF NOT EXISTS ev_fill_target DOUBLE PRECISION",
+        "ALTER TABLE backtest_metrics ADD COLUMN IF NOT EXISTS curve_lambda DOUBLE PRECISION",
+        "ALTER TABLE backtest_metrics ADD COLUMN IF NOT EXISTS method_version VARCHAR(80)",
+        "ALTER TABLE auction_forecasts ADD COLUMN IF NOT EXISTS method_version VARCHAR(80)",
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_backtest_predictions_key "
         "ON backtest_predictions (computed_date, tenor, model, auction_date)",
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_research_diagnostics_key "

@@ -102,13 +102,20 @@ def build_anchor(hist: pd.DataFrame, tenor: str = "364D") -> pd.DataFrame:
     return a.drop_duplicates(subset=["auction_date"], keep="last").reset_index(drop=True)
 
 
-def add_curve_anchor(f: pd.DataFrame, anchor: pd.DataFrame) -> pd.DataFrame:
+def add_curve_anchor(f: pd.DataFrame, anchor: pd.DataFrame, info_date=None) -> pd.DataFrame:
     """Attach the anchor rate KNOWN BEFORE each auction, and its move since the
     previous auction of this tenor.
 
     `allow_exact_matches=False` is the whole safety argument: a bond and a bill
     can print on the same day, and that day's bill result is not knowable when
     the bond is bid. Matching strictly earlier keeps the feature honest.
+
+    `info_date` (optional) maps the auction dates to the date the forecast is
+    made on: only anchor prints strictly before THAT date are used. Left unset
+    it is the auction date itself (the anchor just before the auction). The
+    weekly job publishes on a fixed weekday ahead of the auction, so
+    run_forecast passes the run date when it wants the backtest to see only what
+    was knowable at publication. It must not decrease with the auction date.
 
     `anchor_now` is not lagged and does not need to be — it is built only from
     auctions strictly before t, so it is in the bidder's information set.
@@ -121,11 +128,13 @@ def add_curve_anchor(f: pd.DataFrame, anchor: pd.DataFrame) -> pd.DataFrame:
         f["d_anchor"] = np.nan
         return f
 
+    left = f.sort_values("auction_date").copy()
+    left["_info_date"] = left["auction_date"] if info_date is None else info_date(left["auction_date"])
+    right = anchor.sort_values("auction_date").rename(columns={"auction_date": "_anchor_date"})
     merged = pd.merge_asof(
-        f.sort_values("auction_date"),
-        anchor.sort_values("auction_date"),
-        on="auction_date", direction="backward", allow_exact_matches=False,
-    )
+        left, right,
+        left_on="_info_date", right_on="_anchor_date", direction="backward", allow_exact_matches=False,
+    ).drop(columns=["_info_date", "_anchor_date"])
     merged = merged.rename(columns={"anchor_yield": "anchor_now"})
     merged["d_anchor"] = merged["anchor_now"].diff()
     return merged

@@ -171,6 +171,11 @@ export const api = {
     try { return await get<BacktestPredictionRow[]>(`/api/forecast/predictions?tenor=${encodeURIComponent(tenor)}`); }
     catch { return []; }
   },
+  // Live trust scoreboard (published forecasts vs actual prints). Empty until the API is deployed with the route.
+  forecastScoreboard: async (): Promise<Scoreboard> => {
+    try { return await get<Scoreboard>("/api/forecast/scoreboard"); }
+    catch { return { min_scored: null, tenors: [], as_of: null }; }
+  },
   forecastDiagnostics: async (): Promise<DiagnosticRow[]> => {
     try { return await get<DiagnosticRow[]>("/api/forecast/diagnostics"); }
     catch { return []; }
@@ -215,7 +220,8 @@ export interface BacktestRow {
   mae_lo: number | null; mae_hi: number | null;
   /** Bootstrap 95% CI for (naive MAE − this model's MAE), bps. Contains 0 = no proven edge. */
   gap_lo: number | null; gap_hi: number | null;
-  /** Share of actual prints that landed inside the published band (target 0.95). */
+  /** Share of backtested prints inside the band as it would have been drawn just before each one (sequential,
+   *  not in-sample). The band is a normal-theory 95% one; this is how often it really held. */
   coverage: number | null;
   /** First-half vs second-half MAE — mae_recent is what today actually looks like. */
   mae_first: number | null; mae_recent: number | null;
@@ -230,6 +236,9 @@ export interface BacktestRow {
   ev_shade_bps: number | null;
   ev_bench_shade_bps: number | null;
   ev_fill_target: number | null;
+  /** The curve model's pass-through applied to this run's live forecast (curve rows only). Absent until the API
+   *  and the weekly job have the column; null on older rows. */
+  curve_lambda?: number | null;
 }
 export interface TrackRecordRow {
   tenor: string; model: ForecastModel;
@@ -240,7 +249,24 @@ export interface ForecastPayload {
   run_date: string | null;
   forecasts: ForecastRow[];
   metrics: BacktestRow[];
+  /** The latest 200 scored ROWS, for display only: never count them (use track_summary). */
   track_record: TrackRecordRow[];
+  /** Scored AUCTIONS and overdue-unscored ones. Absent when the API predates it: show a dash, not a guess. */
+  track_summary?: TrackSummary | null;
+}
+export interface TrackSummary {
+  scored_auctions: number; overdue_unscored: number; overdue_tenors: string[];
+}
+/** One tenor of the live trust scoreboard. Figures are null (status "insufficient") below min_scored auctions. */
+export interface ScoreboardRow {
+  tenor: string; scored_auctions: number; min_scored: number; status: "ok" | "insufficient";
+  recommended_model: ForecastModel;
+  live_mae_bps: number | null; naive_mae_bps: number | null;
+  win_rate: number | null; win_rate_n: number;
+  inside_band: number | null; claimed_coverage: number | null;
+}
+export interface Scoreboard {
+  min_scored: number | null; tenors: ScoreboardRow[]; as_of: string | null;
 }
 
 export interface MonetaryRow {

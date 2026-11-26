@@ -21,7 +21,11 @@ four ways, all in pure numpy so the weekly forecast keeps no stats dependency.
 3. BAND COVERAGE. The published interval is +/-1.96 x an EWMA estimate of the
    model's error volatility (band_half_width), which is only a 95% interval if
    the errors are normal and the volatility estimate is right. Rate-change
-   errors are famously fat-tailed. So measure it: what share of actual prints really landed inside the band?
+   errors are famously fat-tailed. So measure it, SEQUENTIALLY: for each backtest
+   error, draw the band from only the errors BEFORE it and ask whether it fell
+   inside (sequential_coverage). Building the band from all errors and then
+   checking those same errors is in-sample: it flatters the band, most of all
+   when volatility shifts, which is exactly when the band matters.
    If coverage is 85% the band is being advertised as something it is not.
 
 4. SUB-PERIOD STABILITY. Split the backtest in half and score each. A model that
@@ -33,6 +37,7 @@ import numpy as np
 BLOCK_FRAC = 0.15      # block length as a share of n; keeps local dependence
 N_BOOT = 2000
 RNG_SEED = 7           # fixed so a published interval is reproducible
+COVERAGE_MIN_PRIOR = 5  # errors that must precede one before it is scored for sequential coverage
 
 
 def _blocks(n: int) -> int:
@@ -162,19 +167,29 @@ def dm_test(err_model: np.ndarray, err_naive: np.ndarray, hln: bool = True) -> f
     return round(float(_t_sf(abs(dm * adj), n - 1)), 4)
 
 
-def coverage(errors: np.ndarray, rmse_pct: float, z: float = 1.96) -> float | None:
-    """Share of actual prints that fell inside a +/-z*rmse_pct band.
+def sequential_coverage(errors: np.ndarray, z: float | None = None,
+                        min_prior: int = COVERAGE_MIN_PRIOR) -> float | None:
+    """Share of out-of-sample errors that fell inside the band drawn JUST BEFORE them.
 
-    NOTE: run_forecast.py does NOT call this for the stored coverage; it counts
-    errors inside the EWMA band it actually publishes. Kept as a helper.
-    Should be ~0.95. Materially below means the band is too narrow for the
-    real error distribution and is under-selling the risk.
+    Error i is a hit when |e_i| <= band_half_width(e[:i]) (z defaults to the published band's): the band is built
+    from the errors that preceded it and nothing else, so it is the band a user
+    could actually have been shown at that time. The first `min_prior` errors
+    only seed the volatility estimate and are not scored (band_half_width needs
+    at least 5 to exist). None when no error could be scored.
+
+    Never use a band built from the whole series to judge that same series:
+    that is in-sample, and it hides a volatility regime the band was too narrow for.
     """
     e = np.asarray(errors, dtype=float)
     e = e[np.isfinite(e)]
-    if len(e) < 8 or not np.isfinite(rmse_pct) or rmse_pct <= 0:
-        return None
-    return round(float(np.mean(np.abs(e) <= z * rmse_pct)), 4)
+    hits = scored = 0
+    for i in range(max(min_prior, 5), len(e)):
+        hw = band_half_width(e[:i]) if z is None else band_half_width(e[:i], z)
+        if hw is None:
+            continue
+        scored += 1
+        hits += int(abs(e[i]) <= hw)
+    return round(hits / scored, 4) if scored else None
 
 
 def stability(errors: np.ndarray) -> tuple[float, float] | None:

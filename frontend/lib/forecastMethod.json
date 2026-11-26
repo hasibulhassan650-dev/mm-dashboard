@@ -9,13 +9,11 @@
   ],
   "primary_model": "curve",
   "anchor_tenor": "364D",
-  "bill_tenors": [
-    "14D",
-    "182D",
-    "28D",
-    "364D",
-    "91D"
-  ],
+  "bill_instrument": "T_BILL",
+  "anchor_as_of_run": false,
+  "target_from_calendar": false,
+  "run_weekday": 3,
+  "method_version": "r2;anchor_as_of_run=0;target_from_calendar=0",
   "factors": [
     "d_cutoff_lag1",
     "cover_lag1",
@@ -42,7 +40,8 @@
     "z": 1.96,
     "fallback_z": 1.96,
     "ewma_lambda": 0.94,
-    "fallback_recent_fraction": 0.5
+    "fallback_recent_fraction": 0.5,
+    "coverage_min_prior": 5
   },
   "bootstrap": {
     "draws": 2000,
