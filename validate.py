@@ -1186,13 +1186,26 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
                        lo=today - datetime.timedelta(days=90)):
                 serial, pub, subj = r[0], r[1], r[2]
                 held = _as_date(subj or pub)
+                # The release itself states the auction day and the maturity, and we read both (sukuk_auctions): wait from the
+                # real issue date, not from the day the notice was published, and do not wait at all before the auction is held
+                # (12-Nov's notice announced a 1-Dec auction; the rule kept calling the missing listing 'waiting' for weeks).
+                try:
+                    _ann = q("SELECT auction_date, issue_date FROM sukuk_auctions WHERE source_serial = :s", s=serial)
+                except Exception:
+                    s.rollback()
+                    _ann = []
+                if _ann:
+                    _auction, _issue = _as_date(_ann[0][0]), _as_date(_ann[0][1])
+                    if _auction and today <= _auction:
+                        continue                       # not held yet: nothing for BB to list
+                    held = _issue or held
                 if held is None:
                     continue
                 n = q("SELECT COUNT(*) FROM sukuk_outstanding WHERE issue_date BETWEEN :lo AND :hi",
                       lo=held - datetime.timedelta(days=3), hi=held + datetime.timedelta(days=SUKUK_GRACE_DAYS))
                 if n and n[0][0]:
                     continue
-                _age = (today - _as_date(pub)).days
+                _age = (today - (held if _ann else _as_date(pub))).days
                 _m = (f"{serial} published {pub} announces a Sukuk auction ({held}) and BB's sukuk-outstanding page does not "
                       f"list a new issue for it")
                 if _age <= SUKUK_GRACE_DAYS:

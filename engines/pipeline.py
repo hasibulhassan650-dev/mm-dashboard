@@ -1555,6 +1555,16 @@ def run_sukuk_fetch() -> dict:
     init_db()
     session = get_session()
     try:
+        # The press releases FIRST. BB's sukuk notice/prospectus pages answer the PC's Chrome with an F5 challenge it cannot clear,
+        # and two such failures trip the run's Chrome breaker ("no further launches"): the releases, which carry the auction
+        # facts and download fine, were then never read (press_releases.body_text stayed empty for days).
+        now = datetime.datetime.utcnow()
+        notices = read_sukuk_notices(session, now)
+        # Keep the text of the other releases nobody parses yet (auction notices, MPC minutes): a few per run, newest first.
+        # Problems here are logged, not step errors: nothing depends on them until a parser does.
+        bodies = store_press_bodies(session, now, categories=("AUCTION_NOTICE", "POLICY"), limit=4)
+        for e in bodies["errors"]:
+            log.warning("%s", e)
         out = fetch_sukuk()
         watch = _register_source(session, out["meta"]) if out.get("meta") else {}
         now = datetime.datetime.utcnow()
@@ -1593,7 +1603,6 @@ def run_sukuk_fetch() -> dict:
         errs = list(out["errors"])
         if out["refused"]:
             errs.append(f"sukuk: refused {out['refused']}")
-        notices = read_sukuk_notices(session, now)
         errs += notices["errors"]
         return {"rows": len(out["outstanding"]), "added": added, "updated": updated, "notices_added": notices["added"],
                 "changed": changed, "documents_added": docs_added, "refused": out["refused"],

@@ -74,3 +74,11 @@ def test_a_dead_link_is_remembered_and_retried_weekly_not_every_run(monkeypatch)
     assert calls == ["u1"], "BB lists it but never serves it: hitting it hourly only adds traffic"
     P.store_press_bodies(s, NOW + datetime.timedelta(days=8), categories=("SUKUK",))
     assert calls == ["u1", "u1"]
+
+
+def test_the_press_releases_are_read_before_the_sukuk_pages_that_trip_the_chrome_breaker():
+    """The PC's Chrome cannot clear F5 on BB's sukuk notice/prospectus pages; two failures disable further launches for the run,
+    so releases read AFTER them were never read (body_text stayed empty for days). Order is the fix."""
+    import inspect
+    src = inspect.getsource(P.run_sukuk_fetch)
+    assert src.index("read_sukuk_notices(") < src.index("fetch_sukuk()") and src.index("store_press_bodies(") < src.index("fetch_sukuk()")
