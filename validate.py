@@ -1650,6 +1650,30 @@ def integrity_check(limit_per_rule: int = 8) -> dict:
         except Exception:
             s.rollback()
 
+        # ---- auction notices vs the auction calendar: what BB says it is OFFERING against what the ladder planned ----
+        # The calendar carries a planned amount; the notice (published days before the auction) states the face value actually
+        # offered. A difference is a change the planned outflow does not know about; a notice with no calendar row is an auction
+        # the ladder does not know at all. Read from the stored press-release text (press_releases.body_text), never from BB.
+        try:
+            from fetchers.auction_notice import parse_auction_notice
+            for _serial, _title, _body in q("SELECT serial, title, body_text FROM press_releases WHERE category = 'AUCTION_NOTICE' "
+                                           "AND body_text IS NOT NULL AND body_text <> '' AND published_date >= :lo ORDER BY published_date",
+                                           lo=today - datetime.timedelta(days=45)):
+                _n = parse_auction_notice(_title, _body)
+                if _n is None:
+                    add("auction-notice", f"{_serial}: the notice could not be read (title/figures did not parse)", "notice")
+                    continue
+                _plan = q("SELECT offered_amount_bdt_crore FROM auction_events WHERE auction_date = :d AND tenor_label = :t "
+                         "AND security_type IN ('T_BOND', 'FRTB')", d=_n["auction_date"], t=_n["tenor_label"])
+                if not _plan:
+                    add("auction-notice", f"{_serial}: BB offers {_n['face_crore']:,.0f} cr of {_n['tenor_label']} ({_n['isin']}) on "
+                                          f"{_n['auction_date']} but the auction calendar has no such auction", "notice")
+                elif abs(float(_plan[0][0] or 0) - _n["face_crore"]) > 0.01:
+                    add("auction-notice", f"{_serial}: BB offers {_n['face_crore']:,.0f} cr of {_n['tenor_label']} on {_n['auction_date']} but the "
+                                          f"calendar/ladder plans {float(_plan[0][0] or 0):,.0f} cr", "notice")
+        except Exception:
+            s.rollback()
+
         # ---- OMO coverage: a day the market traded (call money printed) with no OMO operation held and no recorded absence ----
         # BB's OMO release exists for every day it operates (the standing deposit facility alone prints daily). The 31-Mar-2026
         # release was never held and nothing said so, because the ledger audit only walks days BB printed something on.
