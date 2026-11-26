@@ -300,3 +300,17 @@ class TestOneAuctionCannotBeStoredUnderTwoLabels:
         assert _rem_to_tenor("2.60 Yr") == ("2Y", "T_BOND")
         assert _rem_to_tenor("2.60 Yr.") == ("2Y", "T_BOND")
         assert _rem_to_tenor("19.75 Yr") == ("19Y", "T_BOND")
+
+
+class TestTheAuctionDateIsNotTheIssueDate:
+    """BB's page prints the ISSUE date; the auction was the previous working day (bonds Tue->Wed, bills Sun->Mon). Storing the issue date
+    as the auction date shifted every auction by a day against the calendar, the press releases and the desk's own memory of it."""
+
+    def test_bond_issued_wednesday_was_auctioned_tuesday_and_bill_issued_monday_on_sunday(self):
+        import calendar_utils
+        calendar_utils.load_holidays(set(), set())
+        rows = _rows(_FULL)
+        bond, bill = _by_tenor(rows, "20Y"), _by_tenor(rows, "91D")
+        assert bond["issue_date"] == datetime.date(2026, 9, 2) and bond["auction_date"] == datetime.date(2026, 9, 1)     # Wed issue, Tue auction
+        assert bill["issue_date"] == datetime.date(2026, 9, 7) and bill["auction_date"] == datetime.date(2026, 9, 6)     # Mon issue, Sun auction
+        assert all(r["auction_date"] < r["issue_date"] for r in rows)
