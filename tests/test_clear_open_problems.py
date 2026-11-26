@@ -146,6 +146,10 @@ class TestADeadBbPdfBecomesARecordedHoleWithEvidence:
         pub = TODAY - datetime.timedelta(days=6)
         s.query(PressRelease).filter_by(serial="pr14381").update({"published_date": pub, "subject_date": pub - datetime.timedelta(days=2)})
         s.query(DataAbsence).filter_by(dataset="bgiib").update({"absent_date": pub - datetime.timedelta(days=2)})
+        # The proving later release was dated at the fixed NOW, but pr14381 is moved relative to TODAY: on some days its held date
+        # fell within 2 days of that stored auction, which then counted as 'figures stored' and silenced the notice (a date-fragile
+        # test, failing only on 26-Nov). The hole is already on record; the later auction is not needed for what is asserted here.
+        s.query(BgiibAuction).delete()
         s.commit()
         rep = _report(monkeypatch, eng)
         assert not [i for i in rep["issues"] if i.startswith("bgiib") and "pr14381" in i]
