@@ -3,6 +3,7 @@ db.py — SQLite schema creation and session factory.
 All tables derived from the canonical schema in the blueprint.
 """
 import logging
+import re
 import os
 from pathlib import Path
 from typing import Dict, Tuple
@@ -1212,6 +1213,50 @@ CONSTRAINT_FIELDS: Dict[str, Tuple[str, ...]] = {
 }
 
 
+def _postgres_schema_facts(engine):
+    """(columns, constraints{name: validated}, indexes) already in the database, or None when this is not Postgres or cannot be read.
+
+    init_db ran ~100 ALTER/CREATE/VALIDATE statements on EVERY run from every machine. Each takes a table lock even when it changes
+    nothing, so one long transaction on omo_transactions made them queue until the 2-minute statement timeout (28-Nov: three
+    timeouts and a dropped connection at the PC's start-up). Asking the catalogue once and running only what is missing removes
+    both the delay and the contention."""
+    if not str(engine.url).startswith("postgresql"):
+        return None
+    try:
+        with engine.connect() as conn:
+            cols = {(r[0], r[1]) for r in conn.execute(text(
+                "SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = current_schema()"))}
+            cons = {r[0]: bool(r[1]) for r in conn.execute(text(
+                "SELECT conname, convalidated FROM pg_constraint WHERE connamespace = current_schema()::regnamespace"))}
+            idx = {r[0] for r in conn.execute(text("SELECT indexname FROM pg_indexes WHERE schemaname = current_schema()"))}
+        return cols, cons, idx
+    except Exception:
+        return None
+
+
+_ADD_COL = re.compile(r"^\s*ALTER TABLE (\w+) ADD COLUMN (?:IF NOT EXISTS )?(\w+)", re.I)
+_ADD_CON = re.compile(r"^\s*ALTER TABLE \w+ ADD CONSTRAINT (\w+)", re.I)
+_VAL_CON = re.compile(r"^\s*ALTER TABLE \w+ VALIDATE CONSTRAINT (\w+)", re.I)
+_MK_IDX = re.compile(r"^\s*CREATE (?:UNIQUE )?INDEX (?:IF NOT EXISTS )?(\w+)", re.I)
+
+
+def _already_applied(ddl: str, cols, cons, idx) -> bool:
+    """True when the statement would change nothing on this database (column/constraint/index present, constraint validated)."""
+    m = _ADD_COL.match(ddl)
+    if m:
+        return (m.group(1), m.group(2)) in cols
+    m = _ADD_CON.match(ddl)
+    if m:
+        return m.group(1) in cons
+    m = _VAL_CON.match(ddl)
+    if m:
+        return cons.get(m.group(1)) is True
+    m = _MK_IDX.match(ddl)
+    if m:
+        return m.group(1) in idx
+    return False
+
+
 MIGRATION_ERRORS: list = []     # the DDL statements of the last init_db() that failed for a reason other than 'already there'
 
 
@@ -1354,9 +1399,16 @@ def init_db():
         "ON policy_rate_history (effective_date)",
     ]
     MIGRATION_ERRORS.clear()
+    present = _postgres_schema_facts(engine)
     for ddl in migrations:
+        if present is not None and _already_applied(ddl, *present):
+            continue                  # nothing to do: do not queue behind another session's lock just to learn that
         try:
             with engine.connect() as conn:
+                if present is not None:
+                    # Fail fast rather than wait out the server's statement timeout behind a busy table (SET LOCAL is
+                    # transaction-scoped, so it is safe through the transaction pooler too).
+                    conn.execute(text("SET LOCAL lock_timeout = '5s'"))
                 conn.execute(text(ddl))
                 conn.commit()
         except Exception as exc:

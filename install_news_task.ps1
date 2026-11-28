@@ -34,7 +34,11 @@ function Register-Job($name, $module, $moduleArgs, $minutes, $logName, $envSet =
     $action = New-ScheduledTaskAction -Execute "powershell.exe" -WorkingDirectory $dir `
         -Argument "-NoProfile -WindowStyle Hidden -Command `"$cmd`""
     if ($dailyAt) {
-        $trigger = New-ScheduledTaskTrigger -Daily -At $dailyAt
+        # One or more times, comma-separated ("12:00,19:00"): a run cut short by a shutdown or sign-out (the PC is turned off at
+        # times) would otherwise leave a whole day without its full read. The one-refresh-at-a-time lock stops overlaps and the
+        # daily backup runs once, so an extra time costs nothing when the earlier run finished.
+        $times = $dailyAt -split ","
+        $trigger = New-ScheduledTaskTrigger -Daily -At $times[0].Trim()
     } else {
         $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes $minutes)
     }
@@ -47,6 +51,9 @@ function Register-Job($name, $module, $moduleArgs, $minutes, $logName, $envSet =
         -ExecutionTimeLimit (New-TimeSpan -Minutes $limitMinutes) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
     $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
     $triggers = @($trigger)
+    if ($dailyAt) {
+        foreach ($t in ($dailyAt -split ",")[1..99]) { if ($t) { $triggers += New-ScheduledTaskTrigger -Daily -At $t.Trim() } }
+    }
     if (-not $dailyAt) {
         $logon = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
         $logon.Delay = "PT2M"          # let the network and the desktop settle before Chrome starts
@@ -63,4 +70,4 @@ Register-Job "MM Dashboard Calendar Watch" "engines.calendar_notices" "" 60 "cal
 
 $light = "`$env:FETCH_MODE='light'; `$env:OMO_DAYS_BACK='35'; `$env:OMO_MAX_FILES='35'; `$env:TREASURY_MONTHS='1'; `$env:CALLMONEY_DAYS='20'; `$env:REFRATE_DAYS='20'; `$env:IBFX_MONTHS='1';"
 Register-Job "MM Dashboard Data Refresh" "weekly_fetch" "" 60 "data_refresh.log" $light 40
-Register-Job "MM Dashboard Data Refresh Full" "weekly_fetch" "" 0 "data_refresh_full.log" "" 120 "19:00"
+Register-Job "MM Dashboard Data Refresh Full" "weekly_fetch" "" 0 "data_refresh_full.log" "" 120 "12:00,19:00"
