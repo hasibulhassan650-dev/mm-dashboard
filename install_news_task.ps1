@@ -18,7 +18,24 @@
 #                               Unregister-ScheduledTask -TaskName "MM Dashboard Calendar Watch" -Confirm:$false
 $ErrorActionPreference = "Stop"
 $dir = $PSScriptRoot
-$py = (Get-Command python).Source
+# The interpreter must be one that HAS this project's packages: a second Python (3.12 was installed on 28-Nov and went first on PATH)
+# has none of them, and tasks registered against it would fail at their first import. Pick the first candidate that can import them.
+function Find-ProjectPython {
+    $candidates = @()
+    $candidates += (Get-Command python -All -ErrorAction SilentlyContinue | ForEach-Object { $_.Source })
+    $candidates += Get-ChildItem "$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe" -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
+    $saved = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"          # a Python without the packages writes a traceback to stderr: not an install failure
+    try {
+        foreach ($c in ($candidates | Where-Object { $_ } | Select-Object -Unique)) {
+            & $c -c "import sqlalchemy, selenium, bs4, pdfplumber" 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) { return $c }
+        }
+    } finally { $ErrorActionPreference = $saved }
+    throw "No Python with this project's packages (sqlalchemy, selenium, bs4, pdfplumber) was found: run 'pip install -r requirements.txt' first."
+}
+$py = Find-ProjectPython
+Write-Host "Using Python: $py"
 $logdir = Join-Path $env:LOCALAPPDATA "mm_dashboard"
 New-Item -ItemType Directory -Force $logdir | Out-Null
 
